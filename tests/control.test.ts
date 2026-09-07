@@ -1,3 +1,4 @@
+/** 使用模拟 OBS / YouTube 验证严格生命周期顺序、失败恢复及多实例并发。 */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -12,6 +13,7 @@ import type { ControlState } from "@/shared/types";
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
 const selection = { video: "study.mp4", music: "lofi.mp3", videoAudio: false };
+/** 创建独立临时状态目录和可控制的上游模拟。 */
 async function fixture() {
   const dir = await mkdtemp(path.join(os.tmpdir(), "livepilot-v2-test-")); dirs.push(dir);
   const storage = new Store(dir);
@@ -208,5 +210,37 @@ describe("one-button lifecycle", () => {
     const state = await f.storage.read<ControlState>("control.json");
     expect(state?.stage).toBe("校验 LIVE / VIDEO / MUSIC");
     expect(state?.error).not.toContain("private raw error");
+  });
+});
+
+/** 三个控制器同时运行，验证等待、失败和停止只影响所属实例。 */
+describe("independent local instances", () => {
+  /** A 等待 OBS 时 B、C 可以开播；停止 B 不会停止 A 或 C。 */
+  it("runs three instances concurrently and stops only the selected one", async () => {
+    const [a, b, c] = await Promise.all([fixture(), fixture(), fixture()]);
+    let release!: () => void;
+    vi.mocked(a.obs.ensureReady).mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    const startingA = a.control.start(selection);
+    await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+    await Promise.all([b.control.start(selection), c.control.start({ ...selection, videoAudio: true })]);
+    expect(a.control.busy).toBe(true);
+    expect((await b.control.state()).phase).toBe("live");
+    expect((await c.control.state()).selection?.videoAudio).toBe(true);
+    release(); await startingA;
+    await b.control.stop();
+    expect(a.obs.stopStream).not.toHaveBeenCalled();
+    expect(c.obs.stopStream).not.toHaveBeenCalled();
+    expect((await a.control.state()).phase).toBe("live");
+    expect((await c.control.state()).phase).toBe("live");
+  });
+  /** 一个频道 complete 失败时，另一个频道仍然可以正常结束。 */
+  it("isolates a failed completion from another instance", async () => {
+    const [a, b] = await Promise.all([fixture(), fixture()]);
+    await Promise.all([a.control.start(selection), b.control.start(selection)]);
+    vi.mocked(a.yt.transition).mockRejectedValueOnce(new Error("failure"));
+    const results = await Promise.allSettled([a.control.stop(), b.control.stop()]);
+    expect(results.map(result => result.status)).toEqual(["rejected", "fulfilled"]);
+    expect(a.obs.stopStream).not.toHaveBeenCalled();
+    expect((await b.control.state()).phase).toBe("stopped");
   });
 });

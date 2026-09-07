@@ -1,3 +1,4 @@
+/** 浏览器共享的状态与媒体选择类型，禁止添加服务端 Secret。 */
 export type Selection = { video: string; music: string; videoAudio: boolean };
 export type ObsStatus = {
   ready: boolean; running: boolean; streaming: boolean | null; reconnecting?: boolean;
@@ -15,3 +16,6 @@ export type Dashboard = {
   media: { videos: string[]; music: string[]; error?: string };
   configuration: { missing: string[]; privacy: string; madeForKids: boolean };
 };
+
+/** 浏览器可见的实例清单，不包含路径或凭据。 */
+export type InstanceDescriptor = { id: string; name: string };
