@@ -34,3 +34,13 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 ## 历史基线
 
 2026-09-06 初始独立 MVP 在提交 66c8ff9 完成 4 个文件 / 50 项测试及生产构建。当时尚未进行真实 OAuth / OBS / YouTube 验收；后续用户完成单账号测试后，才提出本次多实例扩展。旧记录中的“尚未验证”是该日期的历史状态，不代表当前主实例授权丢失。
+
+## 启动故障修复（同日后续）
+
+- 用户配置中的 A/B exe 均存在，WebSocket 端口和密码与各自 OBS 配置一致；未修改或重置密码。
+- 故障位于启动前的 Windows 进程/端口检查。单独测量旧 Get-NetTCPConnection 查询约 11.5 秒，接近整段检查的 15 秒时限；原生 netstat 同机约 0.8 秒。
+- 改用 Win32_Process 查询 exe 对应进程、原生 netstat 读取监听 PID，保留端口归属保护；路径不存在、查询超时和启动参数错误分别给出安全提示。
+- 安全错误使用跨模块 WeakSet 登记，避免热更新后 instanceof 失配将具体错误变成通用 500；普通或伪造上游错误仍不向前端暴露原始消息。
+- npm run verify 全部通过：8 个测试文件、80 项测试、strict typecheck、lint、生产构建。
+- 通过与网页相同的 POST /api/control（action=launch，instanceId=main）真实启动 OBS B，约 17.3 秒返回成功。随后只读确认 A/B 均 Ready，scene LIVE，OBS 均未推流。
+- 此次不关闭 OBS、不创建 YouTube 场次、不操作真实开始/结束直播。前文 A 尚未设置 WebSocket 的记录为本次修复前的历史状态；用户现已完成相应配置。

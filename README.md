@@ -252,7 +252,8 @@ npm run start
 
 | 现象 | 处理 |
 | --- | --- |
-| OBS Offline | 检查该面板对应的 exe、WebSocket 启用状态、端口、密码；用“启动 OBS”启动指定程序 |
+| OBS Offline | 检查该面板对应的 exe、WebSocket 启用状态、端口、密码；用“启动 OBS”启动指定程序。进程已运行不代表 WebSocket 已 Ready |
+| Windows 进程或端口查询超时 | 此时尚未启动 OBS；检查系统负载后重试。新版使用原生 netstat 读取端口 PID，避免 Get-NetTCPConnection 的慢速查询 |
 | 多个实例同一路径或端口 | 每份 Portable OBS 独立目录和端口，改完 OBS 与 env 后重启服务 |
 | 开始按钮不能点 | 看按钮下原因；媒体必须实际存在并选中、频道连接成功、配置齐全、状态未过期 |
 | LIVE 缺少 VIDEO / MUSIC | 每份 OBS 都按标准建媒体源，检查拼写、全局音频及其他场景项 |
@@ -281,7 +282,7 @@ npm run recover:lock -- main oauth-bindings
 
 详细模块、HTTP 契约、存储及恢复见 [架构文档](docs/ARCHITECTURE.md)；验证边界见 [验证记录](docs/VALIDATION.md)。`src/app/console.tsx` 管理实例清单，`instance-console.tsx` 展示单实例，`use-instance.ts` 管理独立状态；`src/server/service.ts` 注入对应 OBS、YouTube 和 Store，`control.ts` 执行严格开停播顺序。
 
-main 数据仍位于 .data 根目录；其他数据位于 .data/instances/<id>。Token 使用 AES-256-GCM 加密，状态原子写入，互斥按实例生效。浏览器只接触媒体文件名与状态 DTO；Stream Key 和密码不进入日志。OBS 本身保存的配置也应受本机权限保护。
+main 数据仍位于 .data 根目录；其他数据位于 .data/instances/<id>。Token 使用 AES-256-GCM 加密，状态原子写入，互斥按实例生效。进程归属通过 Win32_Process 的 exe 真实路径与原生 netstat 监听 PID 交叉核对；不使用可能很慢的 Get-NetTCPConnection。浏览器只接触媒体文件名与状态 DTO；Stream Key 和密码不进入日志。OBS 本身保存的配置也应受本机权限保护。
 
 `npm run verify` 包括 strict typecheck、ESLint、Vitest 和生产 build。next-env.d.ts 是 Next.js 生成的类型声明，package-lock.json 固定依赖，不手改生成文件。开发前阅读 [工程协作规范](docs/工程协作规范.md) 与 [PR 撰写规范](docs/PR撰写规范.md)，分支和提交按规范命名。
 

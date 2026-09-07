@@ -23,7 +23,7 @@ Browser
 - `LIVEPILOT_INSTANCES` 是稳定 ID 清单，必须包含 `main`。只允许小写字母开头、其后字母数字下划线，最长 32 位；禁止 Windows 保留名、重复和路径字符。
 - 每个新增实例的配置前缀为 `LIVEPILOT_INSTANCE_<大写ID>_`，支持 NAME、OBS_EXE、OBS_WS_URL、OBS_WS_PASSWORD、可选 MEDIA_ROOT。
 - main 兼容旧 `LIVEPILOT_OBS_*`。新增实例绝不继承主实例 OBS 路径、密码、端口；媒体根目录可共享。
-- 禁止相同 Windows 规范化 exe 路径或相同 WebSocket 端口。进程控制进一步读取 exe 真实路径与端口归属 PID，防止连接到其他 OBS。
+- 禁止相同 Windows 规范化 exe 路径或相同 WebSocket 端口。进程控制进一步用 Win32_Process 读取 exe 真实路径对应进程，并解析原生 netstat -ano -p tcp 的监听 PID，防止连接到其他 OBS。端口解析忽略远端端口及非监听连接，遇到多个归属则拒绝操作；避免用 Get-NetTCPConnection 的网络 CIM 查询阻塞启动。
 - 原 `.data/control.json` 和 `.data/youtube.enc` 原地属于 main。其他实例位于 `.data/instances/<id>/`。不可随意更名、删除 ID 或拷贝一个实例的授权目录给另一个实例。
 - 变更实例列表、目录或端口前，先结束受影响实例的直播并停止 LivePilot。编辑文件不会自动重新配置正在运行的进程。
 
@@ -39,7 +39,7 @@ Browser
 
 状态接口独立轮询，服务端每实例去重同时读取，YouTube 状态缓存最多 30 秒。浏览器草稿仅保存文件名和原声选择，按 ID 分开；未结束场次优先使用服务端已有选择。状态过期或媒体不在列表时禁用 Start 并显示原因。没有模拟进度、模拟 LIVE 或模拟时长。
 
-控制请求要求配置的 loopback Host、同源 Origin 和 `X-LivePilot: 1`。浏览器不接触绝对媒体路径、OBS 密码、Client Secret、Token 或 Stream Key。原始上游错误与 OAuth 请求 URL 不进入应用日志。
+控制请求要求配置的 loopback Host、同源 Origin 和 `X-LivePilot: 1`。浏览器不接触绝对媒体路径、OBS 密码、Client Secret、Token 或 Stream Key。原始上游错误与 OAuth 请求 URL 不进入应用日志。应用安全错误由跨模块共享的 WeakSet 登记，开发热更新或路由模块重新加载后仍保留安全说明及 HTTP 状态码；不能仅凭 code/message 字段信任上游异常。
 
 ## 并发、授权与恢复
 
