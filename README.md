@@ -1,225 +1,291 @@
+<!-- 文件用途：指导新 Windows 电脑从克隆仓库到配置多个 OBS / YouTube 频道并进行真实开停播验收。 -->
 # LivePilot v2
 
-本机 OBS + YouTube 直播控制台 / Control Plane。
+本机 OBS + YouTube 直播控制台。选择一个视频、一段音乐、设置视频原声 ON/OFF，在网页启动 OBS、开始直播、结束直播。
 
-**全新独立仓库、独立 Git 历史。** 本机目录为 `D:\Repo\LivePilot-v2`。旧 `Doris619619/LivePilot` 只作为只读历史参考。
+支持 **一台 Windows、多个独立 Portable OBS、每个 OBS 一个不同的 YouTube Channel**。实例数量通过配置扩展，不写死为两个。视频与音乐均循环播放；媒体由 OBS 直接发到 YouTube，LivePilot 只发控制命令。
 
-## 当前 MVP
+全新独立仓库：[Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)。旧 LivePilot 仅作只读历史参考。不实现上传、云存储、远程 Agent、FFmpeg Worker 或复杂 Job/Run。
 
-- 1 台 Windows、1 个专用 Portable OBS、1 个 YouTube Channel。
-- 从本机媒体目录选择一个视频和一段音乐，两者循环播放，可开关视频原声。
-- 在网页查看状态、启动 OBS、一键开始真实直播、一键结束。
-- 开播默认“不公开列出”，受众默认“非面向儿童”，可通过环境变量显式修改。
-- 不实现上传、云存储、多账号、多实例、远程 Agent、FFmpeg Worker、批量任务或调度。
+## 新电脑快速开始
 
-## 架构
+需要 Windows 10/11、Node.js 22 或更新的受支持版本（本项目验证使用 Node 22）、Git、OBS Studio 28+（内置 WebSocket v5）。下载入口：[Node.js](https://nodejs.org/en/download)、[Git for Windows](https://git-scm.com/downloads/win)、[OBS 官方下载](https://obsproject.com/download)。
 
-```text
-Browser (127.0.0.1:3010)
-  └─ Next.js Node.js Server
-      ├─ Control: 单个互斥控制操作 + control.json
-      ├─ LocalObsRuntime
-      │   ├─ ObsProcessManager → 指定 Windows Portable OBS
-      │   └─ ObsController → OBS WebSocket v5
-      ├─ Media Library → MEDIA_ROOT/videos、music
-      └─ YouTubeAuth / YouTubeApi → Google / YouTube
+如果正在测试尚未合并的 PR，克隆后先切换到该 PR 的源分支，再安装启动；合并后使用 main 即可。
 
-媒体流：本机 OBS ── RTMPS ──→ YouTube
+仓库是私有时，先用有权限的 GitHub 账号登录 Git Credential Manager，或安装 [GitHub CLI](https://cli.github.com/) 后执行 `gh auth login`。不要把 Token 写进 clone URL。
+
+在 PowerShell 执行：
+
+```powershell
+New-Item -ItemType Directory -Force D:\Repo | Out-Null
+cd D:\Repo
+git clone https://github.com/Doris619619/LivePilot-v2.git
+cd LivePilot-v2
+npm ci
+npm run setup:local
+notepad .env.local
 ```
 
-浏览器只收到文件名、公开频道信息和状态 DTO。绝对路径、OAuth Token、Client Secret、OBS 密码、Stream Key 始终留在服务端。OBS 自身会保存其推流设置，请保护 Portable OBS 目录。
+`setup:local` 创建本机 `.env.local` 并生成随机加密密钥；已有文件不会覆盖。下面三部分都完成后，再运行服务：
 
-| 目录 / 文件 | 职责 |
+1. 准备每个 Portable OBS，记录 exe 路径、WebSocket 端口和密码。
+2. 准备本机媒体目录。
+3. 在 Google Cloud 配置 OAuth，把 Client ID / Secret 填入环境文件。
+
+**克隆新电脑时不要复制另一台电脑的 .env.local、.data 或带推流密钥的 OBS 配置。** 在新电脑生成密钥、按实际路径配置，并分别重新授权。现有电脑升级本分支时则保留原来的 .env.local、加密密钥与 .data，main 会继续使用原账号。
+
+## 1. 配置每个 Portable OBS
+
+从 [OBS 官方发布页](https://github.com/obsproject/obs-studio/releases) 下载 Windows ZIP，分别解压到不同文件夹。例如：
+
+```text
+D:\app\obs-portable-b\bin\64bit\obs64.exe
+D:\app\obs-portable-a\bin\64bit\obs64.exe
+D:\app\obs-studio-c\bin\64bit\obs64.exe
+```
+
+在每份 OBS 的根目录（与 bin、data 同级）创建空的 `portable_mode.txt`，保证双击 exe 也使用独立配置。LivePilot 启动时另外传入 `--portable --multi`。[Portable mode 官方说明](https://obsproject.com/kb/portable-mode)、[启动参数说明](https://obsproject.com/kb/launch-parameters)。
+
+第一次需要手动打开每份 OBS，完成以下初始化；以后可以直接从网页启动：
+
+```powershell
+Start-Process -FilePath "D:\app\obs-portable-a\bin\64bit\obs64.exe" -WorkingDirectory "D:\app\obs-portable-a\bin\64bit" -ArgumentList "--portable","--multi"
+```
+
+### WebSocket：每份设置不同端口
+
+OBS 菜单 **工具 → WebSocket 服务器设置**：
+
+- 勾选启用 WebSocket 服务器、启用身份验证。
+- B 使用 4456、A 使用 4455、第三份可使用 4457；这只是示例，必须与 OBS 中实际值一致。
+- 显示/生成服务器密码，把它填入对应实例的环境变量。
+- 使用 `ws://127.0.0.1:端口`，浏览器只连接 LivePilot。
+- 保存设置。每个 OBS 的完整 exe 路径及端口必须不同。不要让两份 OBS 共用同一个 Portable 配置目录。
+
+入口说明：[OBS Remote Control Guide](https://obsproject.com/kb/remote-control-guide)。密码来自 **对应 OBS 的 WebSocket 设置**，不是 Google 密码或 YouTube Stream Key。
+
+### 标准场景：每份 OBS 都要建一次
+
+1. 创建场景 **LIVE**。
+2. 在 LIVE 中添加两个 **媒体源**，严格命名 **VIDEO** 和 **MUSIC**。不是 VLC 源，注意不是 VEDIO。
+3. 各选一个真实文件，勾选本地文件、循环。程序开播时会换成网页选择的文件并设置循环。
+4. LIVE 只保留这两个直接媒体源；不要加入其他场景、采集源或组。
+5. 设置 → 音频：禁用所有全局桌面音频、麦克风/辅助音频，防止额外声音混入。
+6. 设置 → 视频 / 输出：按媒体比例设置画布和输出分辨率，配置可用编码器、码率、音频。右击 VIDEO → 变换 → 适配屏幕，检查预览不是黑屏。
+7. 确认 VIDEO 和 MUSIC 可播放、有音频电平，保存配置。
+
+LivePilot 校验场景，缺少结构时明确报错。程序不自动配置画布、编码器或改变视频缩放。多 OBS 同时编码会增加硬件和网络负荷；先用两个实例实测，再按机器容量增加。
+
+无需手动填写 YouTube Stream Key，也无需去 OBS 点击“开始推流”。LivePilot 从 YouTube API 获取 RTMPS 参数并设置到所属 OBS。OBS 自身可能保存推流设置，请保护其本机目录。
+
+## 2. 准备本机媒体
+
+```powershell
+New-Item -ItemType Directory -Force D:\LiveMedia\videos, D:\LiveMedia\music | Out-Null
+```
+
+自己放入至少一个真实视频和音频文件：
+
+```text
+D:\LiveMedia
+├── videos
+│   └── test.mp4
+└── music
+    └── test.mp3
+```
+
+`LIVEPILOT_MEDIA_ROOT=D:\LiveMedia`。默认所有实例共用这个只读媒体库，也可为某个实例单独指定 MEDIA_ROOT。没有上传服务，文件保存在直播电脑本机。
+
+支持视频 mp4/mkv/mov/webm/avi/m4v，音乐 mp3/wav/flac/aac/m4a/ogg；能否解码由 OBS 实际验证。扫描直接子文件，不递归子目录。文件名可用中文；网页传文件名，服务端解析绝对路径并校验真实路径，拒绝 ../、绝对路径及越界链接。
+
+## 3. Google / YouTube 配置：值从哪里来
+
+每个频道先在 [YouTube Studio](https://studio.youtube.com/) 的“创建 → 开始直播”确认具备直播资格；首次启用可能需要平台审核或等待。授权成功只代表 API 可访问频道，仍需频道本身允许直播。
+
+### 3.1 选择项目并启用 API
+
+打开 [Google Cloud Console](https://console.cloud.google.com/)，选择或创建用于 LivePilot 的项目。后续设置全部在 **同一个项目** 中完成。
+
+打开 [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com)，点击启用。官方步骤见 [YouTube API 授权注册](https://developers.google.com/youtube/registering_an_application)。
+
+### 3.2 配置应用与测试人员
+
+打开 [Google Auth Platform](https://console.cloud.google.com/auth/overview)：
+
+1. **Branding / 品牌信息**：设置应用名 LivePilot、支持邮箱、开发者邮箱。
+2. **Audience / 受众**：个人 Gmail 通常选择 External；测试阶段保持 Testing。
+3. **Test users / 测试用户**：添加每个准备授权的 Google 登录邮箱。两个账号都要加入；这里填登录邮箱，不是 YouTube 频道名称。
+4. **Data Access / 数据访问**：配置本应用使用的 scope：`https://www.googleapis.com/auth/youtube`。
+
+出现 **403 access_denied / 应用尚未完成验证、仅供测试人员使用**，先确认当前登录邮箱在这个项目的测试用户列表中。复制 Client ID / Secret 不会自动加入测试人员。
+
+Google 测试状态下，此类授权及离线 refresh token 通常在授权后 7 天到期，届时需重新连接。不要将 Testing 当成长时间无人值守授权。[Google Audience 官方说明](https://support.google.com/cloud/answer/15549945?hl=en)。
+
+### 3.3 创建 Web application OAuth 客户端
+
+打开 [Clients / 客户端](https://console.cloud.google.com/auth/clients)，创建 OAuth 客户端：
+
+- 类型：**Web application / Web 应用**。
+- 名称：例如 LivePilot Local。
+- **Authorized redirect URIs / 已获授权的重定向 URI**，精确添加：
+
+```text
+http://127.0.0.1:3010/api/youtube/callback
+```
+
+这是服务端 OAuth code 回调；不要只填首页，不要写 localhost，不要沿用旧仓库的 3000 端口或旧回调路径。
+
+创建后将 **Client ID** 填入 `GOOGLE_CLIENT_ID`，**Client secret** 填入 `GOOGLE_CLIENT_SECRET`。妥善保存创建时的 Secret；控制台可能不再提供完整值。不要填 API Key，也不要把 OAuth Secret 当作 OBS 密码。[客户端管理说明](https://support.google.com/cloud/answer/15549257?hl=en)、[服务端 OAuth 流程](https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps)。
+
+同一 LivePilot 的多个实例可以共用这个 OAuth 客户端和回调地址。每个实例仍需在网页 **各自连接不同频道**。不要为省略授权而拷贝 .data 中的 Token。
+
+## 4. 填写 .env.local
+
+### 两个实例的完整配置示例
+
+以下路径和端口是示例，密码和 Google 值由你填写。本机加密密钥保留 setup:local 自动生成的值。
+
+```dotenv
+LIVEPILOT_ORIGIN=http://127.0.0.1:3010
+LIVEPILOT_INSTANCES=main,obs_a
+
+LIVEPILOT_INSTANCE_MAIN_NAME=OBS B
+LIVEPILOT_OBS_EXE=D:\app\obs-portable-b\bin\64bit\obs64.exe
+LIVEPILOT_OBS_WS_URL=ws://127.0.0.1:4456
+LIVEPILOT_OBS_WS_PASSWORD=填写B的WebSocket密码
+
+LIVEPILOT_INSTANCE_OBS_A_NAME=OBS A
+LIVEPILOT_INSTANCE_OBS_A_OBS_EXE=D:\app\obs-portable-a\bin\64bit\obs64.exe
+LIVEPILOT_INSTANCE_OBS_A_OBS_WS_URL=ws://127.0.0.1:4455
+LIVEPILOT_INSTANCE_OBS_A_OBS_WS_PASSWORD=填写A的WebSocket密码
+
+LIVEPILOT_MEDIA_ROOT=D:\LiveMedia
+GOOGLE_CLIENT_ID=填写Google的ClientID
+GOOGLE_CLIENT_SECRET=填写Google的ClientSecret
+LIVEPILOT_ENCRYPTION_KEY=保留本机生成的64位十六进制密钥
+LIVEPILOT_PRIVACY=unlisted
+LIVEPILOT_MADE_FOR_KIDS=false
+```
+
+不要把“填写…”这些提示文字作为实际值。密码若含 `#` 用引号包住；若含 `$`，按 Next.js 环境文件规则转义为 `\$`，避免被变量展开。
+
+| 环境变量 | 填什么 / 从哪里来 |
 | --- | --- |
-| `src/app/console.tsx` | 单页控制台；实际状态轮询，无模拟进度 |
-| `src/app/api/` | 本机 HTTP 边界、严格输入验证、OAuth 回调 |
-| `src/server/control.ts` | Start / Stop 顺序、互斥、持久化与恢复 |
-| `src/server/obs/` | ObsInstance、ObsController、ObsRuntime、本机进程 |
-| `src/server/media.ts` | 类型白名单、路径/真实路径约束、目录扫描 |
-| `src/server/youtube/` | OAuth PKCE、Token 加密/刷新、Live API |
-| `src/server/storage.ts` | 原子状态替换、独占锁、AES-256-GCM |
-| `src/shared/types.ts` | 不含 Secret 的浏览器数据类型 |
-| `tests/` | 生命周期失败路径、媒体越界、请求边界、OBS 控制 |
+| LIVEPILOT_ORIGIN | 默认 http://127.0.0.1:3010；浏览器、服务监听端口、Google 回调三者一致 |
+| LIVEPILOT_INSTANCES | 自己定义的稳定 ID 列表；至少 main；不是 OBS 名称或频道 ID |
+| LIVEPILOT_INSTANCE_MAIN_NAME | 网页显示名，可改；主实例 ID main 不改 |
+| LIVEPILOT_OBS_EXE | 主 OBS 的真实 obs64.exe 完整路径，在资源管理器找到 |
+| LIVEPILOT_OBS_WS_URL | 主 OBS 工具 → WebSocket 设置中的端口，拼成 ws://127.0.0.1:端口 |
+| LIVEPILOT_OBS_WS_PASSWORD | 主 OBS 同一设置窗口的服务器密码 |
+| LIVEPILOT_INSTANCE_<ID>_NAME | 新增实例显示名称 |
+| LIVEPILOT_INSTANCE_<ID>_OBS_EXE | 新增实例独立 Portable 文件夹中的 obs64.exe |
+| LIVEPILOT_INSTANCE_<ID>_OBS_WS_URL | 新增实例独立 WebSocket 端口 |
+| LIVEPILOT_INSTANCE_<ID>_OBS_WS_PASSWORD | 新增实例自己的 WebSocket 密码，不能留空 |
+| LIVEPILOT_MEDIA_ROOT | 自己创建的媒体根目录，包含 videos 和 music |
+| LIVEPILOT_INSTANCE_<ID>_MEDIA_ROOT | 可选；该实例独立媒体根目录，不填则共用上面的根目录 |
+| GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET | Google Auth Platform → Clients → Web application，所有实例共用 |
+| LIVEPILOT_ENCRYPTION_KEY | setup:local 本机随机生成；不用去任何网站申请，已有授权时不能换 |
+| LIVEPILOT_PRIVACY | unlisted 不公开列出 / private 私密 / public 公开；默认 unlisted，所有新场次共用 |
+| LIVEPILOT_MADE_FOR_KIDS | true 或 false，按内容实际受众设置，默认 false |
 
-## 环境和安装
+`<ID>` 要换成清单中 ID 的大写。例如 obs_a 对应 OBS_A；main 兼容旧的无前缀 OBS 变量。配置绝不能使用 NEXT_PUBLIC_ 前缀。
 
-Windows 10/11、Node.js 22+、npm、OBS Studio 28+（内置 WebSocket v5，建议使用当前稳定版本）。不需要 FFmpeg 或 VLC。
+### 添加第三个及更多实例
+
+```dotenv
+LIVEPILOT_INSTANCES=main,obs_a,studio_c
+LIVEPILOT_INSTANCE_STUDIO_C_NAME=学习频道
+LIVEPILOT_INSTANCE_STUDIO_C_OBS_EXE=D:\app\obs-studio-c\bin\64bit\obs64.exe
+LIVEPILOT_INSTANCE_STUDIO_C_OBS_WS_URL=ws://127.0.0.1:4457
+LIVEPILOT_INSTANCE_STUDIO_C_OBS_WS_PASSWORD=填写第三个OBS密码
+```
+
+重复配置即可增加任意数量，每个实例独立授权不同频道。ID 与状态目录绑定，改显示名只改 NAME。增删实例或改变连接配置前先结束相关直播、停止服务；不要把旧 ID 改名当作增加实例。
+
+## 5. 启动并分别授权
+
+保存 .env.local，关闭编辑器，然后：
 
 ```powershell
 cd D:\Repo\LivePilot-v2
-npm ci
-npm run setup:local
-```
-
-此命令创建空的本机配置并自动生成 `LIVEPILOT_ENCRYPTION_KEY`，已有 `.env.local` 完整保留。不要将 Secret 发到聊天、截图或提交到 Git。不要从旧仓库直接拷贝 `.env` / `.data`。
-
-编辑 `.env.local`：
-
-| 配置 | 说明 |
-| --- | --- |
-| `LIVEPILOT_ORIGIN` | 默认 `http://127.0.0.1:3010`，必须使用这个地址访问 |
-| `LIVEPILOT_OBS_EXE` | 专用 Portable OBS 的完整 obs64.exe 路径 |
-| `LIVEPILOT_OBS_WS_URL` | `ws://127.0.0.1:端口`，端口必须属于指定 exe 进程 |
-| `LIVEPILOT_OBS_WS_PASSWORD` | OBS WebSocket 密码，必须启用认证 |
-| `LIVEPILOT_MEDIA_ROOT` | 绝对媒体根目录，例 `D:\LiveMedia` |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google OAuth Web application 客户端 |
-| `LIVEPILOT_ENCRYPTION_KEY` | 32 字节密钥的 64 位十六进制表示；稳定保存 |
-| `LIVEPILOT_PRIVACY` | `unlisted`（默认）/ `private` / `public` |
-| `LIVEPILOT_MADE_FOR_KIDS` | `false`（默认）或 `true`，按实际内容设置 |
-
-路径只在环境配置和服务端使用，不硬编码在应用里。环境变更后重启服务。加密密钥丢失将无法解密既有 OAuth Token；不要在尚有直播时更换。
-
-## 一次性准备 OBS
-
-使用专门供 LivePilot 管理的 Portable OBS。不要使用正在承担其他直播的实例。
-
-1. 首次手动打开此 OBS，完成可能出现的初始化、许可或编码器设置窗口。
-2. 在“工具 → WebSocket 服务器设置”启用 WebSocket v5 和认证，设置独立端口与密码，填入 `.env.local`。不要启用敏感协议调试日志。
-3. 创建场景 `LIVE`，只添加两个直接的“媒体源”：`VIDEO`、`MUSIC`。名称区分大小写，不使用 VLC 源、组或嵌套场景。
-4. 将 VIDEO 在画布上“变换 → 适配屏幕”；保证 MUSIC 不包含视频画面。首次可选择本地测试文件确认布局。以后媒体和循环由 LivePilot 设置。
-5. 在“设置 → 音频”禁用所有全局桌面音频和麦克风；应用会检查这一项，避免混入未选声音。
-6. 在“设置 → 视频/输出”一次性配置合适的分辨率、帧率、编码器和码率，例如 1080p30 / H.264 / AAC；确保本机与上行带宽支持。当前 MVP 不自动调优编码器。
-7. 不要在 OBS 中启用其他自动开播机制，也不要在 LivePilot 操作期间手动切场景、更换 Profile 或推流设置。
-
-LivePilot 使用 `--portable --multi` 启动配置的 exe，工作目录为 exe 所在目录。启动前按完整路径识别进程，并核对 WebSocket 端口所属 PID。发现同一路径多进程或端口冲突会报错，不猜测实例。等待就绪最长约 60 秒；首次 OBS 窗口或密码错误需要人工处理。
-
-当前采用**校验并明确报错**，不自动创建或重构已有场景。每次开始设置循环、原声、音乐取消静音、音量为 100%、关闭音频监听、开启六个输出音轨、启用两个场景项并切至 LIVE。结束直播保留 OBS 进程运行。
-
-## 本地媒体
-
-```text
-D:\LiveMedia\
-  videos\
-    girl-study.mp4
-  music\
-    lofi-01.mp3
-```
-
-只扫描这两个文件夹的直接文件。视频支持 mp4 / mkv / mov / webm / avi / m4v；音乐支持 mp3 / wav / flac / aac / m4a / ogg。实际解码能力取决于 OBS，请首次在 OBS 验证音画。
-
-服务端拒绝绝对路径、斜杠、反斜杠、编码路径、NTFS ADS 和非法扩展名，并用 realpath 核对目录与文件，阻止 junction/symlink 越界。客户端不提供任意文件读取或上传接口。不要在推流期间移动、替换或删除文件；本机文件系统视为受信任。
-
-## Google / YouTube 配置
-
-1. 在 Google Cloud 项目启用 **YouTube Data API v3**。
-2. 配置 OAuth consent screen；测试阶段将你自己的 Google 账号加入 Test users。
-3. 创建类型为 **Web application** 的 OAuth client。
-4. 添加精确 Authorized redirect URI：
-   `http://127.0.0.1:3010/api/youtube/callback`
-5. 将 Client ID / Client Secret 填入 `.env.local`。
-6. 在 YouTube Studio 先启用直播，等待 YouTube 完成频道开通。首次开通可能需要等待；以 YouTube 当前提示为准。
-7. 启动 LivePilot，点击“连接 YouTube”，由本人完成 Google 登录和频道授权。
-8. 确认 Connected 和频道名称正确。
-
-OAuth 使用一次性浏览器绑定事务、state、S256 PKCE、离线授权，Token 在 `.data/youtube.enc` AES-GCM 加密保存。刷新请求去重。未完成的直播会固定原 Channel，重新授权也只能连接原频道。此 MVP 没有账号列表；正常结束后再授权才可替换单个频道。
-
-不需要你手工提供 Stream Key。服务端创建/复用本项目拥有的 YouTube Stream、读取 ingest Secret 并配置 OBS。不会选取或改写账号中无关的 Stream。新场次使用唯一标题；本项目的 Stream 在后续场次复用。
-
-Google OAuth 处于 Testing 状态时，离线授权可能按 Google 的当前规则过期；界面显示失效后重新授权。退出授权也可在 Google 账号的第三方连接页面撤销。
-
-## 运行
-
-开发：
-
-```powershell
 npm run dev
 ```
 
-日常本机使用建议先构建：
+打开 [本机控制台](http://127.0.0.1:3010)。环境文件改动后，先在原 PowerShell 按 Ctrl+C，再重新执行 npm run dev。
+
+每个实例有独立面板：
+
+1. 检查显示名称、配置缺项；点击“启动 OBS”，等待 Ready。
+2. 点击这个面板的“连接频道”，在 Google 页面选择对应账号及 YouTube Channel。
+3. 返回后检查 **面板标题下的频道名称**。第二面板再授权第二个频道，不能把同一个频道绑定两个 OBS。
+4. 选择视频、音乐和视频原声。仅有一个媒体文件时会自动选中；有多个时自行选择。按钮下会解释不能开始的原因。
+5. 需要开播时，点击这个实例“开始直播”。等待真实 ingest active、lifecycle live 和 OBS 推流确认后，面板才显示 LIVE。
+6. 第二个面板也点击开始，可并行准备与直播；不必等待第一个实例全部处理完成。
+7. 点击指定面板“结束直播”，只结束该频道并停止所属 OBS 推流；其他面板继续直播。
+
+场次创建成功后，开停播按钮下方出现 **“打开直播页面 ↗”**，在新标签页打开该面板对应场次的 YouTube 观看页。结束后保留最近场次的入口，下一场创建成功后自动指向新场次；回放是否可看取决于 YouTube 的处理状态、隐私设置及场次是否仍存在。尚未创建场次时不显示链接，点击链接不会开始或结束直播。
+
+LivePilot 不替你完成 Google 本人登录或真实开播验收。保持服务窗口运行；关闭网页不会停止直播。结束后可以保持 OBS 运行。
+
+需要使用生产服务时，先停止 dev，再执行：
 
 ```powershell
-npm run build
-npm start
-```
-
-打开 **http://127.0.0.1:3010**。只运行一个 LivePilot 服务，不同时运行 dev/start。必须在项目根目录启动，以使用同一份 `.data`。这是常驻 Node 服务，不支持 serverless、Vercel 或多副本部署。
-
-缺少配置也可打开页面查看缺项；应用不会自动读取旧项目配置或触发开播。
-
-## Start / Stop
-
-开始直播：
-
-1. 读取确认 YouTube 授权与 Channel，解析合法媒体。
-2. 检查/启动指定 OBS，等待 WebSocket ready。
-3. 校验 LIVE / VIDEO / MUSIC，配置媒体、循环、原声，并确认两个媒体源已开始播放。
-4. 创建或恢复本场 Broadcast，准备/复用 Stream，bind 并读回确认。
-5. 仅服务端配置 OBS RTMPS 地址与 Stream Key。
-6. OBS StartStream → 等待 YouTube ingest active。
-7. YouTube transition live → 再读回 live，并确认 OBS 仍推流。
-8. UI 基于实际 OBS / YouTube 状态显示 LIVE。
-
-关闭 monitor stream，直接从 ready 进入 live，不要求用户操作 testing。依据 [YouTube 生命周期文档](https://developers.google.com/youtube/v3/live/life-of-a-broadcast) 和 [transition API](https://developers.google.com/youtube/v3/live/docs/liveBroadcasts/transition)。
-
-结束直播：
-
-1. YouTube transition complete → 读回 complete。
-2. OBS StopStream → 读回 stream inactive。
-3. 标记 Stopped，OBS 进程保持运行。
-
-YouTube complete 失败时**不会继续停止 OBS 并报告成功**。请在 YouTube Studio 手动结束（尚未开播的待播场次请删除），再点结束直播让 LivePilot 读回核对并收尾。OBS 断线则恢复 WebSocket 后重试；必要时可在 OBS 人工停止推流，但仍需回到控制台确认状态。
-
-状态页每 5 秒读取 OBS；YouTube 查询最多每 30 秒一次并显示最近确认时间，降低配额消耗。Start/Stop 自身直接读取，不用状态页缓存。时长来自 OBS 实际 outputDuration，不是模拟计时进度。页面断连会标记状态可能过期。
-
-## 失败与恢复
-
-单个 `.data/control.json` 保存当前场次和已执行阶段；没有 Job / Run 表、队列或后台重试器。每个外部创建请求之前先落盘创建意图，拿到 ID 立即保存。互斥锁阻止重复点击以及两个本机服务同时操作。
-
-- **可重试的准备失败**：修复配置或网络，保留原媒体选择，点击“重试开始直播”。
-- **请求超时但上游可能成功**：先按唯一标题查询原对象，不盲目再次创建；查不到时停住并要求核对。
-- **创建结果始终无法确认**：到 Debug 查场次标题，在 Studio 核实没有该场次后，使用 Debug 的明确确认操作清理；服务端再次确认 OBS inactive 与原频道没有该场次。不得用它清理已有 ID 的场次。
-- **StartStream 之后失败**：OBS 可能继续推流；不会擅自终止已经可能开播的 YouTube 场次。优先重试读取恢复，或点击结束按顺序收尾。
-- **服务器重启**：读取持久状态；不会后台自动重新开播。点击开始恢复或结束收尾。
-- **异常退出留下 control.lock**：锁文件含旧进程 PID。先确认旧 LivePilot 服务已经退出，再运行 `npm run recover:lock`。该命令只在 PID 不存在时删除锁；若 PID 已复用，请人工核对进程后处理，不强行解除。
-- **状态损坏**：保留 `.data`，先到 Studio / OBS 核对当前直播并结束，再恢复备份。不要直接删除整个目录，否则会丢失归属与恢复依据。
-- **外部改动**：不要在直播时并行操作 OBS/Studio；如已改动，用结束流程核对恢复，不猜测归属。
-
-## 安全与边界
-
-- 服务仅绑定 127.0.0.1，不公开到 LAN 或公网。不提供多用户认证；这是本人本机控制台。
-- API 检查 Host；写请求检查 Origin 和专用头，拒绝跨站控制与 DNS rebinding Host。
-- 服务模块使用 `server-only`，浏览器只 import shared types。
-- 不记录 Stream Key、OBS 密码、OAuth Token、Client Secret；原始上游错误被替换为可操作的安全提示。
-- 开发请求日志关闭，避免 OAuth callback 查询串被写入终端。
-- `.env.local`、`.data`、依赖、日志、构建产物均被 Git 忽略。Windows 请确保项目和 OBS 目录仅本人可信账号可读；POSIX mode 不是 Windows ACL 的替代品。
-- 本机管理员或同一用户进程属于信任边界之内，不承诺防止本机恶意进程。
-
-## 验证
-
-```powershell
-npm run typecheck
-npm run lint
-npm test
-npm run build
-# 或
 npm run verify
+npm run start
 ```
 
-单元测试使用注入的 OBS / YouTube 适配器，验证严格顺序、live/complete 读回、各阶段失败停止、超时恢复、重启恢复、互斥、路径越界、加密和 Origin/Host 保护。**通过这些测试不代表真实开播已验收。**
+不要同时运行 dev 和 start。默认固定监听 127.0.0.1:3010；若必须改端口，同时调整 package.json 中 dev/start 参数、LIVEPILOT_ORIGIN 和 Google redirect URI。不要把服务暴露到局域网或公网。
 
-真实验收必须由本人完成：
+## 6. 双账号真实验收
 
-- [ ] 填好本机配置，启动/检查专用 OBS，LIVE / VIDEO / MUSIC 校验通过。
-- [ ] Google OAuth 授权正确频道，显示 Connected。
-- [ ] 选择真实视频和音乐，确认原声 OFF 时只有音乐；另场 ON 时听到视频原声。
-- [ ] 从网页启动原本关闭的 OBS，显示 Ready。
-- [ ] 从网页开始直播，OBS 自动推流，YouTube Studio 和观看页真实有音画。
-- [ ] LIVE、ingest active、lifecycle live 一致；检查循环衔接。
-- [ ] 从网页结束，YouTube complete、OBS inactive、OBS 程序仍运行。
-- [ ] 再开一场；验证刷新/服务重启后的恢复操作。
+单账号开停播已由用户反馈测试成功。升级后的多实例自动化测试使用模拟 OBS/YouTube；**不能代替双账号真实并发验收**。
 
-## 历史参考与复用说明
+- 两个 OBS 都 Ready、每个面板显示不同且正确的频道。
+- 两边选择不同媒体或原声开关，各自开始，YouTube Studio 均显示正确音画。
+- 两边同时 LIVE，观察编码负载、丢帧、网络上传。
+- 只结束 A，确认 A 的 YouTube complete / OBS inactive，而 B 仍在直播。
+- 再结束 B；两份 OBS 程序仍可运行。
+- 重新打开 LivePilot 能读取已保存状态和各自授权。
+- 增加第三个配置时出现第三面板，不能串用其他实例的密码、媒体选择和频道。
+- 真实网络故障、长时间循环、并发硬件容量仍需按本机条件验收。
 
-只读查看旧仓库 commit `9231296f1a0e2405862f7fd6703bc9e2d3dfa710` 下的 `src/server/youtubeAuth.ts` 与 `src/server/youtubeApi.ts`。
+## 常见问题与恢复
 
-**没有复制或迁移旧文件。** 新代码独立编写，仅参考值得保留的设计：OAuth 服务端边界、PKCE/一次性事务、Token 加密与刷新去重、YouTube bind / ingest / transition 后读回。旧代码的 FFmpeg Worker、Job/Run 模型、历史 UI、数据库与配置均未迁移。旧仓库不作为新项目的 Git remote。
+| 现象 | 处理 |
+| --- | --- |
+| OBS Offline | 检查该面板对应的 exe、WebSocket 启用状态、端口、密码；用“启动 OBS”启动指定程序。进程已运行不代表 WebSocket 已 Ready |
+| Windows 进程或端口查询超时 | 此时尚未启动 OBS；检查系统负载后重试。新版使用原生 netstat 读取端口 PID，避免 Get-NetTCPConnection 的慢速查询 |
+| 多个实例同一路径或端口 | 每份 Portable OBS 独立目录和端口，改完 OBS 与 env 后重启服务 |
+| 开始按钮不能点 | 看按钮下原因；媒体必须实际存在并选中、频道连接成功、配置齐全、状态未过期 |
+| LIVE 缺少 VIDEO / MUSIC | 每份 OBS 都按标准建媒体源，检查拼写、全局音频及其他场景项 |
+| 黑屏或无声 | 检查对应 OBS 预览、VIDEO 变换、音轨/混音、电平与编码配置；原声 OFF 时仍应有 MUSIC |
+| OAuth 403 / access_denied | 在同一 Google 项目的 Audience → Test users 加入当前登录邮箱 |
+| redirect_uri_mismatch | Web application 客户端添加完整 3010/api/youtube/callback，127.0.0.1 与 localhost 不混用 |
+| 一周后需要重新连接 | Testing 的授权有效期限制；在对应面板重新授权，未结束场次只能授权原频道 |
+| YouTube complete 失败 | 在对应频道的 Studio 手动核对并结束场次，再回面板重试结束。未开始的场次可能需在 Studio 删除 |
+| 创建结果不确定 | 不要删除 .data，也不要重复盲建；重试会按持久化标题查找。仅确认 Studio 中不存在时用 Advanced 恢复 |
+| 锁文件残留 | 先确认旧服务已退出，执行下面的锁恢复命令；程序会拒绝删除仍有存活 PID 的锁 |
+| 新电脑无法解密 | 新电脑应生成自己的密钥并重新授权。现有电脑意外换密钥则恢复原密钥，不清空直播状态 |
+| 第二频道授权成主频道 | 重新授权选择正确账号/品牌频道；服务端会拒绝两个实例绑定同一频道 |
 
-协议依据：[OBS WebSocket v5](https://github.com/obsproject/obs-websocket/blob/master/docs/generated/protocol.md)、[obs-websocket-js](https://github.com/obs-websocket-community-projects/obs-websocket-js)、[YouTube Live API](https://developers.google.com/youtube/v3/live/docs)。
+锁恢复默认处理主实例 control.lock；额外锁只按错误中指示的类型处理：
 
-## 未来路线（当前不实现）
+```powershell
+npm run recover:lock -- main
+npm run recover:lock -- obs_a
+npm run recover:lock -- obs_a tokens
+npm run recover:lock -- main oauth-bindings
+```
 
-**Phase 2**：一机多个 Portable OBS；每个对应一个 Channel；独立控制、Start All / Stop All、Media Preset 批量分发。
+这不会停止 YouTube 或 OBS，也不删除控制状态或 Token。若 PID 无法验证，请人工核对，不强行删锁。
 
-**长期**：中央 LivePilot → 多台电脑的 Local Agent → 各自多个 OBS。中央只发控制命令，不接收或转发媒体流；视频/音频永远由直播电脑的 OBS 直接发送 YouTube。
+## 架构、工程和后续路线
 
-当前只有一个 `ObsInstance` 和 `LocalObsRuntime`。`ObsRuntime` 定义状态、就绪、媒体配置、推流配置及开始/停止控制接口；未来 `RemoteObsRuntime` 可以实现同一控制边界。当前没有 Remote Agent 的实现、路由、进程、数据库或占位 UI。
+详细模块、HTTP 契约、存储及恢复见 [架构文档](docs/ARCHITECTURE.md)；验证边界见 [验证记录](docs/VALIDATION.md)。`src/app/console.tsx` 管理实例清单，`instance-console.tsx` 展示单实例，`use-instance.ts` 管理独立状态；`src/server/service.ts` 注入对应 OBS、YouTube 和 Store，`control.ts` 执行严格开停播顺序。
+
+main 数据仍位于 .data 根目录；其他数据位于 .data/instances/<id>。Token 使用 AES-256-GCM 加密，状态原子写入，互斥按实例生效。进程归属通过 Win32_Process 的 exe 真实路径与原生 netstat 监听 PID 交叉核对；不使用可能很慢的 Get-NetTCPConnection。浏览器只接触媒体文件名与状态 DTO；Stream Key 和密码不进入日志。OBS 本身保存的配置也应受本机权限保护。
+
+`npm run verify` 包括 strict typecheck、ESLint、Vitest 和生产 build。next-env.d.ts 是 Next.js 生成的类型声明，package-lock.json 固定依赖，不手改生成文件。开发前阅读 [工程协作规范](docs/工程协作规范.md) 与 [PR 撰写规范](docs/PR撰写规范.md)，分支和提交按规范命名。
+
+当前完成同机多 OBS 独立控制。后续才做 Start All / Stop All、Media Preset 批量分发。长期通过 RemoteObsRuntime / Local Agent 扩展到多电脑；当前只实现 LocalObsRuntime，中央服务器未来也只发送控制命令，永远不转发媒体流。
