@@ -534,3 +534,27 @@ footer {
     transition: none!important
   }
 }
+
+
+/* 观看入口与开停播按钮分开，保留键盘焦点和足够大的点击区域。 */
+.watch-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-top: 8px;
+  padding: 6px 0;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.watch-link:hover {
+  color: #174c31;
+}
+.watch-link:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}

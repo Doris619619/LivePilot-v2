@@ -9,7 +9,7 @@ function time(ms: number) {
   return [Math.floor(s / 3600), Math.floor(s / 60) % 60, s % 60].map(v => String(v).padStart(2, "0")).join(":");
 }
 
-/** 一个面板只控制所属实例；标题持续显示所属频道以降低误操作。 */
+/** 一个面板只控制所属实例；观看链接使用其当前或最近场次 ID，结束后保留且不触发控制操作。 */
 export default function InstanceConsole({ instance }: { instance: InstanceDescriptor }) {
   const { id, name } = instance;
   const model = useInstance(id);
@@ -61,6 +61,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
       </div>
       <p className={"readiness " + (!blocker ? "ready" : "")} id={"readiness-" + id}>{blocker || "准备就绪 · 点击后将自动启动 OBS 并开播"}</p>
       <p className="privacy">{privacy} · {data?.configuration.madeForKids ? "面向儿童" : "非面向儿童"} · 结束后 OBS 保持运行</p>
+      {data?.state.broadcastId && <a className="watch-link" href={"https://www.youtube.com/watch?v=" + encodeURIComponent(data.state.broadcastId)} target="_blank" rel="noopener noreferrer" aria-label={name + "：打开直播页面（新标签页）"}>打开直播页面 <span aria-hidden="true">↗</span></a>}
     </section>
     <section className="monitor" aria-label={name + " 直播状态"}>
       <div className="monitor-top"><div><h3>直播状态</h3><p className="timer-label">OBS 实际推流时长</p></div><div className="timer">{stale ? "—" : data?.obs.streaming ? time(data.obs.durationMs || 0) : "00:00:00"}</div></div>

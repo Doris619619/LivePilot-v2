@@ -44,3 +44,12 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 - npm run verify 全部通过：8 个测试文件、80 项测试、strict typecheck、lint、生产构建。
 - 通过与网页相同的 POST /api/control（action=launch，instanceId=main）真实启动 OBS B，约 17.3 秒返回成功。随后只读确认 A/B 均 Ready，scene LIVE，OBS 均未推流。
 - 此次不关闭 OBS、不创建 YouTube 场次、不操作真实开始/结束直播。前文 A 尚未设置 WebSocket 的记录为本次修复前的历史状态；用户现已完成相应配置。
+
+## 直播观看链接（同日后续）
+
+- 每个面板在开停播按钮下显示所属场次的“打开直播页面 ↗”，使用当前 broadcastId 生成 YouTube watch URL。
+- 真实浏览器核对两个面板的链接分别匹配各自场次，目标不同；均为新标签页，带 noopener noreferrer，点击区域高度 44px。已目视检查入口显示。
+- 只读确认两路 OBS 均 Active、YouTube ingest active、lifecycle live。此项更新没有重启服务或执行开始/结束直播。
+- npm run verify 再次全部通过：8 个文件 / 80 项测试、strict typecheck、lint、生产构建。此次为普通链接展示，未新增重复实现的单元测试。
+- 代码检查确认无 broadcastId 时不显示入口，结束后保留最近场次 ID；未为验证链接而结束当前直播，也未验证结束后的实际 YouTube 回放可用性。
+- 前文第二频道尚待授权及双路 LIVE 的记录为早期状态；现已只读确认两个不同频道同时 LIVE。音画、单独停止隔离及长时间并发仍需实际验收。
