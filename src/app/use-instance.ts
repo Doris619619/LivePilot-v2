@@ -2,6 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dashboard, Selection } from "@/shared/types";
+import { api } from "./client-request";
 import { startBlocker } from "@/shared/readiness";
 
 /** 仅保存媒体名称及原声选项，不保存路径或授权信息。 */
@@ -29,10 +30,18 @@ export function useInstance(id: string) {
     if (fetching.current) return;
     fetching.current = true;
     try {
-      const response = await fetch("/api/status?instanceId=" + encodeURIComponent(id), { cache: "no-store", signal: AbortSignal.timeout(60_000) });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "无法读取实例状态");
+      const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(id), { signal: AbortSignal.timeout(60_000) });
       setData(result); setStale(false);
+      // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
+      try {
+        const key = "livepilot-request-" + id;
+        const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+        if (saved?.requestId === result.operation?.id) sessionStorage.removeItem(key);
+      } catch { /* 禁用浏览器存储不影响真实状态显示。 */ }
+      if (result.state.selection && !["idle", "stopped"].includes(result.state.phase)) {
+        const actual = result.state.selection;
+        setSelection(previous => JSON.stringify(previous) === JSON.stringify(actual) ? previous : actual);
+      }
       if (!initialized.current) {
         initialized.current = true;
         const active = result.state.phase !== "stopped" && result.state.phase !== "idle";
@@ -47,7 +56,10 @@ export function useInstance(id: string) {
   useEffect(() => {
     const first = setTimeout(() => void refresh(), 0);
     const interval = setInterval(() => void refresh(), 5000);
-    return () => { clearTimeout(first); clearInterval(interval); };
+    /** 素材发布后刷新列表，不自动选择或替换当前直播内容。 */
+    const mediaUpdated = () => { void refresh(); };
+    window.addEventListener("livepilot-media-updated", mediaUpdated);
+    return () => { clearTimeout(first); clearInterval(interval); window.removeEventListener("livepilot-media-updated", mediaUpdated); };
   }, [refresh]);
 
   /** 修改当前实例草稿，在 OAuth 页面往返后仍可恢复选择。 */
@@ -60,16 +72,27 @@ export function useInstance(id: string) {
   async function act(action: string) {
     if (acting.current) return;
     acting.current = true; setWorking(action); setError("");
+    const payload = { instanceId: id, ...(action === "connect" ? {} : action === "start" ? { action, ...selection } : action === "clear-uncertain" ? { action, confirmed } : { action }) };
+    const key = "livepilot-request-" + id;
+    let requestId = crypto.randomUUID();
     try {
-      const response = await fetch(action === "connect" ? "/api/youtube/connect" : "/api/control", {
+      const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (saved?.payload === JSON.stringify(payload)) requestId = saved.requestId;
+      if (action !== "connect") sessionStorage.setItem(key, JSON.stringify({ payload: JSON.stringify(payload), requestId }));
+    } catch { /* 浏览器禁用存储时仍使用本次唯一标识。 */ }
+    try {
+      const result = await api<{ url?: string }>(action === "connect" ? "/api/youtube/connect" : "/api/control", {
         method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" },
-        body: JSON.stringify({ instanceId: id, ...(action === "connect" ? {} : action === "start" ? { action, ...selection } : action === "clear-uncertain" ? { action, confirmed } : { action }) }),
+        body: JSON.stringify({ ...payload, ...(action === "connect" ? {} : { requestId }) }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "操作失败，请核对状态后重试");
+      try { sessionStorage.removeItem(key); } catch { /* 受理结果已确认。 */ }
       if (result.url) { window.location.assign(result.url); return; }
       if (action === "clear-uncertain") setConfirmed(false);
-    } catch (e) { setError(e instanceof Error ? e.message : "请求中断，请核对状态后重试"); }
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status && status < 500) { try { sessionStorage.removeItem(key); } catch { /* 明确拒绝的请求不保留。 */ } }
+      setError(e instanceof Error ? e.message : "请求中断，结果待确认，请核对状态后重试");
+    }
     finally { acting.current = false; setWorking(""); await refresh(); }
   }
   const busy = !!working || !!data?.busy;
@@ -77,5 +100,5 @@ export function useInstance(id: string) {
   const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
   const locked = busy || live || pending;
   const blocker = startBlocker(data, selection, busy, stale, live);
-  return { data, selection, select, working, error: stale ? readError : error, stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
+  return { data, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
 }
