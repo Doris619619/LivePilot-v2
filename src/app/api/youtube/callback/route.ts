@@ -1,4 +1,6 @@
 /** 将 OAuth 回调交还发起实例；state、Cookie、磁盘事务三者必须匹配。 */
+import { authenticate } from "@/server/access";
+import { audit } from "@/server/audit";
 import { NextRequest, NextResponse } from "next/server";
 import { guard } from "@/server/http";
 import { config, requireInstance } from "@/server/config";
@@ -11,19 +13,21 @@ export async function GET(request: NextRequest) {
   let id: string | undefined;
   try {
     guard(request);
+    const user = await authenticate(request);
     const oauthState = request.nextUrl.searchParams.get("state") || "";
     const match = /^([a-z][a-z0-9_]{0,31})\.[a-f0-9]{64}$/.exec(oauthState);
     if (!match) throw new AppError("OAUTH_STATE", "授权回调无效，请从对应 OBS 面板重新连接。");
     id = requireInstance(match[1]);
     const app = service(id);
-    await app.control.exclusive(async () => {
+    await app.commands.withIdle(() => app.control.exclusive(async () => {
       const state = await app.control.state();
-      await app.auth.finish(request.cookies.get("livepilot_oauth_" + id)?.value || "", oauthState, request.nextUrl.searchParams.get("code") || "", state.phase !== "stopped" ? state.channelId : undefined);
-    });
+      await app.auth.finish(request.cookies.get("livepilot_oauth_" + id)?.value || "", oauthState, request.nextUrl.searchParams.get("code") || "", state.phase !== "stopped" ? state.channelId : undefined, user.username);
+    }));
+    await audit(user.username, "youtube-auth", id, "connected");
     app.invalidate();
   } catch (e) { error = safeError(e); }
   const response = NextResponse.redirect(config().origin + (error ? "/?oauth=failed" : "/?oauth=connected") + (id ? "#instance-" + id : ""), 303);
-  if (id) response.cookies.set("livepilot_oauth_" + id, "", { path: "/api/youtube", maxAge: 0, httpOnly: true, sameSite: "lax" });
+  if (id) response.cookies.set("livepilot_oauth_" + id, "", { path: "/api/youtube", maxAge: 0, secure: config().origin.startsWith("https:"), httpOnly: true, sameSite: "lax" });
   if (error) response.cookies.set("livepilot_notice", encodeURIComponent(error), { path: "/", maxAge: 120, sameSite: "strict" });
   return response;
 }

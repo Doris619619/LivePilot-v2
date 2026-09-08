@@ -1,11 +1,11 @@
 <!-- 文件用途：定义本项目开发边界、协作规范与验证要求。 -->
 # LivePilot v2
 
-This is a new, independent single-machine MVP. Never modify or import the complete old LivePilot repository.
+This is an independent control service on one Windows broadcast machine, accessible by authenticated remote browsers. Never modify or import the complete old LivePilot repository.
 
 Before changing Next.js code, read relevant guides under node_modules/next/dist/docs/. Use the installed documentation, not assumptions about older versions.
 
-Keep one Windows machine, multiple dedicated Portable OBS instances, one distinct channel per instance, LIVE / VIDEO / MUSIC. Keep secrets server-only. No FFmpeg worker, Job/Run platform or remote agent. Preserve main legacy configuration and authorization. Read docs/工程协作规范.md and docs/PR撰写规范.md before changes; follow their branch, commit, documentation and PR formats.
+Keep one Windows broadcast machine, multiple dedicated Portable OBS instances, one distinct channel per instance, LIVE / VIDEO / MUSIC. Members share control permissions; uploads land on this machine before playback. Keep secrets server-only. No FFmpeg worker, Job/Run platform or remote agent. Preserve main legacy configuration and authorization. Read docs/工程协作规范.md and docs/PR撰写规范.md before changes; follow their branch, commit, documentation and PR formats.
 
 Never perform a real broadcast or OAuth consent as a test without the user completing/authorizing that step. Unit tests and local HTTP checks are not evidence of real streaming.
 

@@ -8,7 +8,7 @@ import { store, Store, seal, unseal } from "../storage";
 import { AppError } from "../errors";
 type Tokens = { accessToken: string; refreshToken: string; expiresAt: number; channelId: string; channel: string };
 type TokenReply = { access_token?: string; refresh_token?: string; expires_in?: number };
-type Transaction = { instanceId: string; state: string; verifier: string; expiresAt: number };
+type Transaction = { actor?: string; instanceId: string; state: string; verifier: string; expiresAt: number };
 /** 用 Cookie 摘要定位内部事务文件，不把随机 Cookie 直接用作路径。 */
 const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /** 等长字节使用常量时间比较，避免 OAuth state 的逐字符比较。 */
@@ -40,14 +40,14 @@ export class YouTubeAuth {
     const value = await this.storage.read<string>("youtube.enc");
     return value ? unseal<Tokens>(value) : null;
   }
-  /** 保存一次性 PKCE 事务，生成绑定实例的 state 和浏览器 Cookie。 */
-  async begin() {
+  /** 保存绑定操作者与实例的一次性 PKCE 事务和浏览器 Cookie。 */
+  async begin(actor?: string) {
     const c = config();
     if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "请先配置 GOOGLE_CLIENT_ID 和 GOOGLE_CLIENT_SECRET。");
     const cookie = randomBytes(32).toString("hex");
     const state = this.instanceId + "." + randomBytes(32).toString("hex");
     const verifier = randomBytes(48).toString("base64url");
-    await this.storage.write("oauth-" + hash(cookie) + ".enc", seal({ instanceId: this.instanceId, state, verifier, expiresAt: Date.now() + 600_000 }));
+    await this.storage.write("oauth-" + hash(cookie) + ".enc", seal({ actor, instanceId: this.instanceId, state, verifier, expiresAt: Date.now() + 600_000 }));
     return { cookie, url: "https://accounts.google.com/o/oauth2/v2/auth?" + new URLSearchParams({
       client_id: c.clientId, redirect_uri: c.redirectUri, response_type: "code",
       scope: "https://www.googleapis.com/auth/youtube", access_type: "offline",
@@ -55,8 +55,8 @@ export class YouTubeAuth {
       code_challenge: createHash("sha256").update(verifier).digest("base64url"),
     }) };
   }
-  /** 原子认领事务后验证 Cookie/state/实例，确认频道再保存新授权。 */
-  async finish(cookie: string, state: string, code: string, expectedChannel?: string) {
+  /** 原子认领事务后验证操作者、Cookie/state/实例，确认频道再保存新授权。 */
+  async finish(cookie: string, state: string, code: string, expectedChannel?: string, actor?: string) {
     if (!/^[a-f0-9]{64}$/.test(cookie) || !state || !code) throw new AppError("OAUTH_STATE", "授权回调无效，请从本页面重新连接。");
     const filename = path.join(this.storage.dir, "oauth-" + hash(cookie) + ".enc");
     const claimed = filename + ".claimed";
@@ -64,7 +64,7 @@ export class YouTubeAuth {
     let tx: Transaction;
     try { tx = unseal<Transaction>(JSON.parse(await readFile(claimed, "utf8"))); }
     finally { await unlink(claimed); }
-    if (tx.instanceId !== this.instanceId || tx.expiresAt < Date.now() || !same(tx.state, state)) throw new AppError("OAUTH_STATE", "授权校验失败，请在发起授权的浏览器中重试。");
+    if (tx.actor !== actor || tx.instanceId !== this.instanceId || tx.expiresAt < Date.now() || !same(tx.state, state)) throw new AppError("OAUTH_STATE", "授权校验失败，请在发起授权的浏览器中重试。");
     const c = config();
     const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: c.redirectUri, grant_type: "authorization_code", code, code_verifier: tx.verifier });
     if (!reply.refresh_token) throw new AppError("GOOGLE_AUTH", "Google 没有返回离线授权。请在 Google 账号中撤销本应用授权后重新连接。");

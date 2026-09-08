@@ -1,11 +1,20 @@
 <!-- 文件用途：指导新 Windows 电脑从克隆仓库到配置多个 OBS / YouTube 频道并进行真实开停播验收。 -->
 # LivePilot v2
 
-本机 OBS + YouTube 直播控制台。选择一个视频、一段音乐、设置视频原声 ON/OFF，在网页启动 OBS、开始直播、结束直播。
+支持成员登录、异地网页操作的 OBS + YouTube 直播控制台。选择一个视频、一段音乐、设置视频原声 ON/OFF，在网页启动 OBS、开始直播、结束直播。
 
 支持 **一台 Windows、多个独立 Portable OBS、每个 OBS 一个不同的 YouTube Channel**。实例数量通过配置扩展，不写死为两个。视频与音乐均循环播放；媒体由 OBS 直接发到 YouTube，LivePilot 只发控制命令。
 
-全新独立仓库：[Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)。旧 LivePilot 仅作只读历史参考。不实现上传、云存储、远程 Agent、FFmpeg Worker 或复杂 Job/Run。
+全新独立仓库：[Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)。旧 LivePilot 仅作只读历史参考。支持从操作电脑上传素材到直播电脑；不实现云存储、远程 Agent、FFmpeg Worker 或复杂 Job/Run。
+
+
+## 异地操作：A 打开网页，B 负责直播
+
+B 运行 LivePilot-v2、OBS 并保存媒体；A 只需要浏览器。素材在 B 时直接选择，在 A 时通过“上传这台电脑的素材”先传到 B。传输及校验完成后再开播；A 关闭网页不会停止 B 的直播。
+
+每位成员独立登录，共同管理全部实例。开停播先返回受理结果，再显示 B 的实际执行状态；上传支持 8 MiB 分片、断点续传，默认单文件上限 20 GiB。成员账号与 YouTube 账号是两套不同身份。
+
+本次代码可在本机先使用；**尚未部署公网网址、域名或 AWS**。公网入口接入、成员管理及异常恢复详见[远程控制与素材上传](docs/远程控制与素材上传.md)。
 
 ## 新电脑快速开始
 
@@ -95,7 +104,7 @@ D:\LiveMedia
     └── test.mp3
 ```
 
-`LIVEPILOT_MEDIA_ROOT=D:\LiveMedia`。默认所有实例共用这个只读媒体库，也可为某个实例单独指定 MEDIA_ROOT。没有上传服务，文件保存在直播电脑本机。
+`LIVEPILOT_MEDIA_ROOT=D:\LiveMedia`。默认所有实例共用这个媒体库，也可为某个实例单独指定 MEDIA_ROOT。文件保存在直播电脑；除了手工放入素材，也可登录网页后上传，支持分片续传。上传目录需要写权限和硬链接支持，建议使用本地 NTFS。
 
 支持视频 mp4/mkv/mov/webm/avi/m4v，音乐 mp3/wav/flac/aac/m4a/ogg；能否解码由 OBS 实际验证。扫描直接子文件，不递归子目录。文件名可用中文；网页传文件名，服务端解析绝对路径并校验真实路径，拒绝 ../、绝对路径及越界链接。
 
@@ -172,7 +181,7 @@ LIVEPILOT_MADE_FOR_KIDS=false
 
 | 环境变量 | 填什么 / 从哪里来 |
 | --- | --- |
-| LIVEPILOT_ORIGIN | 默认 http://127.0.0.1:3010；浏览器、服务监听端口、Google 回调三者一致 |
+| LIVEPILOT_ORIGIN | 默认 http://127.0.0.1:3010；公网时设为固定 HTTPS origin 并同步 Google 回调，B 内部服务仍监听 3010 |
 | LIVEPILOT_INSTANCES | 自己定义的稳定 ID 列表；至少 main；不是 OBS 名称或频道 ID |
 | LIVEPILOT_INSTANCE_MAIN_NAME | 网页显示名，可改；主实例 ID main 不改 |
 | LIVEPILOT_OBS_EXE | 主 OBS 的真实 obs64.exe 完整路径，在资源管理器找到 |
@@ -212,7 +221,7 @@ cd D:\Repo\LivePilot-v2
 npm run dev
 ```
 
-打开 [本机控制台](http://127.0.0.1:3010)。环境文件改动后，先在原 PowerShell 按 Ctrl+C，再重新执行 npm run dev。
+先在 B 的另一个终端执行 `npm run member -- create alice` 创建自己的成员账号，再打开[本机控制台](http://127.0.0.1:3010)登录。没有默认账号或密码。环境文件改动后，先在原 PowerShell 按 Ctrl+C，再重新执行 npm run dev。
 
 每个实例有独立面板：
 
@@ -235,7 +244,7 @@ npm run verify
 npm run start
 ```
 
-不要同时运行 dev 和 start。默认固定监听 127.0.0.1:3010；若必须改端口，同时调整 package.json 中 dev/start 参数、LIVEPILOT_ORIGIN 和 Google redirect URI。不要把服务暴露到局域网或公网。
+不要同时运行 dev 和 start。默认固定监听 127.0.0.1:3010；若必须改端口，同时调整 package.json 中 dev/start 参数、LIVEPILOT_ORIGIN 和 Google redirect URI。公网访问必须经过 HTTPS 入口和成员登录；配置方式见[远程控制与素材上传](docs/远程控制与素材上传.md)。不要直接暴露 OBS WebSocket。
 
 ## 6. 双账号真实验收
 

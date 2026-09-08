@@ -18,7 +18,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
   const privacy = { unlisted: "不公开列出", private: "私密", public: "公开" }[data?.configuration.privacy || "unlisted"];
   return <article className="instance-panel" id={"instance-" + id} aria-labelledby={"title-" + id}>
     <header className="panel-header">
-      <div><p className="instance-id">本机实例 / {id}</p><h2 id={"title-" + id}>{name}</h2><p className="channel-name">{data?.youtube.channel || "等待连接 YouTube 频道"}</p></div>
+      <div><p className="instance-id">直播实例 / {id}</p><h2 id={"title-" + id}>{name}</h2><p className="channel-name">{data?.youtube.channel || "等待连接 YouTube 频道"}</p></div>
       <span className={"state-pill " + (live ? "live" : "")}><span className="dot" />{stateLabel}</span>
     </header>
     <div className="connections">
@@ -66,6 +66,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     <section className="monitor" aria-label={name + " 直播状态"}>
       <div className="monitor-top"><div><h3>直播状态</h3><p className="timer-label">OBS 实际推流时长</p></div><div className="timer">{stale ? "—" : data?.obs.streaming ? time(data.obs.durationMs || 0) : "00:00:00"}</div></div>
       <p className="stage" role="status">{stale ? "等待重新连接" : working === "launch" ? "等待 OBS WebSocket 就绪" : data?.state.stage || "正在读取状态…"}</p>
+      {data?.operation && <p className="help">最近操作：{data.operation.actor} · {{ accepted: "已受理", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status]}</p>}
       <dl className="telemetry">
         <div><dt>OBS stream</dt><dd>{stale || data?.obs.streaming == null ? "Unknown" : data.obs.reconnecting ? "Reconnecting" : data.obs.streaming ? "Active" : "Inactive"}</dd></div>
         <div><dt>YouTube ingest</dt><dd>{stale ? "Unknown" : data?.youtube.ingest || "—"}</dd></div>
