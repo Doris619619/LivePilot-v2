@@ -40,7 +40,11 @@ install -d -m 755 -o livepilot -g livepilot "$release"
 # git archive 只复制受版本控制的文件，不复制开发电脑的 .env/.data/node_modules。
 git -c safe.directory="$source_root" -C "$source_root" archive HEAD | tar -x -C "$release"
 chown -R livepilot:livepilot "$release"
-runuser -u livepilot -- env -u NODE_ENV PATH="$PATH" NEXT_TELEMETRY_DISABLED=1 bash -c 'cd "$1" && npm ci && npm run verify' _ "$release"
+runuser -u livepilot -- env -u NODE_ENV PATH="$PATH" NEXT_TELEMETRY_DISABLED=1 bash -seu -- "$release" <<'BUILD'
+cd "$1"
+npm ci
+npm run verify
+BUILD
 backup="/var/backups/livepilot/$(date -u +%Y%m%dT%H%M%S)"
 install -d -m 700 "$backup"
 old_release=$(readlink -f /opt/livepilot/current || true)
@@ -66,7 +70,7 @@ rollback() {
   [[ ! -f "$backup/livepilot-cert-renew.timer" ]] || cp -a "$backup/livepilot-cert-renew.timer" /etc/systemd/system/livepilot-cert-renew.timer
   systemctl daemon-reload
   if $was_active; then systemctl restart livepilot || true; else systemctl stop livepilot || true; fi
-  nginx -t && systemctl reload nginx || true
+  if nginx -t; then systemctl reload nginx || true; fi
   echo "发布失败，已尝试恢复旧服务；保留发行目录与备份供检查：$backup"; exit "$status"
 }
 trap rollback ERR
