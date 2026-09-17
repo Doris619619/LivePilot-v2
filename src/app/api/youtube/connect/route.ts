@@ -1,4 +1,6 @@
 /** 从明确的实例面板发起 OAuth；每个实例使用独立浏览器事务 Cookie。 */
+import { cloudMode, target } from "@/server/remote";
+import { beginRemoteOAuth, oauthCookie } from "@/cloud/oauth";
 import { authenticate } from "@/server/access";
 import { readJson } from "@/server/request-body";
 import { audit } from "@/server/audit";
@@ -13,7 +15,11 @@ export async function POST(request: Request) {
   try {
     guard(request, true);
     const user = await authenticate(request);
-    const body = await readJson(request, 512) as { instanceId?: unknown };
+    const body = await readJson(request, 512) as { instanceId?: unknown; agentId?: unknown };
+    if (cloudMode()) {
+      const result = await beginRemoteOAuth(target(body), user.username); const response = NextResponse.json({ url: result.url });
+      response.cookies.set(oauthCookie(result.state), result.cookie, { httpOnly: true, sameSite: "lax", secure: true, path: "/api/youtube", maxAge: 600 }); return response;
+    }
     const id = requireInstance(body?.instanceId);
     const app = service(id);
     const result = await app.commands.withIdle(() => app.control.exclusive(() => app.auth.begin(user.username)));

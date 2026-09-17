@@ -11,16 +11,17 @@ function time(ms: number) {
 
 /** 一个面板只控制所属实例；观看链接使用其当前或最近场次 ID，结束后保留且不触发控制操作。 */
 export default function InstanceConsole({ instance }: { instance: InstanceDescriptor }) {
-  const { id, name } = instance;
-  const model = useInstance(id);
+  const { name } = instance; const id = instance.agentId ? instance.agentId + "-" + instance.id : instance.id;
+  const model = useInstance(instance);
   const { data, selection, working, error, stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker, select } = model;
   const stateLabel = stale ? "状态过期" : live ? "LIVE" : busy ? "处理中" : data?.state.phase === "error" ? "需要处理" : data?.state.phase === "live" ? "状态异常" : data?.state.phase === "stopped" ? "已结束" : "待机";
   const privacy = { unlisted: "不公开列出", private: "私密", public: "公开" }[data?.configuration.privacy || "unlisted"];
   return <article className="instance-panel" id={"instance-" + id} aria-labelledby={"title-" + id}>
     <header className="panel-header">
-      <div><p className="instance-id">直播实例 / {id}</p><h2 id={"title-" + id}>{name}</h2><p className="channel-name">{data?.youtube.channel || "等待连接 YouTube 频道"}</p></div>
+      <div><p className="instance-id">{instance.agentName || "本机"} / {instance.id}</p><h2 id={"title-" + id}>{name}</h2><p className="channel-name">{data?.youtube.channel || "等待连接 YouTube 频道"}</p></div>
       <span className={"state-pill " + (live ? "live" : "")}><span className="dot" />{stateLabel}</span>
     </header>
+    {data?.device && <p className="help">{data.device.online ? "直播电脑在线" : "直播电脑离线或状态过期"} · 最近通信 {data.device.lastSeen ? new Date(data.device.lastSeen).toLocaleTimeString("zh-CN", { hour12: false }) : "尚未连接"}</p>}
     <div className="connections">
       <div className="connection"><div><span className="connection-name">OBS</span><strong><span className={"dot " + (data?.obs.ready && !stale ? "on" : "")} />{stale ? "Unknown" : data?.obs.ready ? "Ready" : "Offline"}</strong></div>
         <button className="text-button" disabled={busy || !data || stale || data.obs.ready} onClick={() => void act("launch")}>{working === "launch" ? "正在启动…" : "启动 OBS"}</button>
@@ -30,7 +31,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
       </div>
     </div>
     {(error || data?.state.error || stale) && <p className="notice error" role="alert">{stale ? "此实例状态已过期：" + error : error || data?.state.error}</p>}
-    {!!data?.configuration.missing.length && <details className="setup" open><summary>还有配置未完成</summary><p>在 .env.local 填写以下变量并重启服务。查看仓库 README 的新电脑配置指南。</p><ul>{data.configuration.missing.map(key => <li key={key}><code>{key}</code></li>)}</ul></details>}
+    {!!data?.configuration.missing.length && <details className="setup" open><summary>还有配置未完成</summary><p>在对应直播电脑的配置文件中填写以下变量并重启服务。查看新电脑配置指南。</p><ul>{data.configuration.missing.map(key => <li key={key}><code>{key}</code></li>)}</ul></details>}
     <section className="media-section" aria-label={name + " 直播内容"}>
       <div className="section-heading"><h3>直播内容</h3><span>视频与音乐循环播放</span></div>
       <div className="media-fields">
@@ -66,7 +67,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     <section className="monitor" aria-label={name + " 直播状态"}>
       <div className="monitor-top"><div><h3>直播状态</h3><p className="timer-label">OBS 实际推流时长</p></div><div className="timer">{stale ? "—" : data?.obs.streaming ? time(data.obs.durationMs || 0) : "00:00:00"}</div></div>
       <p className="stage" role="status">{stale ? "等待重新连接" : working === "launch" ? "等待 OBS WebSocket 就绪" : data?.state.stage || "正在读取状态…"}</p>
-      {data?.operation && <p className="help">最近操作：{data.operation.actor} · {{ accepted: "已受理", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status]}</p>}
+      {data?.operation && <p className="help">最近操作：{data.operation.actor} · {{ queued: "等待设备接收", delivering: "等待设备确认", uncertain: "结果待核对", expired: "未接收已过期", accepted: "设备已接收", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status]}</p>}
       <dl className="telemetry">
         <div><dt>OBS stream</dt><dd>{stale || data?.obs.streaming == null ? "Unknown" : data.obs.reconnecting ? "Reconnecting" : data.obs.streaming ? "Active" : "Inactive"}</dd></div>
         <div><dt>YouTube ingest</dt><dd>{stale ? "Unknown" : data?.youtube.ingest || "—"}</dd></div>

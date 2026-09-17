@@ -1,4 +1,5 @@
 /** 文件完整校验在 B 上继续，浏览器轮询实际状态。 */
+import { cloudMode, queryTarget, remoteFinish } from "@/server/remote";
 import { after } from "next/server";
 import { authenticate } from "@/server/access";
 import { guard, failed } from "@/server/http";
@@ -12,6 +13,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     guard(request, true); const actor = (await authenticate(request)).username;
     const id = (await context.params).id;
     const instanceId = new URL(request.url).searchParams.get("instanceId") || "";
+    if (cloudMode()) return Response.json(await remoteFinish(queryTarget(request), actor, id), { status: 202, headers: { "Cache-Control": "no-store" } });
     const status = await prepareFinish(instanceId, actor, id);
     if (status.status !== "complete") after(async () => {
       try { await finishUpload(instanceId, actor, id); }

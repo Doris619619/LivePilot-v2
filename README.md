@@ -1,11 +1,23 @@
 <!-- 文件用途：指导新 Windows 电脑从克隆仓库到配置多个 OBS / YouTube 频道并进行真实开停播验收。 -->
 # LivePilot v2
 
+当前提供 **local 本地模式** 与 **cloud 多电脑模式**：云端负责登录、设备管理和任务派发；每台 Windows Agent 独立完成开停播、保存频道授权和素材。多个设备可以各自拥有 `main`。原本地配置及授权保持兼容。
+
+- **首次部署入口：[从零部署](docs/从零部署.md)**，包含 DNS、Google 回调、Ubuntu 部署、Windows 配置/代理/自启、诊断与回退。
+- 初始化：`npm run setup:cloud -- --domain <域名>`、`npm run setup:agent -- --domain <域名> --id <设备ID>`。
+- 多电脑接入、IP HTTPS、频道授权限制及迁移：[多电脑云端与 Agent](docs/多电脑云端与Agent.md)。
+- Agent 构建：`npm run agent:build`；配对：`npm run agent:pair`；启动：`npm run agent:start`。
+- 云端管理：`npm run agent:admin -- pair <设备ID> [名称]`、`list`、`revoke <设备ID>`。
+- 校验：`npm run verify` 包含网页及 Agent 构建；`scripts/cloud-smoke.mjs` 使用两个隔离 Agent 和空 OBS 配置验收网页与素材传输。
+
+以下原有本机配置说明适用于 local 模式及 Agent 的 OBS/素材配置；云端本身无需安装 OBS。
+
+
 支持成员登录、异地网页操作的 OBS + YouTube 直播控制台。选择一个视频、一段音乐、设置视频原声 ON/OFF，在网页启动 OBS、开始直播、结束直播。
 
 支持 **一台 Windows、多个独立 Portable OBS、每个 OBS 一个不同的 YouTube Channel**。实例数量通过配置扩展，不写死为两个。视频与音乐均循环播放；媒体由 OBS 直接发到 YouTube，LivePilot 只发控制命令。
 
-全新独立仓库：[Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)。旧 LivePilot 仅作只读历史参考。支持从操作电脑上传素材到直播电脑；不实现云存储、远程 Agent、FFmpeg Worker 或复杂 Job/Run。
+全新独立仓库：[Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)。旧 LivePilot 仅作只读历史参考。支持从操作电脑上传素材到直播电脑；提供独立远程 Agent；不实现整部素材的云端存储、FFmpeg Worker 或复杂 Job/Run。
 
 
 ## 异地操作：A 打开网页，B 负责直播
@@ -14,11 +26,11 @@ B 运行 LivePilot-v2、OBS 并保存媒体；A 只需要浏览器。素材在 B
 
 每位成员独立登录，共同管理全部实例。开停播先返回受理结果，再显示 B 的实际执行状态；上传支持 8 MiB 分片、断点续传，默认单文件上限 20 GiB。成员账号与 YouTube 账号是两套不同身份。
 
-本次代码可在本机先使用；**尚未部署公网网址、域名或 AWS**。公网入口接入、成员管理及异常恢复详见[远程控制与素材上传](docs/远程控制与素材上传.md)。
+仓库支持部署到 Linux 云端，并通过 HTTPS 域名连接 Windows Agent；部署流程见[从零部署](docs/从零部署.md)。本地托管模式的成员管理及异常恢复详见[远程控制与素材上传](docs/远程控制与素材上传.md)。
 
 ## 新电脑快速开始
 
-需要 Windows 10/11、Node.js 22 或更新的受支持版本（本项目验证使用 Node 22）、Git、OBS Studio 28+（内置 WebSocket v5）。下载入口：[Node.js](https://nodejs.org/en/download)、[Git for Windows](https://git-scm.com/downloads/win)、[OBS 官方下载](https://obsproject.com/download)。
+需要 Windows 10/11、Node.js 22.23+（22 系列）或 24+、Git、OBS Studio 28+（内置 WebSocket v5）。下载入口：[Node.js](https://nodejs.org/en/download)、[Git for Windows](https://git-scm.com/downloads/win)、[OBS 官方下载](https://obsproject.com/download)。
 
 如果正在测试尚未合并的 PR，克隆后先切换到该 PR 的源分支，再安装启动；合并后使用 main 即可。
 

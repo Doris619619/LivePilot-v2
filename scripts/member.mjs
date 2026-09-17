@@ -5,7 +5,8 @@ import { randomBytes, scrypt as derive } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, open, unlink } from "node:fs/promises";
 import path from "node:path";
 import nextEnv from "@next/env";
-nextEnv.loadEnvConfig(process.cwd());
+if (process.env.LIVEPILOT_ENV_FILE) process.loadEnvFile(process.env.LIVEPILOT_ENV_FILE);
+else nextEnv.loadEnvConfig(process.cwd());
 import { promisify } from "node:util";
 const [action, username] = process.argv.slice(2);
 if (!["create", "reset", "disable", "list"].includes(action) || (action !== "list" && !/^[a-z0-9_]{3,32}$/.test(username || ""))) {

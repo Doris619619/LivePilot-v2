@@ -53,3 +53,37 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 - npm run verify 再次全部通过：8 个文件 / 80 项测试、strict typecheck、lint、生产构建。此次为普通链接展示，未新增重复实现的单元测试。
 - 代码检查确认无 broadcastId 时不显示入口，结束后保留最近场次 ID；未为验证链接而结束当前直播，也未验证结束后的实际 YouTube 回放可用性。
 - 前文第二频道尚待授权及双路 LIVE 的记录为早期状态；现已只读确认两个不同频道同时 LIVE。音画、单独停止隔离及长时间并发仍需实际验收。
+
+
+## 2026-09-17 多电脑 Agent 改造
+
+- PR #2 合并基线为 ab247e9，开发保留 local 模式和原有 96 项回归。
+- 当前完整验证通过：类型检查、Lint、115 项测试 / 16 个文件、Next 生产构建和独立 Node Agent 构建。
+- scripts/cloud-smoke.mjs 启动隔离 HTTPS 云端和两个真实 Agent 进程，同名 main 实例隔离。成员登录/Secure Cookie、9 MiB 文件中断后刷新续传、目标媒体校验、另一设备不出现该素材、390/768/1440px 无横向溢出、关闭网页后操作结果、重复请求和跨站拒绝通过。截图在 docs/screenshots/cloud-console。
+- Agent 控制测试使用空 OBS 路径安全失败，不启动 OBS，不调用真实 OAuth 或 YouTube 推流。单元测试覆盖断线继续、重启不重放、丢失回执、跨设备频道冲突、撤销设备与身份隔离。
+- Windows 和 Lightsail Ubuntu 24.04 均执行完整 `npm run verify` 通过：115 项测试 / 16 文件、类型检查、Lint、Next 生产构建及 Agent 构建。Linux 使用本机 `npm ci` 安装依赖，不复制 Windows 依赖。
+- 实际 Lightsail 发布代码为 `bcfb09e`，使用 Nginx、systemd、独立低权限运行账号与持久数据目录。外网 `/api/health` 返回成功；真实 Chromium 在正常证书验证下完成登录，Secure 会话有效，未登录成员与无效设备凭据被拒绝，无页面运行错误。
+- 已签发受信任的短期 IP HTTPS 证书，启用每日两次自动续期 timer，`certbot renew --dry-run` 成功。未购买额外服务或域名。
+- 用户确认仅同步状态后，已备份并接入首台真实 Windows Agent（LiangYS-PC），云端和浏览器确认在线、main / obs_a 两个面板。原 control.json 哈希不变，未执行启动 OBS、开播或停播。OBS 当前未运行，旧记录仍为 live；两个频道授权刷新失败。配置比对确认原 Google/OBS 参数与 Agent 一致，需要用户重新授权后才能实播。
+- 首次 GitHub Windows CI 揭示旧安全测试直接比较临时目录短名与规范长名；修正断言为真实路径比较，18 项安全测试通过，未放宽素材边界校验。
+- 待实际验收：首台 Windows 重新授权并核对旧直播状态；两台 Windows 的独立测试频道实播、音画、断开云端后的完整开停播、跨网络大文件吞吐及长期运行。IP 网站不能作为 Google 普通网页 OAuth 回调，新增频道仍需先在目标电脑本地授权。
+
+## OAuth 错误提示编码修复
+
+- 回调交给 NextResponse 编码 Cookie，移除重复的手工编码，避免中文提示显示为百分号字符串。
+- 新增 HTTP 回归覆盖原始 Set-Cookie 单次解码与失败后的目标面板定位；频道归属保护和已有令牌保存行为不变。
+- 完整 npm run verify 通过：116 项测试、类型检查、Lint、生产构建与 Agent 构建；本地生产页面重启后，独立浏览器验证真实回调重定向呈现可读中文，未请求真实 Google 授权。
+
+
+## 2026-09-17 可复用部署工具
+
+- Windows 完整 `npm run verify` 通过：116 项业务测试、8 项部署测试、类型检查、Lint、Next 生产构建与独立 Agent 构建。
+- 部署测试在临时目录运行真实初始化 CLI，覆盖域名/配置注入拒绝、特殊字符、重复运行保留密钥、旧配置迁移及已配对身份保护；生成的 Nginx/systemd 文件不包含密钥。真实子进程经本地代理完成请求，验证启动前配置加载及带空格路径。
+- CI 增加 Linux ShellCheck 和真实 Nginx HTTP/HTTPS 配置解析；仅使用临时测试证书，不申请线上证书、不占用监听端口。
+- 新脚本覆盖 DNS 显式发布、配置初始化、Google 回调清单、Linux 构建发布及失败回退、Windows Agent 启动前代理加载、只读 doctor。Google 项目配置和频道同意仍由账号持有人完成。
+- 本轮未在全新付费主机执行完整安装器，未重启当前直播服务，也未执行真实频道授权或开停播。CI 的配置检查不等同外部 DNS/ACME/Google 或两台 Windows 实播验收。
+- 前面的 IP 部署及首次授权状态属于历史记录；新部署优先使用域名 HTTPS，完整操作见《从零部署》。运行凭据、主机配置和私有交付文件不进入 Git。
+
+- 首轮 Linux CI 的完整 verify 通过，ShellCheck 提示子 shell 引号及回退条件写法；改为明确 heredoc 与 if，不关闭规则。两平台 CI 独立完成，避免一个平台失败取消另一个平台的结果。
+
+- Nginx 非 root CI 校验使用临时高端口，避免生产 80/443 的 bind 权限限制；生产模板端口保持不变。健康检查设置连接/总时限，异常服务不会无限等待。

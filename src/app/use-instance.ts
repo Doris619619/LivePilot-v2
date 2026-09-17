@@ -1,7 +1,8 @@
 /** 为一个 OBS 面板管理状态轮询、媒体草稿及命令；各面板互不阻塞。 */
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Dashboard, Selection } from "@/shared/types";
+import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
+import { targetKey } from "@/shared/remote";
 import { api } from "./client-request";
 import { startBlocker } from "@/shared/readiness";
 
@@ -14,7 +15,8 @@ function readDraft(id: string): Selection | undefined {
 }
 
 /** 每个调用绑定一个稳定实例 ID；请求和草稿永远携带该 ID。 */
-export function useInstance(id: string) {
+export function useInstance(instance: InstanceDescriptor) {
+  const id = targetKey(instance); const instanceId = instance.id; const agentId = instance.agentId;
   const [data, setData] = useState<Dashboard>();
   const [selection, setSelection] = useState<Selection>({ video: "", music: "", videoAudio: false });
   const [working, setWorking] = useState("");
@@ -30,8 +32,8 @@ export function useInstance(id: string) {
     if (fetching.current) return;
     fetching.current = true;
     try {
-      const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(id), { signal: AbortSignal.timeout(60_000) });
-      setData(result); setStale(false);
+      const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
+      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
         const key = "livepilot-request-" + id;
@@ -50,7 +52,7 @@ export function useInstance(id: string) {
       }
     } catch (e) { setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
     finally { fetching.current = false; }
-  }, [id]);
+  }, [id, instanceId, agentId]);
 
   /** 挂载时读取状态；卸载时停止定期轮询。 */
   useEffect(() => {
@@ -72,7 +74,7 @@ export function useInstance(id: string) {
   async function act(action: string) {
     if (acting.current) return;
     acting.current = true; setWorking(action); setError("");
-    const payload = { instanceId: id, ...(action === "connect" ? {} : action === "start" ? { action, ...selection } : action === "clear-uncertain" ? { action, confirmed } : { action }) };
+    const payload = { instanceId, ...(agentId ? { agentId } : {}), ...(action === "connect" ? {} : action === "start" ? { action, ...selection } : action === "clear-uncertain" ? { action, confirmed } : { action }) };
     const key = "livepilot-request-" + id;
     let requestId = crypto.randomUUID();
     try {
@@ -100,5 +102,5 @@ export function useInstance(id: string) {
   const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
   const locked = busy || live || pending;
   const blocker = startBlocker(data, selection, busy, stale, live);
-  return { data, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
+  return { data, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
 }

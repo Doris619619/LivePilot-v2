@@ -1,0 +1,6 @@
+# 文件用途：续期短周期 IP 证书，并让 Nginx 重新加载已验证配置。
+[Unit]
+Description=Renew LivePilot IP HTTPS certificate
+[Service]
+Type=oneshot
+ExecStart=/opt/certbot/bin/certbot renew --quiet --deploy-hook "nginx -t && systemctl reload nginx"

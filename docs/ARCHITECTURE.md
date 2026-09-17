@@ -1,5 +1,7 @@
 <!-- 文件用途：记录本机多实例的边界、配置契约、存储隔离与未来控制接口。 -->
-# 本机多 OBS 架构
+# 本地核心与多电脑控制架构
+
+当前多电脑实现见 [多电脑云端与 Agent](多电脑云端与Agent.md)：完整 `Control`、OBS/YouTube、媒体及持久日志已提取到 `src/core`；独立 `src/agent` 在 Windows 执行；云端只维护设备身份、任务派发与快照。下面的本机数据契约继续适用于 local 模式及每个 Agent。
 
 LivePilot 是控制平面。当前支持一台 Windows 上配置任意数量的 Portable OBS，每个实例连接不同的 YouTube Channel。实际并发能力取决于编码器、显存、CPU、内存及上行带宽；代码不写死为两个实例。
 
@@ -37,7 +39,7 @@ Browser
 | POST /api/youtube/connect | JSON instanceId，返回 Google 授权地址 |
 | GET /api/youtube/callback | 共用回调地址，state 与独立 Cookie 定位发起实例 |
 
-当前远程能力是异地浏览器访问同一台 Windows 常驻服务；没有云端到 Windows 的 Agent。成员权限共享，上传落在该 Windows 的媒体库，命令完成与否以 operation 和实际 OBS/YouTube 状态为准。
+local 模式允许异地浏览器访问同一台 Windows；cloud 模式通过出站 HTTPS Agent 控制多台 Windows。成员权限共享，上传落在该 Windows 的媒体库，命令完成与否以 operation 和实际 OBS/YouTube 状态为准。
 
 状态接口独立轮询，服务端每实例去重同时读取，YouTube 状态缓存最多 30 秒。浏览器草稿仅保存文件名和原声选择，按 ID 分开；未结束场次优先使用服务端已有选择。状态过期或媒体不在列表时禁用 Start 并显示原因。观看链接由面板自己的 state.broadcastId 生成固定 YouTube watch URL，ID 经过 URL 编码；新标签页使用 noopener/noreferrer，不额外请求 API，也不触发直播控制。没有场次 ID 时不显示入口，结束后保留最近场次链接。没有模拟进度、模拟 LIVE 或模拟时长。
 
@@ -59,10 +61,14 @@ Stop：确认频道 → complete 并确认 → StopStream 并确认 inactive。c
 
 ## 未来接口与范围
 
-`ObsRuntime` 保留 status、ensureReady、validate、setMedia、setStream、startStream、stopStream 控制契约；当前只实现 `LocalObsRuntime`。未来 `RemoteObsRuntime` / Agent Runtime 可实现相同接口。
+`ObsRuntime` 保留 status、ensureReady、validate、setMedia、setStream、startStream、stopStream 控制契约；OBS 仍由 Agent 内的 `LocalObsRuntime` 控制；远程边界是完整直播任务，不把每个 OBS 方法变成远程 RPC。
 
-下一步：Start All / Stop All、Media Preset 批量分发。长期：多电脑、本机 Agent 控制多个 OBS、中央服务向 Agent 下发控制命令。中央服务永远不转发视频或音频媒体流。当前没有远程 Agent、FFmpeg Worker、调度或复杂 Job/Run。
+当前支持多电脑 Agent；云端只中转有界素材上传分片，不转发直播音视频流。尚未实现 Start All / Stop All、批量媒体分发、调度或 FFmpeg Worker。
 
 ## 历史来源
 
 本次只从旧仓库复制两份协作 Markdown，替换文档中的项目称谓为 LivePilot v2；没有复制业务代码或修改旧仓库。多实例实现基于新仓库已测试的单实例控制流程，保留其状态恢复与安全边界。
+
+## 部署配置与入口
+
+`scripts/setup-deployment.mjs` 仅初始化私有环境并输出 OAuth 清单；DNS 更新单独使用明确的 --apply。`deploy/install-cloud.sh` 在 Linux 构建、保留密钥、备份配置/数据，安装域名 HTTPS 与 systemd；失败回退程序而不覆盖任务数据。`scripts/agent-launch.mjs` 统一交互与登录任务的环境/代理加载顺序。外部账号审批和 Google 本人同意仍在平台完成，详见[从零部署](从零部署.md)。
