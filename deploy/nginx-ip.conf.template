@@ -1,0 +1,29 @@
+# 文件用途：替换 CONTROLLER_IP 后安装；只暴露 HTTPS，保留 IP 证书续期入口。
+server {
+    listen 80;
+    server_name CONTROLLER_IP;
+    access_log off;
+    location /.well-known/acme-challenge/ { root /var/www/livepilot-acme; }
+    location / { return 301 https://CONTROLLER_IP$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name CONTROLLER_IP;
+    ssl_certificate /etc/letsencrypt/live/CONTROLLER_IP/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/CONTROLLER_IP/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    access_log off;
+    # 避免将 OAuth 查询参数或设备凭据写入访问日志。
+    client_max_body_size 8m;
+    client_body_timeout 120s;
+    location / {
+        proxy_pass http://127.0.0.1:3010;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
+    }
+}

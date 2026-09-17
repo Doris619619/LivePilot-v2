@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import * as configs from "@/server/config";
+import * as configs from "@/core/config";
 import { Store, seal, unseal } from "@/server/storage";
 import { YouTubeAuth } from "@/server/youtube/auth";
 import { saveChannelBinding } from "@/server/youtube/bindings";

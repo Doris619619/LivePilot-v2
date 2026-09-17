@@ -53,3 +53,12 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 - npm run verify 再次全部通过：8 个文件 / 80 项测试、strict typecheck、lint、生产构建。此次为普通链接展示，未新增重复实现的单元测试。
 - 代码检查确认无 broadcastId 时不显示入口，结束后保留最近场次 ID；未为验证链接而结束当前直播，也未验证结束后的实际 YouTube 回放可用性。
 - 前文第二频道尚待授权及双路 LIVE 的记录为早期状态；现已只读确认两个不同频道同时 LIVE。音画、单独停止隔离及长时间并发仍需实际验收。
+
+
+## 2026-09-17 多电脑 Agent 改造
+
+- PR #2 合并基线为 ab247e9，开发保留 local 模式和原有 96 项回归。
+- 当前完整验证通过：类型检查、Lint、115 项测试 / 16 个文件、Next 生产构建和独立 Node Agent 构建。
+- scripts/cloud-smoke.mjs 启动隔离 HTTPS 云端和两个真实 Agent 进程，同名 main 实例隔离。成员登录/Secure Cookie、9 MiB 文件中断后刷新续传、目标媒体校验、另一设备不出现该素材、390/768/1440px 无横向溢出、关闭网页后操作结果、重复请求和跨站拒绝通过。截图在 docs/screenshots/cloud-console。
+- Agent 控制测试使用空 OBS 路径安全失败，不启动 OBS，不调用真实 OAuth 或 YouTube 推流。单元测试覆盖断线继续、重启不重放、丢失回执、跨设备频道冲突、撤销设备与身份隔离。
+- Linux 构建、实际 Lightsail 发布、实际 Windows 接入及两机实播验收按部署结果另行记录，不由以上测试替代。

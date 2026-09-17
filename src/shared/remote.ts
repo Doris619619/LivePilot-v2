@@ -1,0 +1,37 @@
+/** 云端与 Agent 的版本化白名单协议；浏览器 DTO 不含密钥和绝对路径。 */
+import { z } from "zod";
+import type { Dashboard, InstanceDescriptor } from "./types";
+export const PROTOCOL = 1;
+export const HEARTBEAT_MS = 5_000;
+export const OFFLINE_MS = 20_000;
+export const ACCEPT_MS = 60_000;
+export const idSchema = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/).refine(v => !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(v));
+export const uuidSchema = z.string().uuid();
+export const targetSchema = z.object({ agentId: idSchema, instanceId: idSchema });
+export type Target = z.infer<typeof targetSchema>;
+export const controlSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("start"), video: z.string().min(1).max(255), music: z.string().min(1).max(255), videoAudio: z.boolean() }).strict(),
+  z.object({ action: z.literal("stop") }).strict(), z.object({ action: z.literal("launch") }).strict(),
+  z.object({ action: z.literal("clear-uncertain"), confirmed: z.literal(true) }).strict(),
+]);
+export const uploadInputSchema = z.object({ kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive().max(20 * 1024 ** 3), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+export const taskPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("control"), input: controlSchema }).strict(),
+  z.object({ kind: z.literal("oauth-begin") }).strict(),
+  z.object({ kind: z.literal("oauth-finish"), cookie: z.string().regex(/^[a-f0-9]{64}$/), state: z.string().max(160), code: z.string().min(1).max(4096) }).strict(),
+  z.object({ kind: z.literal("upload-create"), input: uploadInputSchema, uploadId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("upload-status"), uploadId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("upload-finish"), uploadId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("upload-cancel"), uploadId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("upload-chunk"), uploadId: uuidSchema, offset: z.number().int().nonnegative(), hash: z.string().regex(/^[a-f0-9]{64}$/), slot: uuidSchema, size: z.number().int().positive().max(8 * 1024 ** 2) }).strict(),
+]);
+export type TaskPayload = z.infer<typeof taskPayloadSchema>;
+export const taskSchema = z.object({ protocol: z.literal(PROTOCOL), id: uuidSchema, agentId: idSchema, instanceId: idSchema, actor: z.string().regex(/^[a-z0-9_]{3,32}$/), expiresAt: z.number(), payload: taskPayloadSchema });
+export type RemoteTask = z.infer<typeof taskSchema>;
+export type DeliveryState = "queued" | "delivering" | "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "expired" | "uncertain";
+export const reportSchema = z.object({ id: uuidSchema, status: z.enum(["accepted", "running", "succeeded", "failed", "interrupted", "expired"]), result: z.unknown().optional(), error: z.string().max(500).optional(), httpStatus: z.number().int().min(400).max(599).optional() }).strict();
+export type TaskReport = z.infer<typeof reportSchema>;
+export type AgentSnapshot = { instance: InstanceDescriptor; dashboard: Dashboard; observedAt: number };
+export type AgentDescriptor = { id: string; name: string; online: boolean; lastSeen: number; revoked: boolean; instances: InstanceDescriptor[] };
+/** 设备和实例共同构成浏览器草稿、面板及请求的唯一身份。 */
+export function targetKey(target: { id: string; agentId?: string }) { return target.agentId ? `${target.agentId}:${target.id}` : target.id; }

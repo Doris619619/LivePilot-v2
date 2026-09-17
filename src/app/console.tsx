@@ -3,12 +3,15 @@
 import { useEffect, useState } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
 import UploadPanel from "./upload-panel";
+import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
 
 /** 加载公开实例清单，将每个实例交给独立面板管理。 */
 export default function Console() {
   const [instances, setInstances] = useState<InstanceDescriptor[]>([]);
+  const [agents, setAgents] = useState<AgentDescriptor[] | undefined>();
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   /** 页面只读取配置清单，不在挂载时启动 OBS 或直播。 */
@@ -22,20 +25,24 @@ export default function Console() {
         document.cookie = "livepilot_notice=; Max-Age=0; Path=/; SameSite=Strict";
       }
       try {
-        const result = await api<{ instances: InstanceDescriptor[] }>("/api/instances", { signal: abort.signal });
-        setInstances(result.instances);
+        const result = await api<{ instances: InstanceDescriptor[]; agents?: AgentDescriptor[] }>("/api/instances", { signal: abort.signal });
+        setInstances(result.instances); setAgents(result.agents); setLoaded(true); setError("");
       } catch (e) { if (!abort.signal.aborted) setError(e instanceof Error ? e.message : "请检查本机服务"); }
     }
-    void load();
-    return () => abort.abort();
+    void load(); const timer = setInterval(() => void load(), 10_000);
+    return () => { clearInterval(timer); abort.abort(); };
   }, []);
   return <main>
     <header className="masthead"><div><p className="eyebrow">REMOTE BROADCAST CONTROL</p><h1>LivePilot<span>.</span></h1><p className="intro">选好内容，让每个频道各自开播。</p></div><div className="local-label"><span className="dot on" />直播控制台<span className="instance-count">{instances.length} 个 OBS 实例</span></div></header>
     <div className="page-heading"><h2>直播工作台</h2><p>每个 OBS 连接一个 YouTube 频道，独立开始与结束。</p></div>
     {(error || notice) && <p className="notice error" role="alert">{error || notice}</p>}
-    {!instances.length && !error && <p role="status">正在读取直播实例…</p>}
+    {!loaded && !error && <p role="status">正在读取直播实例…</p>}
+    {loaded && !instances.length && <p role="status">尚无已连接的直播实例。请在直播电脑完成 Agent 配对并启动。</p>}
     {!!instances.length && <UploadPanel instances={instances} />}
-    <div className="instance-grid">{instances.map(instance => <InstanceConsole key={instance.id} instance={instance} />)}</div>
-    <footer><span>LivePilot v2 / 本机 OBS 直接推流到 YouTube</span><span>添加实例：编辑 .env.local 后重启服务</span></footer>
+    {agents ? agents.filter(a => !a.revoked).map(agent => <section key={agent.id} aria-label={agent.name}>
+      <div className="page-heading"><h2>{agent.name}</h2><p>{agent.online ? "在线" : "离线"}{agent.lastSeen ? " · 最近通信 " + new Date(agent.lastSeen).toLocaleTimeString("zh-CN", { hour12: false }) : " · 等待首次连接"}</p></div>
+      <div className="instance-grid">{instances.filter(i => i.agentId === agent.id).map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} />)}</div>
+    </section>) : <div className="instance-grid">{instances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} />)}</div>}
+    <footer><span>LivePilot v2 / 直播电脑直接推流到 YouTube</span><span>{agents ? "已接收的任务由直播电脑独立完成" : "添加实例：编辑本机配置后重启服务"}</span></footer>
   </main>;
 }

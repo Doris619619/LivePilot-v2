@@ -1,4 +1,6 @@
 /** 将 OAuth 回调交还发起实例；state、Cookie、磁盘事务三者必须匹配。 */
+import { cloudMode } from "@/server/remote";
+import { finishRemoteOAuth, oauthCookie } from "@/cloud/oauth";
 import { authenticate } from "@/server/access";
 import { audit } from "@/server/audit";
 import { NextRequest, NextResponse } from "next/server";
@@ -15,6 +17,12 @@ export async function GET(request: NextRequest) {
     guard(request);
     const user = await authenticate(request);
     const oauthState = request.nextUrl.searchParams.get("state") || "";
+    if (cloudMode()) {
+      const cookieName = oauthCookie(oauthState);
+      const destination = await finishRemoteOAuth(oauthState, request.cookies.get(cookieName)?.value || "", user.username, request.nextUrl.searchParams.get("code") || "");
+      const response = NextResponse.redirect(config().origin + "/?oauth=connected#instance-" + destination.agentId + "-" + destination.instanceId, 303);
+      response.cookies.set(cookieName, "", { path: "/api/youtube", maxAge: 0, secure: true, httpOnly: true, sameSite: "lax" }); return response;
+    }
     const match = /^([a-z][a-z0-9_]{0,31})\.[a-f0-9]{64}$/.exec(oauthState);
     if (!match) throw new AppError("OAUTH_STATE", "授权回调无效，请从对应 OBS 面板重新连接。");
     id = requireInstance(match[1]);

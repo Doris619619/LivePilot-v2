@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
+import { targetKey } from "@/shared/remote";
 import { api } from "./client-request";
 import { identify, transfer, uploadUrl } from "./upload-client";
 const KEY = "livepilot-upload";
@@ -11,10 +12,11 @@ function bytes(value: number) { return (value / 1024 ** 2).toFixed(1) + " MiB"; 
 /** 暂停后保留服务器上传记录，刷新时从本机保存的非秘密 ID 恢复。 */
 export default function UploadPanel({ instances }: { instances: InstanceDescriptor[] }) {
   const [record, setRecord] = useState<UploadStatus>();
-  const [instanceId, setInstanceId] = useState(instances[0]?.id || "main");
+  const [instanceId, setInstanceId] = useState(instances[0] ? targetKey(instances[0]) : "main");
   const [kind, setKind] = useState<"videos" | "music">("videos");
   const [file, setFile] = useState<File>(); const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState(""); const [error, setError] = useState("");
+  const createIntent = useRef<{ fingerprint: string; target: string; kind: string; requestId: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
   /** 存储只是续传提示，所有真实进度重新向服务器查询。 */
   function remember(next: UploadStatus) { setRecord(next); if (next.status === "complete") window.dispatchEvent(new Event("livepilot-media-updated")); try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* 禁用存储时本次上传仍可完成。 */ } }
@@ -24,7 +26,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     async function restore() {
       try {
         const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
-        if (saved?.id && saved.instanceId) { const next = await api<UploadStatus>(uploadUrl(saved)); if (active) { setRecord(next); setInstanceId(next.instanceId); setKind(next.kind); } }
+        if (saved?.id && saved.instanceId) { const next = await api<UploadStatus>(uploadUrl(saved)); if (active) { setRecord(next); setInstanceId(targetKey({ id: next.instanceId, agentId: next.agentId })); setKind(next.kind); } }
       } catch { if (active) setError("之前的上传记录暂时不可用。可重新连接后刷新，或选择忘记记录。"); }
     }
     void restore(); return () => { active = false; abort.current?.abort(); };
@@ -51,7 +53,10 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
         current = await api<UploadStatus>(uploadUrl(current), { signal: controller.signal });
         if (current.size !== file.size || current.fingerprint !== identity.fingerprint) throw new Error("所选文件与原上传不同，请选择原文件，或取消原上传后重新开始。");
       } else {
-        current = await api<UploadStatus>("/api/uploads", { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify({ instanceId, kind, filename: file.name, size: file.size, fingerprint: identity.fingerprint }) });
+        const destination = instances.find(i => targetKey(i) === instanceId);
+        if (!destination) throw new Error("请重新选择目标电脑和实例。");
+        if (!createIntent.current || createIntent.current.fingerprint !== identity.fingerprint || createIntent.current.target !== instanceId || createIntent.current.kind !== kind) createIntent.current = { fingerprint: identity.fingerprint, target: instanceId, kind, requestId: crypto.randomUUID() };
+        current = await api<UploadStatus>("/api/uploads", { method: "POST", signal: controller.signal, headers: { "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify({ instanceId: destination.id, agentId: destination.agentId, requestId: createIntent.current.requestId, kind, filename: file.name, size: file.size, fingerprint: identity.fingerprint }) });
       }
       remember(current); setStage("正在上传到直播电脑…");
       if (current.status === "uploading") await transfer(file, current, identity.hashes, controller.signal, remember);
@@ -72,7 +77,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
   }
   return <details className="upload-panel"><summary>上传这台电脑的素材</summary><p className="help">已有素材可直接在下方选择。上传的文件保存在直播电脑，传完并校验通过后即可选择；不会替换正在直播的内容。</p>
     <form onSubmit={submit} className="upload-form">
-      <div className="field"><label htmlFor="upload-instance">上传到哪个实例的素材库</label><select id="upload-instance" value={instanceId} disabled={!!record || busy} onChange={e => setInstanceId(e.target.value)}>{instances.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
+      <div className="field"><label htmlFor="upload-instance">上传到哪个实例的素材库</label><select id="upload-instance" value={instanceId} disabled={!!record || busy} onChange={e => setInstanceId(e.target.value)}>{instances.map(i => <option key={targetKey(i)} value={targetKey(i)}>{i.agentName ? i.agentName + " / " : ""}{i.name}</option>)}</select></div>
       <div className="field"><label htmlFor="upload-kind">素材类型</label><select id="upload-kind" value={kind} disabled={!!record || busy} onChange={e => setKind(e.target.value as "videos" | "music")}><option value="videos">视频</option><option value="music">音乐</option></select></div>
       <div className="field upload-file"><label htmlFor="upload-file">{record?.status === "complete" ? "已上传文件" : record ? "继续上传时重新选择原文件" : "选择本电脑文件"}</label><input id="upload-file" type="file" disabled={busy || (!!record && record.status !== "uploading")} accept={kind === "videos" ? ".mp4,.mkv,.mov,.webm,.avi,.m4v" : ".mp3,.wav,.flac,.aac,.m4a,.ogg"} onChange={e => setFile(e.target.files?.[0])} /></div>
       <div className="upload-actions">
@@ -83,7 +88,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
       </div>
     </form>
     {stage && <p role="status">{stage}</p>}
-    {record && <div className="upload-progress"><p>{record.filename} · {bytes(record.received)} / {bytes(record.size)}</p><progress max={record.size} value={record.received} aria-label="直播电脑已确认接收的字节" /><p role="status">{record.status === "complete" ? "已加入素材库：" + record.publishedName : record.status === "verifying" ? "正在直播电脑校验文件。关闭页面后仍会继续。" : "进度已保存在直播电脑；暂停后可继续。"}</p></div>}
+    {record && <div className="upload-progress"><p>{record.filename} · {bytes(record.received)} / {bytes(record.size)}</p><progress max={record.size} value={record.received} aria-label="直播电脑已确认接收的字节" /><p role="status">{record.status === "complete" ? "已加入素材库：" + record.publishedName : record.status === "verifying" ? "等待直播电脑完成校验。关闭页面后仍会继续。" : "进度已保存在直播电脑；暂停后可继续。"}</p></div>}
     {error && <p className="notice error" role="alert">{error}</p>}
   </details>;
 }

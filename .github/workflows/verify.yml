@@ -1,0 +1,19 @@
+# 文件用途：分别验证 Linux 云端与 Windows Agent，使用测试临时配置。
+name: Verify
+on:
+  push:
+  pull_request:
+jobs:
+  verify:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run verify

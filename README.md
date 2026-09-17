@@ -1,6 +1,16 @@
 <!-- 文件用途：指导新 Windows 电脑从克隆仓库到配置多个 OBS / YouTube 频道并进行真实开停播验收。 -->
 # LivePilot v2
 
+当前提供 **local 本地模式** 与 **cloud 多电脑模式**：云端负责登录、设备管理和任务派发；每台 Windows Agent 独立完成开停播、保存频道授权和素材。多个设备可以各自拥有 `main`。原本地配置及授权保持兼容。
+
+- 多电脑接入、IP HTTPS、频道授权限制及迁移：[多电脑云端与 Agent](docs/多电脑云端与Agent.md)。
+- Agent 构建：`npm run agent:build`；配对：`npm run agent:pair`；启动：`npm run agent:start`。
+- 云端管理：`npm run agent:admin -- pair <设备ID> [名称]`、`list`、`revoke <设备ID>`。
+- 校验：`npm run verify` 包含网页及 Agent 构建；`scripts/cloud-smoke.mjs` 使用两个隔离 Agent 和空 OBS 配置验收网页与素材传输。
+
+以下原有本机配置说明适用于 local 模式及 Agent 的 OBS/素材配置；云端本身无需安装 OBS。
+
+
 支持成员登录、异地网页操作的 OBS + YouTube 直播控制台。选择一个视频、一段音乐、设置视频原声 ON/OFF，在网页启动 OBS、开始直播、结束直播。
 
 支持 **一台 Windows、多个独立 Portable OBS、每个 OBS 一个不同的 YouTube Channel**。实例数量通过配置扩展，不写死为两个。视频与音乐均循环播放；媒体由 OBS 直接发到 YouTube，LivePilot 只发控制命令。

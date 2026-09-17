@@ -1,4 +1,6 @@
 /** 已登录成员创建媒体上传；实例与目标库来自服务端配置。 */
+import { cloudMode, target, uploadRpc } from "@/server/remote";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { authenticate } from "@/server/access";
 import { guard, failed } from "@/server/http";
@@ -10,9 +12,10 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     guard(request, true); const user = await authenticate(request);
-    const parsed = z.object({ instanceId: z.string(), kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive(), fingerprint: z.string().length(64) }).strict().safeParse(await readJson(request));
+    const parsed = z.object({ agentId: z.string().optional(), requestId: z.string().uuid().optional(), instanceId: z.string(), kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive(), fingerprint: z.string().length(64) }).strict().safeParse(await readJson(request));
     if (!parsed.success) throw new AppError("INPUT", "上传信息无效。");
-    const { instanceId, ...input } = parsed.data;
+    const { agentId, instanceId, requestId, ...input } = parsed.data;
+    if (cloudMode()) { const id = requestId || randomUUID(); return Response.json(await uploadRpc(target({ agentId, instanceId }), user.username, { kind: "upload-create", input, uploadId: id }, id), { status: 201, headers: { "Cache-Control": "no-store" } }); }
     return Response.json(await createUpload(instanceId, user.username, input), { status: 201, headers: { "Cache-Control": "no-store" } });
   } catch (e) { return failed(e); }
 }
