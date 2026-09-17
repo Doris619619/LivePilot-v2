@@ -1,5 +1,6 @@
+/** 验证本地素材真实路径边界、凭据加密和请求来源保护。 */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { resolveMedia, scanMedia } from "@/server/media";
@@ -18,10 +19,11 @@ async function folder() {
   return root;
 }
 describe("local media containment", () => {
+  /** 比较规范化路径，兼容 Windows CI 的 8.3 临时目录别名。 */
   it("lists only supported files and resolves paths on the server", async () => {
     const root = await folder(); await writeFile(path.join(root, "videos", "secret.txt"), "hidden");
     expect(await scanMedia(root)).toEqual({ videos: ["学习.mp4"], music: ["lofi.mp3"] });
-    expect(await resolveMedia(root, "videos", "学习.mp4")).toBe(path.join(root, "videos", "学习.mp4"));
+    expect(await resolveMedia(root, "videos", "学习.mp4")).toBe(await realpath(path.join(root, "videos", "学习.mp4")));
   });
   it.each(["../secret.mp4", "..\\secret.mp4", "C:\\secret.mp4", "/secret.mp4", "%2e%2e%2fsecret.mp4", "test.mp4:secret", "x\u0000.mp4", "..", "secret.txt"])("rejects traversal or invalid input %s", async filename => {
     const root = await folder(); await expect(resolveMedia(root, "videos", filename)).rejects.toThrow("文件名无效");
