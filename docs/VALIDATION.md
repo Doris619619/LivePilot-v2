@@ -64,5 +64,6 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 - Windows 和 Lightsail Ubuntu 24.04 均执行完整 `npm run verify` 通过：115 项测试 / 16 文件、类型检查、Lint、Next 生产构建及 Agent 构建。Linux 使用本机 `npm ci` 安装依赖，不复制 Windows 依赖。
 - 实际 Lightsail 发布代码为 `bcfb09e`，使用 Nginx、systemd、独立低权限运行账号与持久数据目录。外网 `/api/health` 返回成功；真实 Chromium 在正常证书验证下完成登录，Secure 会话有效，未登录成员与无效设备凭据被拒绝，无页面运行错误。
 - 已签发受信任的短期 IP HTTPS 证书，启用每日两次自动续期 timer，`certbot renew --dry-run` 成功。未购买额外服务或域名。
-- 线上首次核验时设备列表为空，尚未迁移真实 Windows 电脑。现有本机 `main`、`obs_a` 的旧直播记录和授权均未重置，未自动开播或停播。
-- 待实际验收：首台 Windows 接入前核对旧直播状态；两台 Windows 的独立测试频道实播、音画、断开云端后的完整开停播、跨网络大文件吞吐及长期运行。IP 网站不能作为 Google 普通网页 OAuth 回调，新增频道仍需先在目标电脑本地授权。
+- 用户确认仅同步状态后，已备份并接入首台真实 Windows Agent（LiangYS-PC），云端和浏览器确认在线、main / obs_a 两个面板。原 control.json 哈希不变，未执行启动 OBS、开播或停播。OBS 当前未运行，旧记录仍为 live；两个频道授权刷新失败。配置比对确认原 Google/OBS 参数与 Agent 一致，需要用户重新授权后才能实播。
+- 首次 GitHub Windows CI 揭示旧安全测试直接比较临时目录短名与规范长名；修正断言为真实路径比较，18 项安全测试通过，未放宽素材边界校验。
+- 待实际验收：首台 Windows 重新授权并核对旧直播状态；两台 Windows 的独立测试频道实播、音画、断开云端后的完整开停播、跨网络大文件吞吐及长期运行。IP 网站不能作为 Google 普通网页 OAuth 回调，新增频道仍需先在目标电脑本地授权。
