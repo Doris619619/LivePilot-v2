@@ -4,7 +4,7 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api } from "./client-request";
-import { LiveNestLogo, UserIcon, LogOutIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
+import { LiveNestLogo, UserIcon, LockIcon, LogOutIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
 type User = { username: string };
 
@@ -99,30 +99,40 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           <form onSubmit={submit} className="login-form">
             <div className="field-group">
               <label htmlFor="username" className="field-label">
-                <UserIcon /> 账号
+                账号
               </label>
-              <input
-                id="username"
-                name="username"
-                autoComplete="username"
-                pattern="[a-z0-9_]{3,32}"
-                minLength={3}
-                maxLength={32}
-                placeholder="管理员用户名"
-                required
-                disabled={busy}
-                autoFocus
-              />
+              <div className="input-field-wrapper">
+                <span className="input-icon-prefix">
+                  <UserIcon />
+                </span>
+                <input
+                  id="username"
+                  name="username"
+                  className="input-with-icon"
+                  autoComplete="username"
+                  pattern="[a-z0-9_]{3,32}"
+                  minLength={3}
+                  maxLength={32}
+                  placeholder="管理员用户名"
+                  required
+                  disabled={busy}
+                  autoFocus
+                />
+              </div>
             </div>
 
             <div className="field-group">
               <label htmlFor="password" className="field-label">
                 密码
               </label>
-              <div className="pass-field">
+              <div className="input-field-wrapper">
+                <span className="input-icon-prefix">
+                  <LockIcon />
+                </span>
                 <input
                   id="password"
                   name="password"
+                  className="input-with-icon input-with-action"
                   type={visible ? "text" : "password"}
                   autoComplete="current-password"
                   maxLength={256}
@@ -149,7 +159,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
               </div>
             )}
 
-            <button type="submit" className="btn-primary" disabled={busy} style={{ minHeight: "42px", marginTop: "4px" }}>
+            <button type="submit" className="btn-primary" disabled={busy} style={{ minHeight: "38px", marginTop: "4px" }}>
               {busy ? "验证中…" : "登 录"}
             </button>
           </form>

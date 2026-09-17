@@ -1,4 +1,4 @@
-/* 文件用途：LiveNest 专属清晰步骤指示器与状态徽标组件。 */
+/* 文件用途：LiveNest 专属清晰步骤指示器与紧凑状态徽标（参考现代企业级控制台风格）。 */
 
 import React from "react";
 
@@ -10,7 +10,7 @@ export interface StatusBadgeProps {
 }
 
 /**
- * 渲染紧凑清晰的状态药丸徽标。
+ * 渲染极简克制的状态药丸徽标。
  */
 export function StatusBadge({ status, label }: StatusBadgeProps) {
   return (
@@ -29,7 +29,7 @@ export interface StepSectionProps {
 }
 
 /**
- * 渲染 1, 2, 3, 4 结构化序号卡片分区，大幅提升流程清晰度。
+ * 渲染 1, 2, 3, 4 结构化序号卡片分区。
  */
 export function StepSection({ step, title, action, children }: StepSectionProps) {
   return (
