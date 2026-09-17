@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
   } catch (e) { error = safeError(e); }
   const response = NextResponse.redirect(config().origin + (error ? "/?oauth=failed" : "/?oauth=connected") + (id ? "#instance-" + id : ""), 303);
   if (id) response.cookies.set("livepilot_oauth_" + id, "", { path: "/api/youtube", maxAge: 0, secure: config().origin.startsWith("https:"), httpOnly: true, sameSite: "lax" });
-  if (error) response.cookies.set("livepilot_notice", encodeURIComponent(error), { path: "/", maxAge: 120, sameSite: "strict" });
+  // NextResponse 会编码 Cookie 值；手工编码会让页面单次解码后仍显示百分号字符串。
+  if (error) response.cookies.set("livepilot_notice", error, { path: "/", maxAge: 120, sameSite: "strict" });
   return response;
 }
