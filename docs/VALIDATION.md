@@ -61,4 +61,8 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 - 当前完整验证通过：类型检查、Lint、115 项测试 / 16 个文件、Next 生产构建和独立 Node Agent 构建。
 - scripts/cloud-smoke.mjs 启动隔离 HTTPS 云端和两个真实 Agent 进程，同名 main 实例隔离。成员登录/Secure Cookie、9 MiB 文件中断后刷新续传、目标媒体校验、另一设备不出现该素材、390/768/1440px 无横向溢出、关闭网页后操作结果、重复请求和跨站拒绝通过。截图在 docs/screenshots/cloud-console。
 - Agent 控制测试使用空 OBS 路径安全失败，不启动 OBS，不调用真实 OAuth 或 YouTube 推流。单元测试覆盖断线继续、重启不重放、丢失回执、跨设备频道冲突、撤销设备与身份隔离。
-- Linux 构建、实际 Lightsail 发布、实际 Windows 接入及两机实播验收按部署结果另行记录，不由以上测试替代。
+- Windows 和 Lightsail Ubuntu 24.04 均执行完整 `npm run verify` 通过：115 项测试 / 16 文件、类型检查、Lint、Next 生产构建及 Agent 构建。Linux 使用本机 `npm ci` 安装依赖，不复制 Windows 依赖。
+- 实际 Lightsail 发布代码为 `bcfb09e`，使用 Nginx、systemd、独立低权限运行账号与持久数据目录。外网 `/api/health` 返回成功；真实 Chromium 在正常证书验证下完成登录，Secure 会话有效，未登录成员与无效设备凭据被拒绝，无页面运行错误。
+- 已签发受信任的短期 IP HTTPS 证书，启用每日两次自动续期 timer，`certbot renew --dry-run` 成功。未购买额外服务或域名。
+- 线上首次核验时设备列表为空，尚未迁移真实 Windows 电脑。现有本机 `main`、`obs_a` 的旧直播记录和授权均未重置，未自动开播或停播。
+- 待实际验收：首台 Windows 接入前核对旧直播状态；两台 Windows 的独立测试频道实播、音画、断开云端后的完整开停播、跨网络大文件吞吐及长期运行。IP 网站不能作为 Google 普通网页 OAuth 回调，新增频道仍需先在目标电脑本地授权。
