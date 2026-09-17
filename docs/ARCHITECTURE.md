@@ -31,15 +31,17 @@ Browser
 
 | 入口 | 契约 |
 | --- | --- |
-| GET /api/instances | 公开 ID / 名称清单，无凭据 |
+| GET /api/instances | 登录后返回实例 ID / 名称清单，无凭据 |
 | GET /api/status?instanceId=obs_a | 单实例状态；省略 ID 时兼容 main |
-| POST /api/control | 严格 JSON，显式 instanceId；action 为 start、stop、launch、clear-uncertain |
+| POST /api/control | 严格 JSON，显式 instanceId 和 requestId；action 为 start、stop、launch、clear-uncertain；202 仅表示持久化受理 |
 | POST /api/youtube/connect | JSON instanceId，返回 Google 授权地址 |
 | GET /api/youtube/callback | 共用回调地址，state 与独立 Cookie 定位发起实例 |
 
+当前远程能力是异地浏览器访问同一台 Windows 常驻服务；没有云端到 Windows 的 Agent。成员权限共享，上传落在该 Windows 的媒体库，命令完成与否以 operation 和实际 OBS/YouTube 状态为准。
+
 状态接口独立轮询，服务端每实例去重同时读取，YouTube 状态缓存最多 30 秒。浏览器草稿仅保存文件名和原声选择，按 ID 分开；未结束场次优先使用服务端已有选择。状态过期或媒体不在列表时禁用 Start 并显示原因。观看链接由面板自己的 state.broadcastId 生成固定 YouTube watch URL，ID 经过 URL 编码；新标签页使用 noopener/noreferrer，不额外请求 API，也不触发直播控制。没有场次 ID 时不显示入口，结束后保留最近场次链接。没有模拟进度、模拟 LIVE 或模拟时长。
 
-控制请求要求配置的 loopback Host、同源 Origin 和 `X-LivePilot: 1`。浏览器不接触绝对媒体路径、OBS 密码、Client Secret、Token 或 Stream Key。原始上游错误与 OAuth 请求 URL 不进入应用日志。应用安全错误由跨模块共享的 WeakSet 登记，开发热更新或路由模块重新加载后仍保留安全说明及 HTTP 状态码；不能仅凭 code/message 字段信任上游异常。
+所有业务接口要求成员登录。控制请求要求配置的固定 Host、同源 Origin 和 `X-LivePilot: 1`；公网入口必须使用 HTTPS，只有本机 127.0.0.1 可以使用 HTTP。浏览器不接触绝对媒体路径、OBS 密码、Client Secret、Token 或 Stream Key。原始上游错误与 OAuth 请求 URL 不进入应用日志。应用安全错误由跨模块共享的 WeakSet 登记，开发热更新或路由模块重新加载后仍保留安全说明及 HTTP 状态码；不能仅凭 code/message 字段信任上游异常。
 
 ## 并发、授权与恢复
 

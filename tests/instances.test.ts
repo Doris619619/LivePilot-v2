@@ -124,3 +124,12 @@ it("explains missing media but permits automatic OBS launch", () => {
   expect(startBlocker(data, { ...selection, video: "missing.mp4" }, false, false, false)).toContain("视频");
   expect(startBlocker(data, selection, false, true, false)).toContain("过期");
 });
+
+/** 不同成员不能在同一浏览器里接管之前发起的 OAuth 事务。 */
+it("binds OAuth transactions to the initiating member", async () => {
+  const auth = new YouTubeAuth(new Store(configs.config().dataDir), "main");
+  const tx = await auth.begin("alice");
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  await expect(auth.finish(tx.cookie, new URL(tx.url).searchParams.get("state")!, "code", undefined, "bob")).rejects.toThrow("授权校验失败");
+  expect(fetcher).not.toHaveBeenCalled();
+});

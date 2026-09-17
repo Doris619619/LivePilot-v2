@@ -1,5 +1,7 @@
 /** 按实例缓存独立控制服务；一个实例的长操作不阻塞其他实例。 */
 import "server-only";
+import path from "node:path";
+import { Commands } from "./commands";
 import type { Dashboard } from "@/shared/types";
 import { Control } from "./control";
 import { config, missingConfig, requireInstance, validateInstances } from "./config";
@@ -17,6 +19,7 @@ class Service {
   readonly youtube: YouTubeApi;
   readonly obs: LocalObsRuntime;
   readonly control: Control;
+  readonly commands: Commands;
   /** 所有有状态依赖按实例创建；main 继续读取原来的 .data。 */
   constructor(readonly id: string) {
     /** 始终读取构造时选定实例的配置。 */
@@ -29,6 +32,7 @@ class Service {
       video: await resolveMedia(readConfig().mediaRoot, "videos", selection.video),
       music: await resolveMedia(readConfig().mediaRoot, "music", selection.music),
     }));
+    this.commands = new Commands(new Store(path.join(storage.dir, "commands")), this.control, id, () => this.invalidate());
   }
   private ytCache?: { key: string; at: number; value: Dashboard["youtube"] };
   private reading?: Promise<Dashboard>;
@@ -66,7 +70,8 @@ class Service {
         }
       }
     } catch (e) { youtube.error = safeError(e); }
-    return { state, busy: this.control.busy, obs, youtube, media, configuration: { missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    const operation = await this.commands.latest();
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, configuration: { missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

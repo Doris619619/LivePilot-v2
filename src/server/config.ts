@@ -1,4 +1,4 @@
-/** 服务端环境配置：兼容原单实例配置，并校验任意数量的本机 OBS。 */
+/** 服务端环境配置：兼容原实例配置，校验公网入口及直播电脑上的 OBS。 */
 import "server-only";
 import path from "node:path";
 import { AppError } from "./errors";
@@ -28,7 +28,9 @@ export function config(id = "main") {
   /** main 兼容旧变量；其他实例绝不继承 main 的 OBS 密码或路径。 */
   const obsValue = (suffix: string, legacy: string, fallback = "") => process.env[prefix + suffix] ?? (id === "main" ? process.env[legacy] : undefined) ?? fallback;
   const origin = process.env.LIVEPILOT_ORIGIN || "http://127.0.0.1:3010";
-  if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(origin)) throw new AppError("CONFIG", "LIVEPILOT_ORIGIN 必须是 http://127.0.0.1:端口。");
+  let publicUrl: URL;
+  try { publicUrl = new URL(origin); } catch { throw new AppError("CONFIG", "LIVEPILOT_ORIGIN 地址无效。"); }
+  if (publicUrl.origin !== origin || publicUrl.username || publicUrl.password || (publicUrl.protocol !== "https:" && !(publicUrl.protocol === "http:" && publicUrl.hostname === "127.0.0.1" && publicUrl.port))) throw new AppError("CONFIG", "公网地址必须使用 HTTPS；仅本机 127.0.0.1 允许 HTTP。");
   const wsUrl = obsValue("OBS_WS_URL", "LIVEPILOT_OBS_WS_URL", id === "main" ? "ws://127.0.0.1:4455" : "");
   let ws: URL | undefined;
   try { ws = wsUrl ? new URL(wsUrl) : undefined; } catch { throw new AppError("CONFIG", id + " 的 OBS WebSocket 地址格式无效。"); }
@@ -44,7 +46,7 @@ export function config(id = "main") {
     mediaRoot: process.env[prefix + "MEDIA_ROOT"] || process.env.LIVEPILOT_MEDIA_ROOT || "",
     clientId: process.env.GOOGLE_CLIENT_ID || "", clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
     encryptionKey: process.env.LIVEPILOT_ENCRYPTION_KEY || "",
-    dataDir: id === "main" ? path.resolve(".data") : path.resolve(".data", "instances", id),
+    dataDir: id === "main" ? dataRoot() : path.join(dataRoot(), "instances", id),
     redirectUri: origin + "/api/youtube/callback", privacy, madeForKids: kids === "true",
   };
 }
@@ -78,3 +80,6 @@ export function instanceDescriptors() {
   validateInstances();
   return instanceIds().map(id => ({ id, name: process.env[instancePrefix(id) + "NAME"] || (id === "main" ? "主 OBS" : id) }));
 }
+
+/** 运行数据由宿主机持有，不进入构建追踪；默认完整保留旧 .data。 */
+export function dataRoot() { return path.resolve(/* turbopackIgnore: true */ process.env.LIVEPILOT_DATA_ROOT || ".data"); }

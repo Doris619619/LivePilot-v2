@@ -10,7 +10,10 @@ export type ControlState = {
   broadcastTitle?: string; streamTitle?: string; broadcastIntent?: boolean; streamIntent?: boolean;
   obsStartRequested?: boolean; selection?: Selection; startedAt?: string; updatedAt: string;
 };
+/** 最近控制命令的真实受理与执行状态，不等同于直播 lifecycle。 */
+export type CommandStatus = { id: string; action: string; actor: string; status: "accepted" | "running" | "succeeded" | "failed" | "interrupted"; updatedAt: string; message?: string };
 export type Dashboard = {
+  operation?: CommandStatus;
   state: ControlState; busy: boolean; obs: ObsStatus;
   youtube: { connected: boolean; channel?: string; ingest?: string; lifecycle?: string; checkedAt?: string; error?: string };
   media: { videos: string[]; music: string[]; error?: string };
