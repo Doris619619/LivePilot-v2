@@ -97,7 +97,7 @@ systemctl enable --now livepilot livepilot-cert-renew.timer
 nginx -t; systemctl reload nginx
 healthy=false
 for ((i=0;i<30;i++)); do
-  if curl --fail --silent --resolve "$domain:443:127.0.0.1" "https://$domain/api/health" | grep -q '"ok":true'; then healthy=true; break; fi
+  if curl --fail --silent --connect-timeout 3 --max-time 10 --resolve "$domain:443:127.0.0.1" "https://$domain/api/health" | grep -q '"ok":true'; then healthy=true; break; fi
   sleep 2
 done
 $healthy || { echo '健康检查未通过'; false; }

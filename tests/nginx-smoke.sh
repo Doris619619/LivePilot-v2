@@ -9,7 +9,8 @@ node "$root/scripts/setup-deployment.mjs" cloud --domain smoke.example.com
 node "$root/scripts/deployment/render.mjs" --env "$tmp/.env.cloud" --out "$tmp/rendered"
 openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tmp/key.pem" -out "$tmp/cert.pem" -days 1 -subj /CN=smoke.example.com >/dev/null 2>&1
 for mode in http https; do
-  sed -e "s|/etc/letsencrypt/live/smoke.example.com/fullchain.pem|$tmp/cert.pem|" -e "s|/etc/letsencrypt/live/smoke.example.com/privkey.pem|$tmp/key.pem|" "$tmp/rendered/nginx-$mode.conf" > "$tmp/site.conf"
+  # 非 root CI 使用高端口；生产模板仍保留 80/443。nginx -t 会检查 bind 权限。
+  sed -e "s/listen 80;/listen 18080;/" -e "s/listen 443 ssl;/listen 18443 ssl;/" -e "s|/etc/letsencrypt/live/smoke.example.com/fullchain.pem|$tmp/cert.pem|" -e "s|/etc/letsencrypt/live/smoke.example.com/privkey.pem|$tmp/key.pem|" "$tmp/rendered/nginx-$mode.conf" > "$tmp/site.conf"
   printf 'error_log stderr; pid %s/nginx.pid; events {} http { access_log off; client_body_temp_path %s/body; proxy_temp_path %s/proxy; include %s/site.conf; }\n' "$tmp" "$tmp" "$tmp" "$tmp" > "$tmp/nginx.conf"
   nginx -t -e stderr -p "$tmp" -c "$tmp/nginx.conf"
 done
