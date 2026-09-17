@@ -17,3 +17,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - name: Validate Linux deployment scripts and Nginx templates
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx shellcheck
+          shellcheck deploy/*.sh tests/nginx-smoke.sh
+          bash tests/nginx-smoke.sh

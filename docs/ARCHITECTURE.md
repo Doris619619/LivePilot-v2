@@ -68,3 +68,7 @@ Stop：确认频道 → complete 并确认 → StopStream 并确认 inactive。c
 ## 历史来源
 
 本次只从旧仓库复制两份协作 Markdown，替换文档中的项目称谓为 LivePilot v2；没有复制业务代码或修改旧仓库。多实例实现基于新仓库已测试的单实例控制流程，保留其状态恢复与安全边界。
+
+## 部署配置与入口
+
+`scripts/setup-deployment.mjs` 仅初始化私有环境并输出 OAuth 清单；DNS 更新单独使用明确的 --apply。`deploy/install-cloud.sh` 在 Linux 构建、保留密钥、备份配置/数据，安装域名 HTTPS 与 systemd；失败回退程序而不覆盖任务数据。`scripts/agent-launch.mjs` 统一交互与登录任务的环境/代理加载顺序。外部账号审批和 Google 本人同意仍在平台完成，详见[从零部署](从零部署.md)。

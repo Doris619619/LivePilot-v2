@@ -2,9 +2,10 @@
 param([string]$TaskName = "LivePilot-Agent")
 $ErrorActionPreference = "Stop"
 $agentRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$agentEntry = Join-Path $agentRoot "dist\agent.cjs"
+$agentEntry = Join-Path $agentRoot "scripts\agent-launch.mjs"
+$agentBuild = Join-Path $agentRoot "dist\agent.cjs"
 $agentEnv = Join-Path $agentRoot ".env.agent"
-if (!(Test-Path -LiteralPath $agentEntry) -or !(Test-Path -LiteralPath $agentEnv)) { throw "先完成 agent:build、.env.agent 配置和设备配对。" }
+if (!(Test-Path -LiteralPath $agentBuild) -or !(Test-Path -LiteralPath $agentEntry) -or !(Test-Path -LiteralPath $agentEnv)) { throw "先完成 agent:build、.env.agent 配置和设备配对。" }
 $agentNode = (Get-Command node.exe -ErrorAction Stop).Source
 $agentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $action = New-ScheduledTaskAction -Execute $agentNode -Argument ('"' + $agentEntry + '" run') -WorkingDirectory $agentRoot
