@@ -1,4 +1,4 @@
-/* 文件用途：LiveNest 多实例直播控制台中枢，汇总管理多台直播电脑与所有 OBS 实例状态。 */
+/* 文件用途：LiveNest 广播控制台中枢，纯净浅色界面、清晰结构与零视觉噪音。 */
 
 "use client";
 
@@ -8,13 +8,8 @@ import UploadPanel from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
-import { ServerIcon, AlertCircleIcon, RefreshIcon } from "./components/icons";
+import { AlertCircleIcon, DeviceIcon, RefreshIcon } from "./components/icons";
 
-/**
- * LiveNest 多实例多电脑直播控制台主视图。
- *
- * @returns 控制台页面 React 元素
- */
 export default function Console() {
   const [instances, setInstances] = useState<InstanceDescriptor[]>([]);
   const [agents, setAgents] = useState<AgentDescriptor[] | undefined>();
@@ -25,9 +20,6 @@ export default function Console() {
   useEffect(() => {
     const abort = new AbortController();
 
-    /**
-     * 读取通知 Cookie 与实例清单。
-     */
     async function load() {
       const cookie = document.cookie.split("; ").find(v => v.startsWith("livepilot_notice="));
       if (cookie) {
@@ -44,7 +36,7 @@ export default function Console() {
         setError("");
       } catch (e) {
         if (!abort.signal.aborted) {
-          setError(e instanceof Error ? e.message : "无法连接至 LiveNest 控制服务，请检查网络或服务状态");
+          setError(e instanceof Error ? e.message : "无法连接至控制服务");
         }
       }
     }
@@ -60,85 +52,67 @@ export default function Console() {
   const onlineAgentsCount = agents ? agents.filter(a => a.online && !a.revoked).length : 1;
 
   return (
-    <main className="app-container">
-      {/* 顶部 Hero 区域 */}
-      <header className="console-hero">
-        <div className="hero-main">
-          <h1>
-            Live<span style={{ color: "var(--accent-emerald)" }}>Nest</span> 控制中心
-          </h1>
-          <p className="hero-desc">
-            专业多频道分布式直播调度台。为每个 Windows OBS 实例指定循环素材，独立向 YouTube 发起高质量推流。
-          </p>
+    <main className="main-wrapper">
+      {/* 顶部概览栏 */}
+      <div className="overview-bar">
+        <div className="overview-title">
+          <h1>LiveNest 广播控制台</h1>
+          <p>多频道 OBS 独立推流与媒体调度工作台</p>
         </div>
 
-        <div className="hero-stats-row">
-          <div className="stat-chip">
-            <ServerIcon />
-            <span>在线发射机:</span>
+        <div className="overview-stats">
+          <div className="metric-badge">
+            <DeviceIcon />
+            <span>在线设备:</span>
             <strong>{onlineAgentsCount}</strong>
           </div>
-
-          <div className="stat-chip">
-            <span className="dot on" />
-            <span>已配置实例:</span>
+          <div className="metric-badge">
+            <span>实例总数:</span>
             <strong>{instances.length}</strong>
           </div>
         </div>
-      </header>
+      </div>
 
-      {/* 全局错误与通告条 */}
       {(error || notice) && (
-        <div className="alert-banner error" role="alert">
+        <div className="banner error" role="alert">
           <AlertCircleIcon />
           <span>{error || notice}</span>
         </div>
       )}
 
-      {/* 加载状态 */}
       {!loaded && !error && (
-        <div className="stat-chip" style={{ width: "fit-content", margin: "32px auto" }}>
-          <RefreshIcon style={{ animation: "spin 1s linear infinite" }} />
-          <span role="status">正在同步 LiveNest 实例遥测数据…</span>
+        <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: "13px" }}>
+          <RefreshIcon /> 同步实例状态中…
         </div>
       )}
 
-      {/* 空实例状态 */}
       {loaded && !instances.length && (
-        <div className="media-dock-card" style={{ textAlign: "center", padding: "48px 24px" }}>
-          <ServerIcon width={48} height={48} style={{ color: "var(--text-muted)", margin: "0 auto 16px" }} />
-          <h3 style={{ fontSize: "18px", marginBottom: "8px" }}>尚无已连接的 OBS 直播实例</h3>
-          <p style={{ fontSize: "14px", color: "var(--text-muted)", maxWidth: "480px", margin: "0 auto" }}>
-            请在 Windows 直播电脑上完成 LiveNest Agent 配对并启动服务，或在本机配置文件中添加实例定义。
-          </p>
+        <div style={{ textAlign: "center", padding: "40px", background: "var(--surface-base)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)" }}>
+          <DeviceIcon width={32} height={32} style={{ color: "var(--text-muted)", margin: "0 auto 8px" }} />
+          <h3 style={{ fontSize: "15px", marginBottom: "4px" }}>暂无连接的直播实例</h3>
+          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>请在直播电脑上启动 LiveNest Agent 或配置本地实例。</p>
         </div>
       )}
 
-      {/* 素材分发中心 */}
       {!!instances.length && <UploadPanel instances={instances} />}
 
-      {/* 实例网格列表 */}
       {agents ? (
         agents
           .filter(a => !a.revoked)
           .map(agent => {
             const agentInstances = instances.filter(i => i.agentId === agent.id);
             return (
-              <section key={agent.id} className="agent-group-section" aria-label={agent.name}>
-                <div className="agent-group-header">
-                  <div className="agent-group-title">
-                    <ServerIcon />
+              <section key={agent.id} style={{ marginBottom: "28px" }} aria-label={agent.name}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", padding: "0 4px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 600 }}>
+                    <DeviceIcon />
                     <span>{agent.name}</span>
-                    <span className={`agent-status-tag ${agent.online ? "online" : "offline"}`}>
-                      <span className="dot" />
-                      {agent.online ? "在线通信中" : "离线"}
+                    <span style={{ fontSize: "12px", fontWeight: 500, color: agent.online ? "var(--success-green)" : "var(--text-muted)" }}>
+                      {agent.online ? "● 在线" : "○ 离线"}
                     </span>
                   </div>
-
-                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    {agent.lastSeen
-                      ? `最近心跳 ${new Date(agent.lastSeen).toLocaleTimeString("zh-CN", { hour12: false })}`
-                      : "等待首次心跳"}
+                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                    {agent.lastSeen ? `最近心跳: ${new Date(agent.lastSeen).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}
                   </span>
                 </div>
 
@@ -158,10 +132,9 @@ export default function Console() {
         </div>
       )}
 
-      {/* 页脚说明 */}
       <footer className="app-footer">
-        <span>LiveNest Studio Operations · 直播电脑直接推流至 YouTube 平台</span>
-        <span>{agents ? "已下发的广播任务由对应发射机独立执行" : "如需扩展实例，编辑本机配置后重启服务"}</span>
+        <span>LiveNest Studio Operations</span>
+        <span>Windows OBS → YouTube 独立直连推流</span>
       </footer>
     </main>
   );

@@ -1,8 +1,8 @@
-/* 文件用途：LiveNest 媒体素材上传与分发中心，支持拖拽选择、断点续传查询、分片传输与 SHA-256 完整性校验。 */
+/* 文件用途：LiveNest 媒体素材分发抽屉，浅色紧凑设计，提供直观文件选取、断点续传与校验展示。 */
 
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type DragEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
 import { targetKey } from "@/shared/remote";
@@ -14,28 +14,16 @@ import {
   MusicIcon,
   CheckCircleIcon,
   AlertCircleIcon,
-  ServerIcon,
   RefreshIcon,
+  DeviceIcon,
 } from "./components/icons";
 
 const KEY = "livepilot-upload";
 
-/**
- * 格式化文件字节数为易读的 MiB 单位。
- *
- * @param value 字节数值
- * @returns 格式化后的容量字符串
- */
 function bytes(value: number): string {
   return (value / 1024 ** 2).toFixed(1) + " MiB";
 }
 
-/**
- * LiveNest 媒体素材分发中心组件。
- *
- * @param props 包含可用实例列表的组件参数
- * @returns 素材上传面板 React 元素
- */
 export default function UploadPanel({ instances }: { instances: InstanceDescriptor[] }) {
   const [record, setRecord] = useState<UploadStatus>();
   const [instanceId, setInstanceId] = useState(instances[0] ? targetKey(instances[0]) : "main");
@@ -45,16 +33,10 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
 
   const createIntent = useRef<{ fingerprint: string; target: string; kind: string; requestId: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
 
-  /**
-   * 记录并广播上传状态更新，完成时触发媒体库刷新。
-   *
-   * @param next 最新上传状态记录
-   */
   function remember(next: UploadStatus) {
     setRecord(next);
     if (next.status === "complete") {
@@ -63,16 +45,13 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     try {
       localStorage.setItem(KEY, JSON.stringify(next));
     } catch {
-      /* 禁用存储时本次上传仍可继续 */
+      /* 忽略存储异常 */
     }
   }
 
   useEffect(() => {
     let active = true;
 
-    /**
-     * 恢复本地记录的未完成上传状态，不自动开始传输。
-     */
     async function restore() {
       try {
         const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
@@ -86,7 +65,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
           }
         }
       } catch {
-        if (active) setError("之前的上传记录暂时不可用，可刷新或取消后重新上传。");
+        if (active) setError("历史上传记录暂不可用");
       }
     }
 
@@ -102,9 +81,6 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     const current = record;
     let reading = false;
 
-    /**
-     * 校验阶段轮询服务器处理结果。
-     */
     async function poll() {
       if (reading) return;
       reading = true;
@@ -123,11 +99,6 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     return () => clearInterval(timer);
   }, [record]);
 
-  /**
-   * 提交并开始分片上传流程。
-   *
-   * @param event 表单事件
-   */
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!file || busy) return;
@@ -136,7 +107,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     abort.current = controller;
     setBusy(true);
     setError("");
-    setStage("正在计算文件 SHA-256 指纹…");
+    setStage("计算文件指纹…");
 
     try {
       const identity = await identify(file, controller.signal);
@@ -145,11 +116,11 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
       if (current) {
         current = await api<UploadStatus>(uploadUrl(current), { signal: controller.signal });
         if (current.size !== file.size || current.fingerprint !== identity.fingerprint) {
-          throw new Error("所选文件与原上传不同，请选择原文件，或取消原上传后重新开始。");
+          throw new Error("所选文件与原上传不一致");
         }
       } else {
         const destination = instances.find(i => targetKey(i) === instanceId);
-        if (!destination) throw new Error("请重新选择目标直播电脑和实例。");
+        if (!destination) throw new Error("目标实例不存在");
 
         if (
           !createIntent.current ||
@@ -182,7 +153,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
       }
 
       remember(current);
-      setStage("正在高速传输到直播电脑…");
+      setStage("分片传输中…");
 
       if (current.status === "uploading") {
         await transfer(file, current, identity.hashes, controller.signal, remember);
@@ -195,9 +166,6 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     }
   }
 
-  /**
-   * 重试完成校验。
-   */
   async function retryFinish() {
     if (!record) return;
     setError("");
@@ -208,9 +176,6 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     }
   }
 
-  /**
-   * 清理当前上传任务或本地缓存。
-   */
   async function clear() {
     setError("");
     try {
@@ -223,52 +188,26 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
     }
   }
 
-  /**
-   * 处理拖拽放置文件。
-   */
-  function handleDrop(e: DragEvent<HTMLDivElement>) {
-    e.preventDefault();
-    setIsDragging(false);
-    if (busy || (record && record.status !== "uploading")) return;
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) setFile(dropped);
-  }
-
-  const progressPercent = record && record.size > 0 ? Math.min(100, Math.round((record.received / record.size) * 100)) : 0;
-
   return (
-    <div className="media-dock-card">
-      <div
-        className="media-dock-summary"
-        onClick={() => setIsOpen(!isOpen)}
-        role="button"
-        tabIndex={0}
-        aria-expanded={isOpen}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div className="pipeline-icon-box" style={{ background: "rgba(16, 185, 129, 0.12)", color: "#10b981" }}>
-            <UploadIcon />
-          </div>
-          <div>
-            <span style={{ fontSize: "16px", fontWeight: 600 }}>媒体素材分发中枢</span>
-            <p style={{ fontSize: "12px", color: "var(--text-muted)", fontWeight: 400 }}>
-              上传音视频素材到目标直播电脑，自动校验并不中断正在进行的直播
-            </p>
-          </div>
+    <section className="media-dock" aria-label="素材上传">
+      <div className="dock-header" onClick={() => setIsOpen(!isOpen)}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <UploadIcon />
+          <strong style={{ fontSize: "14px" }}>素材上传分发</strong>
+          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>将本地素材推送到目标直播电脑</span>
         </div>
-
-        <button type="button" className="btn-subtle" onClick={e => { e.stopPropagation(); setIsOpen(!isOpen); }}>
-          {isOpen ? "收起面板" : "展开上传"}
+        <button type="button" className="btn-ghost">
+          {isOpen ? "收起" : "展开"}
         </button>
       </div>
 
       {isOpen && (
-        <div className="media-dock-content">
+        <div className="dock-content">
           <form onSubmit={submit}>
-            <div className="upload-form-grid">
-              <div className="form-field">
-                <label htmlFor="upload-instance" className="form-label">
-                  <ServerIcon /> 目标直播电脑与实例
+            <div className="form-row">
+              <div className="field-group">
+                <label htmlFor="upload-instance" className="field-label">
+                  <DeviceIcon /> 目标实例
                 </label>
                 <select
                   id="upload-instance"
@@ -285,9 +224,9 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
                 </select>
               </div>
 
-              <div className="form-field">
-                <label htmlFor="upload-kind" className="form-label">
-                  {kind === "videos" ? <VideoIcon /> : <MusicIcon />} 素材库分类
+              <div className="field-group">
+                <label htmlFor="upload-kind" className="field-label">
+                  {kind === "videos" ? <VideoIcon /> : <MusicIcon />} 素材类型
                 </label>
                 <select
                   id="upload-kind"
@@ -295,125 +234,84 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
                   disabled={!!record || busy}
                   onChange={e => setKind(e.target.value as "videos" | "music")}
                 >
-                  <option value="videos">视频媒体库 (MP4, MKV, MOV, WEBM)</option>
-                  <option value="music">音乐音频库 (MP3, WAV, FLAC, AAC)</option>
+                  <option value="videos">视频 (MP4, MKV, MOV, WEBM)</option>
+                  <option value="music">音乐 (MP3, WAV, FLAC, AAC)</option>
                 </select>
               </div>
 
-              <div
-                className={`upload-file-dropzone ${isDragging ? "is-dragging" : ""}`}
-                onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
-                onDragLeave={() => setIsDragging(false)}
-                onDrop={handleDrop}
-              >
-                <UploadIcon width={32} height={32} style={{ color: "var(--accent-emerald)" }} />
-                <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                  <span style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary)" }}>
-                    {file ? file.name : record?.status === "complete" ? "文件已成功加入素材库" : "点击选择文件或拖拽文件至此"}
-                  </span>
-                  <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-                    {file ? `${bytes(file.size)} · 准备就绪` : `支持 ${kind === "videos" ? "MP4, MKV, MOV, WEBM 等视频格式" : "MP3, WAV, FLAC, AAC 等音频格式"}`}
-                  </span>
-                </div>
-
+              <div className="field-group" style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="upload-file" className="field-label">
+                  选择文件
+                </label>
                 <input
                   id="upload-file"
                   type="file"
-                  style={{ display: "none" }}
                   disabled={busy || (!!record && record.status !== "uploading")}
                   accept={kind === "videos" ? ".mp4,.mkv,.mov,.webm,.avi,.m4v" : ".mp3,.wav,.flac,.aac,.m4a,.ogg"}
                   onChange={e => setFile(e.target.files?.[0])}
                 />
-                <button
-                  type="button"
-                  className="btn-subtle"
-                  disabled={busy || (!!record && record.status !== "uploading")}
-                  onClick={() => document.getElementById("upload-file")?.click()}
-                  style={{ marginTop: "8px" }}
-                >
-                  {file ? "重新选择" : "浏览本地文件"}
-                </button>
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", alignItems: "center" }}>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
               {(!record || record.status === "uploading") && (
-                <button
-                  type="submit"
-                  className="btn-primary-live"
-                  disabled={!file || busy}
-                  style={{ flex: "none", padding: "10px 24px" }}
-                >
+                <button type="submit" className="btn-primary" disabled={!file || busy} style={{ flex: "none" }}>
                   <UploadIcon />
-                  {busy ? "正在传输…" : record ? "继续断点传输" : "开始传输至直播电脑"}
+                  <span>{busy ? "传输中…" : record ? "继续传输" : "开始上传"}</span>
                 </button>
               )}
 
               {busy && (
-                <button type="button" className="btn-subtle" onClick={() => abort.current?.abort()}>
-                  暂停传输
+                <button type="button" className="btn-secondary" onClick={() => abort.current?.abort()}>
+                  暂停
                 </button>
               )}
 
               {!busy && record?.status === "verifying" && (
-                <button type="button" className="btn-primary-live" onClick={() => void retryFinish()}>
-                  <RefreshIcon /> 重试完成校验
+                <button type="button" className="btn-primary" onClick={() => void retryFinish()}>
+                  <RefreshIcon /> 完成校验
                 </button>
               )}
 
               {!busy && (record || file) && (
-                <button type="button" className="btn-subtle" onClick={() => void clear()}>
-                  {record?.status === "complete" ? "上传另一素材" : record ? "取消上传并清理" : "清除所选"}
+                <button type="button" className="btn-secondary" onClick={() => void clear()}>
+                  {record?.status === "complete" ? "上传下一个" : "清除记录"}
                 </button>
               )}
             </div>
           </form>
 
-          {stage && (
-            <p style={{ marginTop: "14px", fontSize: "13px", color: "var(--accent-cyan)" }} role="status">
-              {stage}
-            </p>
-          )}
+          {stage && <p style={{ marginTop: "10px", fontSize: "12px", color: "var(--accent-primary)" }}>{stage}</p>}
 
           {record && (
-            <div className="upload-progress-card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "13px" }}>
-                <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{record.filename}</span>
-                <span style={{ fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
-                  {bytes(record.received)} / {bytes(record.size)} ({progressPercent}%)
-                </span>
+            <div style={{ marginTop: "12px", padding: "10px", background: "var(--bg-subtle)", borderRadius: "var(--radius-sm)", fontSize: "12px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
+                <strong>{record.filename}</strong>
+                <span>{bytes(record.received)} / {bytes(record.size)}</span>
               </div>
-
-              <div className="upload-progress-bar-wrap">
-                <div className="upload-progress-bar-fill" style={{ width: `${progressPercent}%` }} />
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+              <progress max={record.size} value={record.received} style={{ width: "100%", height: "6px" }} />
+              <div style={{ marginTop: "6px", color: "var(--text-secondary)" }}>
                 {record.status === "complete" ? (
-                  <>
-                    <CheckCircleIcon style={{ color: "#34d399" }} />
-                    <span style={{ color: "#34d399" }}>已安全发布到素材库：{record.publishedName}</span>
-                  </>
+                  <span style={{ color: "var(--success-green)", display: "flex", alignItems: "center", gap: "4px" }}>
+                    <CheckCircleIcon /> 已保存至素材库：{record.publishedName}
+                  </span>
                 ) : record.status === "verifying" ? (
-                  <>
-                    <RefreshIcon style={{ color: "#38bdf8" }} />
-                    <span style={{ color: "#38bdf8" }}>正在由直播电脑进行哈希校验，关闭页面后台也会继续…</span>
-                  </>
+                  "正在由直播电脑进行哈希校验…"
                 ) : (
-                  <span style={{ color: "var(--text-muted)" }}>分片进度已实时记录，可随时暂停或恢复。</span>
+                  "进度已在直播电脑保存，支持断点续传。"
                 )}
               </div>
             </div>
           )}
 
           {error && (
-            <div className="alert-banner error" style={{ marginTop: "16px" }} role="alert">
+            <div className="banner error" style={{ marginTop: "12px" }} role="alert">
               <AlertCircleIcon />
               <span>{error}</span>
             </div>
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

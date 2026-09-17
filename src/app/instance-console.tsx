@@ -1,10 +1,10 @@
-/* 文件用途：LiveNest 单个直播实例控制台，管理内容编排、双向管道连接、发射控制与实时推流遥测。 */
+/* 文件用途：LiveNest 单个直播实例控制卡片，纯净浅色风格，精准排版、即时反馈与无噪声遥测。 */
 
 "use client";
 
 import { useInstance } from "./use-instance";
 import type { InstanceDescriptor } from "@/shared/types";
-import { StatusIndicator, type StatusType } from "./components/status-indicator";
+import { StatusBadge, type StatusType } from "./components/status-indicator";
 import {
   ObsIcon,
   YouTubeIcon,
@@ -16,17 +16,9 @@ import {
   StopIcon,
   RefreshIcon,
   ExternalLinkIcon,
-  ClockIcon,
   AlertCircleIcon,
-  SettingsIcon,
 } from "./components/icons";
 
-/**
- * 格式化推流毫秒时长为 HH:MM:SS。
- *
- * @param ms 毫秒数值
- * @returns 格式化后的时间文本
- */
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -35,12 +27,6 @@ function formatDuration(ms: number): string {
   return [hours, minutes, seconds].map(v => String(v).padStart(2, "0")).join(":");
 }
 
-/**
- * LiveNest 单个直播实例工作站卡片组件。
- *
- * @param props 包含实例描述符的属性
- * @returns 实例控制台卡片
- */
 export default function InstanceConsole({ instance }: { instance: InstanceDescriptor }) {
   const { name } = instance;
   const id = instance.agentId ? `${instance.agentId}-${instance.id}` : instance.id;
@@ -78,17 +64,17 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     : "ready";
 
   const stateLabel = stale
-    ? "状态已过期"
+    ? "离线/过期"
     : live
-    ? "ON AIR · LIVE"
+    ? "LIVE 推流中"
     : busy
     ? "处理中…"
     : data?.state.phase === "error"
     ? "需要处理"
     : data?.state.phase === "live"
-    ? "状态异常"
+    ? "异常"
     : data?.state.phase === "stopped"
-    ? "已就绪 / 待机"
+    ? "已就绪"
     : "待机";
 
   const privacyText = {
@@ -98,75 +84,56 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
   }[data?.configuration.privacy || "unlisted"];
 
   return (
-    <article className={`instance-card ${live ? "is-live" : ""}`} id={`instance-${id}`} aria-labelledby={`title-${id}`}>
-      {/* 头部：实例与频道信息 */}
-      <header className="instance-header">
-        <div className="instance-meta">
-          <span className="instance-location-tag">
-            {instance.agentName || "本机发射机"} / {instance.id}
+    <article className={`instance-card ${live ? "live-border" : ""}`} id={`instance-${id}`} aria-labelledby={`title-${id}`}>
+      {/* 头部信息 */}
+      <header className="card-header">
+        <div className="card-title-group">
+          <span className="card-location">
+            {instance.agentName || "本机"} / {instance.id}
           </span>
-          <h2 className="instance-name" id={`title-${id}`}>
+          <h2 className="card-title" id={`title-${id}`}>
             {name}
           </h2>
-          <span className="instance-channel">
-            <YouTubeIcon style={{ color: "#ef4444" }} />
-            {data?.youtube.channel || "等待连接 YouTube 频道"}
-          </span>
+          <div className="card-channel">
+            <YouTubeIcon style={{ color: "#dc2626" }} />
+            <span>{data?.youtube.channel || "等待连接 YouTube 频道"}</span>
+          </div>
         </div>
 
-        <StatusIndicator status={statusType} label={stateLabel} />
+        <StatusBadge status={statusType} label={stateLabel} />
       </header>
 
-      {data?.device && (
-        <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "16px" }}>
-          {data.device.online ? "直播电脑在线" : "直播电脑离线"} · 最近通信{" "}
-          {data.device.lastSeen
-            ? new Date(data.device.lastSeen).toLocaleTimeString("zh-CN", { hour12: false })
-            : "尚未建立通信"}
-        </div>
-      )}
-
-      {/* 双向管道状态（OBS / YouTube） */}
-      <div className="pipeline-hub">
-        <div className="pipeline-item">
-          <div className="pipeline-info">
-            <div className="pipeline-icon-box">
-              <ObsIcon />
-            </div>
-            <div className="pipeline-texts">
-              <span className="pipeline-label">OBS 管道</span>
-              <span className={`pipeline-status-text ${data?.obs.ready && !stale ? "online" : "offline"}`}>
-                <span className="dot" />
-                {stale ? "Unknown" : data?.obs.ready ? "Connected" : "Offline"}
-              </span>
-            </div>
+      {/* 管道状态 */}
+      <div className="connections-bar">
+        <div className="conn-item">
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <ObsIcon />
+            <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>OBS:</span>
+            <span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>
+              {stale ? "未知" : data?.obs.ready ? "就绪" : "未启动"}
+            </span>
           </div>
           <button
             type="button"
-            className="btn-text-action"
+            className="btn-ghost"
             disabled={busy || !data || stale || data.obs.ready}
             onClick={() => void act("launch")}
           >
-            {working === "launch" ? "正在启动…" : "启动 OBS"}
+            {working === "launch" ? "启动中…" : "启动 OBS"}
           </button>
         </div>
 
-        <div className="pipeline-item">
-          <div className="pipeline-info">
-            <div className="pipeline-icon-box">
-              <YouTubeIcon />
-            </div>
-            <div className="pipeline-texts">
-              <span className="pipeline-label">YouTube 授权</span>
-              <span className={`pipeline-status-text ${data?.youtube.connected && !stale ? "online" : "offline"}`}>
-                <span className="dot" />
-                {stale ? "Unknown" : data?.youtube.connected ? "Authorized" : "Disconnected"}
-              </span>
-            </div>
+        <div className="conn-item">
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <YouTubeIcon style={{ color: "#dc2626" }} />
+            <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>YouTube:</span>
+            <span className={`conn-status ${data?.youtube.connected && !stale ? "connected" : "disconnected"}`}>
+              {stale ? "未知" : data?.youtube.connected ? "已连接" : "未连接"}
+            </span>
           </div>
           <button
             type="button"
-            className="btn-text-action"
+            className="btn-ghost"
             disabled={busy || !data || stale}
             onClick={() => void act("connect")}
           >
@@ -176,37 +143,18 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
       </div>
 
       {(error || data?.state.error || stale) && (
-        <div className="alert-banner error" role="alert">
+        <div className="banner error" role="alert">
           <AlertCircleIcon />
-          <span>{stale ? `此实例状态已过期：${error}` : error || data?.state.error}</span>
+          <span>{stale ? `状态已过期：${error}` : error || data?.state.error}</span>
         </div>
       )}
 
-      {!!data?.configuration.missing.length && (
-        <details className="alert-banner warning" style={{ display: "block" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 600 }}>存在未完成的配置项</summary>
-          <p style={{ marginTop: "8px", fontSize: "12px" }}>
-            请在对应直播电脑的配置文件中补充以下环境变量后重启：
-          </p>
-          <ul style={{ paddingLeft: "20px", marginTop: "6px", fontSize: "12px", fontFamily: "var(--font-mono)" }}>
-            {data.configuration.missing.map(key => (
-              <li key={key}>{key}</li>
-            ))}
-          </ul>
-        </details>
-      )}
-
-      {/* 媒体与节目编排区 */}
-      <section className="program-section" aria-label={`${name} 直播内容`}>
-        <div className="section-title-row">
-          <span className="section-title">节目编排</span>
-          <span className="section-hint">视频与背景音乐循环推流</span>
-        </div>
-
-        <div className="media-selectors-grid">
-          <div className="form-field">
-            <label htmlFor={`video-${id}`} className="form-label">
-              <VideoIcon /> 视频源 <small>Video</small>
+      {/* 编排与控制 */}
+      <section aria-label={`${name} 节目编排`}>
+        <div className="form-row">
+          <div className="field-group">
+            <label htmlFor={`video-${id}`} className="field-label">
+              <VideoIcon /> 循环视频
             </label>
             <select
               id={`video-${id}`}
@@ -214,9 +162,9 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
               disabled={locked || !data?.media.videos.length}
               onChange={e => select({ video: e.target.value })}
             >
-              <option value="">选择循环视频素材</option>
+              <option value="">选择视频素材</option>
               {selection.video && !data?.media.videos.includes(selection.video) && (
-                <option value={selection.video}>{selection.video}（素材库中未找到）</option>
+                <option value={selection.video}>{selection.video}（缺失）</option>
               )}
               {data?.media.videos.map(item => (
                 <option key={item} value={item}>
@@ -226,9 +174,9 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
             </select>
           </div>
 
-          <div className="form-field">
-            <label htmlFor={`music-${id}`} className="form-label">
-              <MusicIcon /> 音乐源 <small>Music</small>
+          <div className="field-group">
+            <label htmlFor={`music-${id}`} className="field-label">
+              <MusicIcon /> 背景音乐
             </label>
             <select
               id={`music-${id}`}
@@ -236,9 +184,9 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
               disabled={locked || !data?.media.music.length}
               onChange={e => select({ music: e.target.value })}
             >
-              <option value="">选择背景音频素材</option>
+              <option value="">选择音乐素材</option>
               {selection.music && !data?.media.music.includes(selection.music) && (
-                <option value={selection.music}>{selection.music}（素材库中未找到）</option>
+                <option value={selection.music}>{selection.music}（缺失）</option>
               )}
               {data?.media.music.map(item => (
                 <option key={item} value={item}>
@@ -249,15 +197,12 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
           </div>
         </div>
 
-        {/* 视频原声微动效开关 */}
-        <div className="audio-switch-card">
-          <div className="audio-switch-meta">
-            <span className="audio-switch-title">
-              {selection.videoAudio ? <VolumeIcon /> : <VolumeMuteIcon />} 视频原声音轨
-            </span>
-            <span className="audio-switch-desc">
-              {selection.videoAudio ? "同时混音播放视频自带的原声与背景音乐" : "静音视频原声，仅播放所选背景音乐"}
-            </span>
+        {/* 原声开关 */}
+        <div className="switch-row">
+          <div className="switch-label">
+            {selection.videoAudio ? <VolumeIcon /> : <VolumeMuteIcon />}
+            <span>保留视频原声</span>
+            <small style={{ color: "var(--text-muted)", fontWeight: 400 }}>（关闭时只播放音乐）</small>
           </div>
 
           <button
@@ -265,73 +210,56 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
             type="button"
             role="switch"
             aria-checked={selection.videoAudio}
-            aria-label={`${name} 视频原声`}
-            className={`switch-control ${selection.videoAudio ? "is-active" : ""}`}
+            className={`switch-btn ${selection.videoAudio ? "active" : ""}`}
             disabled={locked}
             onClick={() => select({ videoAudio: !selection.videoAudio })}
           >
-            <span className="switch-indicator" />
-            <span>{selection.videoAudio ? "ON" : "OFF"}</span>
+            {selection.videoAudio ? "开启 ON" : "静音 OFF"}
           </button>
         </div>
 
-        {data?.media.error && <p style={{ fontSize: "12px", color: "var(--status-error)", marginBottom: "12px" }}>{data.media.error}</p>}
-        {data && (!data.media.videos.length || !data.media.music.length) && (
-          <p style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "12px" }}>
-            提示：当前实例素材库为空，可通过上方素材中心上传或将文件放入目标目录。
-          </p>
-        )}
-        {pending && !live && (
-          <p style={{ fontSize: "12px", color: "var(--status-warning)", marginBottom: "12px" }}>
-            提示：当前场次尚未结束，可直接重试开始直播，或点击结束直播恢复。
-          </p>
-        )}
-
-        {/* 控制操作区 */}
-        <div className="action-panel">
-          <div className="action-buttons-row">
+        {/* 开停播主控 */}
+        <div className="actions-group">
+          <div className="actions-buttons">
             <button
               type="button"
-              className="btn-primary-live"
+              className="btn-primary"
               disabled={!!blocker}
               aria-describedby={`readiness-${id}`}
               onClick={() => void act("start")}
             >
               <PlayIcon />
-              <span>{working === "start" ? "正在准备直播中…" : pending && !live ? "重试开始直播" : "开始直播推流"}</span>
+              <span>{working === "start" ? "正在准备推流…" : pending && !live ? "重试开始直播" : "开始直播"}</span>
             </button>
 
             <button
               type="button"
-              className="btn-stop-live"
+              className="btn-danger"
               disabled={busy || stale || !data}
               onClick={() => void act("stop")}
             >
               <StopIcon />
-              <span>{working === "stop" ? "正在结束…" : "结束直播"}</span>
+              <span>{working === "stop" ? "结束中…" : "结束直播"}</span>
             </button>
           </div>
 
-          <div className={`readiness-status-bar ${!blocker ? "is-ready" : "is-blocked"}`} id={`readiness-${id}`}>
-            <span className="dot" />
-            <span>{blocker || "发射台已就绪 · 点击开始后将自动调度 OBS 与 YouTube API 开播"}</span>
+          <div className={`readiness-text ${!blocker ? "ready" : ""}`} id={`readiness-${id}`}>
+            {blocker || "已就绪 · 点击开始将自动启动推流"}
           </div>
 
-          <div className="privacy-tag-row">
+          <div className="sub-links-row">
             <span>
-              {privacyText} · {data?.configuration.madeForKids ? "面向儿童内容" : "非面向儿童"}
+              {privacyText} · {data?.configuration.madeForKids ? "面向儿童" : "常规内容"}
             </span>
 
             {data?.state.broadcastId && (
               <a
-                className="watch-youtube-link"
+                className="watch-link"
                 href={`https://www.youtube.com/watch?v=${encodeURIComponent(data.state.broadcastId)}`}
                 target="_blank"
                 rel="noopener noreferrer"
-                aria-label={`${name}：在新标签页中打开 YouTube 直播`}
               >
-                <YouTubeIcon />
-                <span>观看直播页面</span>
+                <span>YouTube 直播页</span>
                 <ExternalLinkIcon />
               </a>
             )}
@@ -339,143 +267,62 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
         </div>
       </section>
 
-      {/* 实时推流监控与遥测 */}
-      <section className="telemetry-monitor-card" aria-label={`${name} 实时推流遥测`}>
-        <div className="monitor-header">
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <ClockIcon style={{ color: "var(--text-secondary)" }} />
-            <span style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)" }}>实时推流遥测</span>
-          </div>
-
-          <div className="timer-wrapper">
-            <span className="stream-timer">{stale ? "—" : data?.obs.streaming ? formatDuration(data.obs.durationMs || 0) : "00:00:00"}</span>
-            <span className="stream-timer-label">OBS 实际推流计时</span>
-          </div>
+      {/* 遥测监测 */}
+      <section className="telemetry-box" aria-label={`${name} 遥测状态`}>
+        <div className="telemetry-header">
+          <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>推流监控</span>
+          <span className="telemetry-timer">{stale ? "—" : data?.obs.streaming ? formatDuration(data.obs.durationMs || 0) : "00:00:00"}</span>
         </div>
 
-        <div className="stage-pill" role="status">
-          <span style={{ color: "var(--text-muted)", marginRight: "6px" }}>当前状态:</span>
-          <strong>
-            {stale ? "等待重新连接" : working === "launch" ? "等待 OBS WebSocket 就绪" : data?.state.stage || "正在读取遥测状态…"}
-          </strong>
+        <div className="telemetry-stage">
+          阶段：<strong>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</strong>
         </div>
 
-        <div className="telemetry-grid">
+        <div className="telemetry-table">
           <div className="telemetry-cell">
-            <span className="telemetry-cell-label">OBS 推流状态</span>
+            <span className="telemetry-cell-label">OBS 推流</span>
             <span className="telemetry-cell-value">
               {stale || data?.obs.streaming == null
-                ? "Unknown"
+                ? "未知"
                 : data.obs.reconnecting
-                ? "Reconnecting"
+                ? "重连中"
                 : data.obs.streaming
                 ? "Active (推流中)"
-                : "Inactive (未推流)"}
+                : "未推流"}
             </span>
           </div>
 
           <div className="telemetry-cell">
-            <span className="telemetry-cell-label">YouTube Ingest</span>
-            <span className="telemetry-cell-value">{stale ? "Unknown" : data?.youtube.ingest || "—"}</span>
+            <span className="telemetry-cell-label">YouTube 状态</span>
+            <span className="telemetry-cell-value">{stale ? "未知" : data?.youtube.lifecycle || "—"}</span>
           </div>
-
-          <div className="telemetry-cell">
-            <span className="telemetry-cell-label">YouTube 周期</span>
-            <span className="telemetry-cell-value">{stale ? "Unknown" : data?.youtube.lifecycle || "—"}</span>
-          </div>
-
-          <div className="telemetry-cell">
-            <span className="telemetry-cell-label">最近操作人</span>
-            <span className="telemetry-cell-value">
-              {data?.operation
-                ? `${data.operation.actor} (${
-                    {
-                      queued: "等待接收",
-                      delivering: "确认中",
-                      uncertain: "待核对",
-                      expired: "已过期",
-                      accepted: "已接收",
-                      running: "执行中",
-                      succeeded: "已完成",
-                      failed: "失败",
-                      interrupted: "待核对",
-                    }[data.operation.status] || data.operation.status
-                  })`
-                : "—"}
-            </span>
-          </div>
-        </div>
-
-        {data?.obs.message && <p style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "8px" }}>{data.obs.message}</p>}
-        {data?.youtube.error && <p style={{ fontSize: "12px", color: "var(--status-error)", marginTop: "8px" }}>{data.youtube.error}</p>}
-
-        <div className="telemetry-footer-meta">
-          <span>
-            OBS 每 5 秒同步 · YouTube 每 30 秒核验
-            {data?.youtube.checkedAt &&
-              ` · 最近核对 ${new Date(data.youtube.checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}`}
-          </span>
         </div>
       </section>
 
-      {/* 高级诊断与异常恢复 */}
-      <details className="advanced-details">
-        <summary>
-          <SettingsIcon />
-          <span>高级诊断与状态恢复 (Debug)</span>
-        </summary>
-
-        <div className="advanced-body">
-          <div className="telemetry-grid">
-            <div className="telemetry-cell">
-              <span className="telemetry-cell-label">Broadcast ID</span>
-              <span className="telemetry-cell-value">{data?.state.broadcastId || "—"}</span>
-            </div>
-            <div className="telemetry-cell">
-              <span className="telemetry-cell-label">Stream ID</span>
-              <span className="telemetry-cell-value">{data?.state.streamId || "—"}</span>
-            </div>
-            <div className="telemetry-cell">
-              <span className="telemetry-cell-label">恢复用场次标题</span>
-              <span className="telemetry-cell-value">{data?.state.broadcastTitle || "—"}</span>
-            </div>
-            <div className="telemetry-cell">
-              <span className="telemetry-cell-label">OBS 场景与版本</span>
-              <span className="telemetry-cell-value">
-                {data?.obs.scene || "—"} / {data?.obs.version || "—"}
-              </span>
-            </div>
+      {/* 底部刷新与高级展开 */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", paddingTop: "8px", borderTop: "1px solid var(--border-subtle)" }}>
+        <details style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+          <summary style={{ cursor: "pointer" }}>高级诊断</summary>
+          <div style={{ marginTop: "6px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
+            <div>Broadcast ID: {data?.state.broadcastId || "—"}</div>
+            <div>Stream ID: {data?.state.streamId || "—"}</div>
+            {!data?.state.broadcastId && data?.state.broadcastIntent && (
+              <div style={{ marginTop: "6px" }}>
+                <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />
+                  已核对 Studio 无此场次
+                </label>
+                <button type="button" className="btn-secondary" style={{ marginTop: "4px" }} disabled={busy || stale || !confirmed} onClick={() => void act("clear-uncertain")}>
+                  清理未确认状态
+                </button>
+              </div>
+            )}
           </div>
+        </details>
 
-          {!data?.state.broadcastId && data?.state.broadcastIntent && (
-            <div className="recovery-box">
-              <p>仅在 YouTube Studio 确认该场次不存在且 OBS 确实未推流时使用：</p>
-              <label className="recovery-checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={confirmed}
-                  onChange={e => setConfirmed(e.target.checked)}
-                />
-                <span>我已在 YouTube Studio 确认该场次不存在，且 OBS 未推流</span>
-              </label>
-              <button
-                type="button"
-                className="btn-subtle"
-                disabled={busy || stale || !confirmed}
-                onClick={() => void act("clear-uncertain")}
-              >
-                清理未确认状态
-              </button>
-            </div>
-          )}
-        </div>
-      </details>
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "16px", paddingTop: "12px", borderTop: "1px solid var(--border-subtle)" }}>
-        <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>OBS → YouTube 独立控制通道</span>
-        <button type="button" className="btn-subtle" onClick={() => void refresh()}>
+        <button type="button" className="btn-ghost" onClick={() => void refresh()}>
           <RefreshIcon />
-          <span>刷新状态</span>
+          <span>刷新</span>
         </button>
       </div>
     </article>
