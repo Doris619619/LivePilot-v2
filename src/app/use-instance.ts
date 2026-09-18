@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
 import { targetKey } from "@/shared/remote";
 import { api } from "./client-request";
+import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
 
 /** 仅保存媒体名称及原声选项，不保存路径或授权信息。 */
@@ -18,6 +19,7 @@ function readDraft(id: string): Selection | undefined {
 export function useInstance(instance: InstanceDescriptor) {
   const id = targetKey(instance); const instanceId = instance.id; const agentId = instance.agentId;
   const [data, setData] = useState<Dashboard>();
+  const { durationMs, synchronize, clear: clearClock } = useStreamClock();
   const [selection, setSelection] = useState<Selection>({ video: "", music: "", videoAudio: false });
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
@@ -33,6 +35,7 @@ export function useInstance(instance: InstanceDescriptor) {
     fetching.current = true;
     try {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
+      synchronize(result);
       setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
@@ -50,9 +53,9 @@ export function useInstance(instance: InstanceDescriptor) {
         const saved = (active ? result.state.selection : readDraft(id)) || result.state.selection;
         setSelection(saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: false });
       }
-    } catch (e) { setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
+    } catch (e) { clearClock(); setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
     finally { fetching.current = false; }
-  }, [id, instanceId, agentId]);
+  }, [id, instanceId, agentId, synchronize, clearClock]);
 
   /** 挂载时读取状态；卸载时停止定期轮询。 */
   useEffect(() => {
@@ -102,5 +105,5 @@ export function useInstance(instance: InstanceDescriptor) {
   const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
   const locked = busy || live || pending;
   const blocker = startBlocker(data, selection, busy, stale, live);
-  return { data, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
+  return { data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
 }

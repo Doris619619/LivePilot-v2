@@ -58,14 +58,14 @@ export class Service {
         const cacheKey = [tokens.channelId, state.broadcastId, state.streamId].join(":");
         if (this.ytCache?.key === cacheKey && Date.now() - this.ytCache.at < 30_000) youtube = this.ytCache.value;
         else {
-          youtube = { connected: true, channel: tokens.channel };
+          youtube = { connected: true, channel: tokens.channel, channelId: tokens.channelId };
           try {
             const channel = await this.youtube.channel();
             youtube.channel = channel.title;
             if (state.broadcastId) youtube.lifecycle = (await this.youtube.broadcast(state.broadcastId))?.status.lifeCycleStatus || "missing";
             if (state.streamId) youtube.ingest = (await this.youtube.stream(state.streamId))?.status.streamStatus || "missing";
             youtube.checkedAt = new Date().toISOString();
-          } catch (e) { youtube = { connected: false, channel: tokens.channel, error: safeError(e) }; }
+          } catch (e) { youtube = { connected: false, channel: tokens.channel, channelId: tokens.channelId, error: safeError(e) }; }
           this.ytCache = { key: cacheKey, at: Date.now(), value: youtube };
         }
       }

@@ -9,7 +9,8 @@ import { enqueue, pollTasks, readTask, reportTasks } from "@/cloud/tasks";
 import { claimChannel } from "@/cloud/bindings";
 import { remoteDashboard, target } from "@/server/remote";
 import { initialState } from "@/core/control";
-import type { AgentSnapshot } from "@/shared/remote";
+import { dashboardSchema } from "@/shared/remote-validation";
+import { taskSchema, type AgentSnapshot } from "@/shared/remote";
 let dir: string;
 const destination = { agentId: "studio_a", instanceId: "main" };
 /** 每个测试使用独立数据和密钥，绝不触碰真实授权。 */
@@ -75,4 +76,24 @@ it("keeps OAuth codes encrypted and limits pair retries to the originally enroll
   const session = await openSession("studio_a", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("studio_a", session.session, []);
   await enqueue(destination, "alice", { kind: "oauth-finish", cookie: "d".repeat(64), state: "main.fixture", code: "SENSITIVE_TEST_CODE" });
   expect(await readFile(path.join(agentStore("studio_a").dir, "tasks.json"), "utf8")).not.toContain("SENSITIVE_TEST_CODE");
+});
+
+/** 短、大写成员名必须同时通过云端派发与 Agent 协议校验。 */
+it("delivers built-in member actions through the Agent task schema", async () => {
+  await connect("studio_a");
+  await enqueue(destination, "Do", { kind: "control", input: { action: "launch" } });
+  const tasks = await pollTasks("studio_a");
+  expect(tasks).toHaveLength(1);
+  expect(taskSchema.parse(tasks[0]).actor).toBe("Do");
+});
+
+/** 频道公开身份贯穿 Agent 白名单与云端快照；旧 Agent 未提供 ID 仍兼容。 */
+it("preserves public channel identity while stripping credentials from snapshots", async () => {
+  const session = await connect("studio_a");
+  const value = snapshot();
+  value.dashboard = dashboardSchema.parse({ ...value.dashboard, youtube: { connected: true, channel: "绑定频道", channelId: "UC_bound", accessToken: "must-not-leak" } });
+  await heartbeatAgent("studio_a", session.session, [value]);
+  const result = await remoteDashboard(destination);
+  expect(result.youtube).toEqual({ connected: true, channel: "绑定频道", channelId: "UC_bound" });
+  expect(dashboardSchema.parse(snapshot().dashboard).youtube.channelId).toBeUndefined();
 });

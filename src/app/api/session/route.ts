@@ -1,4 +1,4 @@
-/** 登录与会话入口；无公开注册，账号由直播电脑上的管理命令创建。 */
+/** 登录与会话入口；内置成员与管理命令创建的成员使用相同的服务端认证。 */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticate, login, logout, SESSION_COOKIE } from "@/server/access";
@@ -16,7 +16,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     guard(request, true);
-    const parsed = z.object({ username: z.string().regex(/^[a-z0-9_]{3,32}$/), password: z.string().min(1).max(256) }).strict().safeParse(await readJson(request));
+    const parsed = z.object({ username: z.string().regex(/^[A-Za-z0-9_]{2,32}$/), password: z.string().min(1).max(256) }).strict().safeParse(await readJson(request));
     if (!parsed.success) throw new AppError("INPUT", "请输入有效账号和密码。");
     const result = await login(parsed.data.username, parsed.data.password);
     const response = NextResponse.json({ user: result.user }, { headers: { "Cache-Control": "no-store" } });

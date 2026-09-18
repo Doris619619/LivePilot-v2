@@ -9,6 +9,8 @@ import os from "node:os";
 import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 const { chromium } = await import(process.env.LIVEPILOT_PLAYWRIGHT_MODULE ? pathToFileURL(process.env.LIVEPILOT_PLAYWRIGHT_MODULE).href : "playwright");
+const builtinPassword = process.env.LIVEPILOT_BUILTIN_TEST_PASSWORD;
+if (!builtinPassword) throw new Error("请通过 LIVEPILOT_BUILTIN_TEST_PASSWORD 私下传入内置账号验收密码。");
 const root = await mkdtemp(path.join(os.tmpdir(), "livepilot-cloud-smoke-"));
 const port = 3408; const origin = "https://127.0.0.1:3409";
 const screenshotDir = path.resolve(process.env.LIVEPILOT_SCREENSHOTS || ".data/review-pr4/screenshots");
@@ -59,14 +61,38 @@ try {
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 1050 } }); const page = await context.newPage();
   const errors = []; page.on("pageerror", e => errors.push(e.message));
   await page.goto(origin); await page.getByRole("heading", { name: "LiveNest 控制台" }).waitFor();
-  await page.screenshot({ path: path.join(screenshotDir, "login-desktop.png"), fullPage: true });
+  await page.screenshot({ path: path.join(screenshotDir, "login-desktop.png"), fullPage: true, animations: "disabled" });
   assert.equal((await context.request.get(origin + "/api/instances")).status(), 401);
-  await page.getByLabel("账号", { exact: true }).fill("qa_member"); await page.getByLabel("密码", { exact: true }).fill(password);
+  // 原有账号继续可用，内置账号通过真实浏览器完成后续上传与 Agent 操作。
+  const legacyContext = await browser.newContext({ ignoreHTTPSErrors: true });
+  assert.equal((await legacyContext.request.post(origin + "/api/session", { headers: { origin, "x-livepilot": "1" }, data: { username: "qa_member", password } })).status(), 200);
+  await legacyContext.close();
+  const usernameInput = page.getByLabel("账号", { exact: true });
+  const passwordInput = page.getByLabel("密码", { exact: true });
+  const usernameBox = await usernameInput.boundingBox(); const passwordBox = await passwordInput.boundingBox();
+  assert.equal(usernameBox.width, passwordBox.width); assert.equal(usernameBox.height, 48); assert.equal(passwordBox.height, 48);
+  await usernameInput.fill("Do"); await passwordInput.fill("incorrect-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("heading", { name: "LiveNest 广播控制台", exact: true }).waitFor();
+  await page.getByRole("alert").filter({ hasText: "账号或密码不正确" }).waitFor();
+  await passwordInput.fill(builtinPassword);
+  await page.getByRole("button", { name: "显示密码", exact: true }).press("Enter");
+  assert.equal(await passwordInput.getAttribute("type"), "text");
+  await page.getByRole("button", { name: "隐藏密码", exact: true }).press("Enter");
+  for (const width of [375, 390, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+    // 登录错误态截图不包含已输入的凭据。
+    await usernameInput.fill(""); await passwordInput.fill("");
+    await page.screenshot({ path: path.join(screenshotDir, "login-" + width + ".png"), fullPage: true, animations: "disabled" });
+  }
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await usernameInput.fill("Do"); await passwordInput.fill(builtinPassword);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByRole("heading", { name: "直播工作台", exact: true }).waitFor();
   assert.equal((await context.cookies()).find(c => c.name === "livepilot_session").secure, true);
   await page.locator(".instance-card").nth(1).waitFor();
   assert.equal(await page.locator(".instance-card").count(), 2);
+  await page.screenshot({ path: path.join(screenshotDir, "console-collapsed.png"), fullPage: true, animations: "disabled" });
   await page.locator(".dock-header button").click(); await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
   let interrupt = true;
   await page.route("**/api/uploads/*", async route => {
@@ -77,13 +103,14 @@ try {
   await page.waitForFunction(() => { const value = JSON.parse(localStorage.getItem("livepilot-upload") || "null"); return value?.received === 8 * 1024 * 1024; }, undefined, { timeout: 60000 });
   await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent === "继续传输" && !b.disabled), undefined, { timeout: 30000 });
   interrupt = false; await page.reload();
-  await page.getByRole("heading", { name: "LiveNest 广播控制台", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "直播工作台", exact: true }).waitFor();
   await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
   await page.getByRole("button", { name: "继续传输", exact: true }).click();
   await page.getByText(/已保存至素材库：/).waitFor({ timeout: 60000 });
   const complete = await page.evaluate(() => JSON.parse(localStorage.getItem("livepilot-upload")));
   assert.equal(complete.received, fixture.length); assert.equal(complete.status, "complete");
   for (const card of await page.locator(".instance-card").all()) {
+    await card.getByRole("button", { name: "收起详情", exact: true }).click();
     const toggle = card.getByRole("button", { name: "展开详情", exact: true });
     await toggle.press("Enter");
     assert.equal(await card.getByRole("button", { name: "收起详情", exact: true }).getAttribute("aria-expanded"), "true");
@@ -94,11 +121,12 @@ try {
   assert.equal((await readFile(path.join(media, "videos", complete.publishedName))).length, fixture.length);
   assert.equal(complete.agentId, "studio_a");
   assert.equal(await page.locator("#video-studio_b-main option").count(), 1);
-  await page.screenshot({ path: path.join(screenshotDir, "console-desktop.png"), fullPage: true });
-  for (const width of [390, 768]) {
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: path.join(screenshotDir, "console-desktop.png"), fullPage: true, animations: "disabled" });
+  for (const width of [375, 390, 768, 1024]) {
     await page.setViewportSize({ width, height: 1000 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
-    await page.screenshot({ path: path.join(screenshotDir, "console-" + width + ".png"), fullPage: true });
+    await page.screenshot({ path: path.join(screenshotDir, "console-" + width + ".png"), fullPage: true, animations: "disabled" });
   }
   const headers = { origin, "x-livepilot": "1" };
   const requestId = randomUUID();
@@ -110,13 +138,14 @@ try {
     const response = await context.request.get(origin + "/api/status?agentId=studio_a&instanceId=main"); operation = (await response.json()).operation;
     if (operation?.status === "failed") break; await pause(200);
   }
-  assert.equal(operation.id, requestId); assert.equal(operation.status, "failed"); // 空 OBS 路径：预期安全失败，无外部副作用。
+  assert.equal(operation.id, requestId); assert.equal(operation.actor, "Do"); assert.equal(operation.status, "failed"); // 空 OBS 路径：预期安全失败，无外部副作用。
   const duplicate = await context.request.post(origin + "/api/control", { headers, data: { requestId, agentId: "studio_a", instanceId: "main", action: "launch" } });
   assert.equal((await duplicate.json()).operation.id, requestId);
   const review = await context.newPage(); await review.goto(origin);
   const firstCard = review.locator("#instance-studio_a-main");
   await firstCard.getByRole("alert").waitFor();
   assert.match(await firstCard.innerText(), /最近操作：.*需要处理/);
+  await firstCard.getByRole("button", { name: "收起详情", exact: true }).click();
   assert.equal(await firstCard.locator(".card-expanded-drawer").count(), 0);
   let keyboardCommands = 0;
   await review.route("**/api/control", async route => {
@@ -133,7 +162,7 @@ try {
   await context.request.delete(origin + "/api/session", { headers });
   assert.equal((await context.request.get(origin + "/api/status?agentId=studio_a&instanceId=main")).status(), 401);
   assert.deepEqual(errors, []);
-  console.log("Cloud + 2 real Agent processes smoke passed: HTTPS reverse proxy + Secure cookies, login, two panels, interrupted 9 MiB upload + reload/resume + checksum, 390/768/1440px, async command after page close, dedup, CSRF, logout. No real OBS or YouTube calls.");
+  console.log("Cloud + 2 real Agent processes smoke passed: HTTPS reverse proxy + Secure cookies, login, two panels, interrupted 9 MiB upload + reload/resume + checksum, 375/390/768/1024/1440px, built-in Do + existing member login, equal-size login fields, password toggle, async command after page close, dedup, CSRF, logout. No real OBS or YouTube calls.");
 } finally {
   await browser?.close();
   proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve));

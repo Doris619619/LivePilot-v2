@@ -16,7 +16,7 @@ export type Dashboard = {
   device?: { agentId: string; name: string; online: boolean; lastSeen: number; observedAt?: number };
   operation?: CommandStatus;
   state: ControlState; busy: boolean; obs: ObsStatus;
-  youtube: { connected: boolean; channel?: string; ingest?: string; lifecycle?: string; checkedAt?: string; error?: string };
+  youtube: { connected: boolean; channel?: string; channelId?: string; ingest?: string; lifecycle?: string; checkedAt?: string; error?: string };
   media: { videos: string[]; music: string[]; error?: string };
   configuration: { missing: string[]; privacy: string; madeForKids: boolean };
 };

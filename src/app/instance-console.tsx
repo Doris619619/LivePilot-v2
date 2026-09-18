@@ -1,18 +1,15 @@
-/* 文件用途：LiveNest 单个直播实例控制卡片，支持 20+ 多实例极简紧凑单行与点击展开 1-2-3-4 深度编排。 */
+/* 文件用途：按四个步骤组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useInstance } from "./use-instance";
+import { targetKey } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
-import { StatusBadge, StepSection, type StatusType } from "./components/status-indicator";
+import { StatusBadge, type StatusType } from "./components/status-indicator";
 import {
   ObsIcon,
   YouTubeIcon,
-  VideoIcon,
-  MusicIcon,
-  VolumeIcon,
-  VolumeMuteIcon,
   PlayIcon,
   StopIcon,
   RefreshIcon,
@@ -35,12 +32,13 @@ function formatDuration(ms: number): string {
 /**
  * 单个 OBS 直播实例的极简折叠与展开控制卡片。
  */
-export default function InstanceConsole({ instance }: { instance: InstanceDescriptor }) {
+export default function InstanceConsole({ instance, onChannelChange }: { instance: InstanceDescriptor; onChannelChange: (key: string, channel: string) => void }) {
   const { name } = instance;
   const id = instance.agentId ? `${instance.agentId}-${instance.id}` : instance.id;
   const model = useInstance(instance);
   const {
     data,
+    durationMs,
     selection,
     working,
     error,
@@ -57,7 +55,16 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     select,
   } = model;
 
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const channel = data?.youtube.channel?.trim() || "";
+  const title = channel || name;
+  const key = targetKey(instance);
+
+  /** 复用当前状态轮询，让上传列表与实例标题共享频道名；卸载时清除旧映射。 */
+  useEffect(() => {
+    onChannelChange(key, channel);
+    return () => onChannelChange(key, "");
+  }, [key, channel, onChannelChange]);
 
   const operationLabel = data?.operation && { queued: "等待设备接收", delivering: "等待设备确认", uncertain: "结果待核对", expired: "未接收已过期", accepted: "设备已接收", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status];
 
@@ -73,12 +80,12 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     ? "error"
     : data?.state.phase === "stopped"
     ? "standby"
-    : "ready";
+    : blocker ? "standby" : "ready";
 
   const stateLabel = stale
     ? "离线/过期"
     : !data ? "读取中" : live
-    ? "LIVE"
+    ? "直播中"
     : busy
     ? operationLabel || "处理中"
     : error || data?.state.phase === "error"
@@ -87,7 +94,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     ? "异常"
     : data?.state.phase === "stopped"
     ? "待机"
-    : "就绪";
+    : blocker ? "待配置" : "就绪";
 
   const privacyText = {
     unlisted: "不公开列出",
@@ -95,309 +102,128 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
     public: "公开",
   }[data?.configuration.privacy || "unlisted"];
 
+  const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
+
+  const broadcastControls = <>
+          <button type="button" className="btn-primary" disabled={!!blocker} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+            <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
+          </button>
+          <button type="button" className="btn-danger" disabled={busy || stale || !data} onClick={() => void act("stop")}>
+            <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
+          </button>
+  </>;
+
   return (
     <article className={`instance-card ${live ? "live-border" : ""}`} id={`instance-${id}`} aria-labelledby={`title-${id}`}>
-      {/* 极简折叠顶栏（紧凑定宽，20+ 账号一览全局） */}
-      <div
-        className="card-compact-bar"
-        onClick={() => setExpanded(!expanded)}
-      >
+      <div className="card-compact-bar">
         <div className="compact-info-col">
-          <span className="compact-id-tag">
-            {instance.agentName || "本机"} / {instance.id}
-          </span>
-          <h2 className="compact-title" id={`title-${id}`}>
-            {name}
-          </h2>
-          <div className="compact-channel">
-            <YouTubeIcon style={{ color: "#e11d48" }} />
-            <span>{data?.youtube.channel || "等待连接频道"}</span>
-          </div>
-          {live && data?.obs.streaming && (
-            <span className="compact-timer">{formatDuration(data.obs.durationMs || 0)}</span>
-          )}
-          <StatusBadge status={statusType} label={stateLabel} />
+          <h2 className="compact-title" id={`title-${id}`}>{title}</h2>
+          <div className="compact-channel"><ObsIcon /><span>{instance.agentName || "本机"} · {name} · {instance.id}</span></div>
         </div>
-
-        <div className="compact-actions-col" onClick={e => e.stopPropagation()}>
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={!!blocker}
-            aria-describedby={`compact-readiness-${id}`}
-            onClick={() => void act("start")}
-          >
-            <PlayIcon />
-            <span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn-danger"
-            disabled={busy || stale || !data}
-            onClick={() => void act("stop")}
-          >
-            <StopIcon />
-            <span>{working === "stop" ? "结束中…" : "结束直播"}</span>
-          </button>
-
-          <button
-            type="button"
-            className="expand-toggle-btn"
-            onClick={() => setExpanded(!expanded)}
-            aria-label={expanded ? "收起详情" : "展开详情"}
-            aria-expanded={expanded}
-            aria-controls={`details-${id}`}
-          >
-            <span>{expanded ? "收起" : "编排详情"}</span>
-            <span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}>
-              <ChevronDownIcon />
-            </span>
+        <div className="instance-state">
+          <StatusBadge status={statusType} label={stateLabel} />
+          {live && data?.obs.streaming && <span className="compact-timer">{durationMs === null ? "—" : formatDuration(durationMs)}</span>}
+        </div>
+        <div className="compact-actions-col">
+          {!expanded && broadcastControls}
+          <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
+            <span>{expanded ? "收起" : "设置"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
         </div>
       </div>
 
-      {/* 快捷操作结果始终可见，折叠不隐藏失败、离线或回执待核对。 */}
-      {(error || data?.state.error || stale) && (
-        <div className="banner error instance-feedback" role="alert">
-          <AlertCircleIcon />
-          <span>{stale ? `状态已过期：${error}；实际推流状态未知，已有直播可能仍在继续。` : error || data?.state.error}</span>
-        </div>
-      )}
+      {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
+      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? `状态已过期：${error}；实际推流状态未知，已有直播可能仍在继续。` : error || data?.state.error}</span></div>}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
-      <p className={blocker && !live ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>
-        {blocker || "就绪 · 展开详情核对素材后开始直播"}
-      </p>
+      <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
-      {/* 展开后的 1-2-3-4 结构化详情工作台 */}
-      {expanded && (
-        <div className="card-expanded-drawer" id={`details-${id}`}>
-          {/* 步骤 1: 管道连接 */}
-          <StepSection step="1" title="连接管道检查">
-            {!!data?.configuration.missing.length && <div className="banner error"><span>请在目标直播电脑补齐配置：{data.configuration.missing.join("、")}</span></div>}
-            {data?.obs.message && <p className="readiness-text">{data.obs.message}</p>}
-            {data?.youtube.error && <p className="readiness-text">{data.youtube.error}</p>}
+      {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
+        {data?.media.error && <div className="banner error" role="alert">{data.media.error}</div>}
+        {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
+        <div className="instance-workflow">
+          <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
+            <h3 id={`step-1-${id}`}><span className="step-number">1</span>设备与频道</h3>
             <div className="connections-grid">
               <div className="conn-box">
-                <div className="conn-info">
-                  <ObsIcon />
-                  <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>OBS 管道:</span>
-                  <span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>
-                    {stale ? "未知" : data?.obs.ready ? "已就绪" : "未启动"}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  disabled={busy || !data || stale || data.obs.ready}
-                  onClick={() => void act("launch")}
-                >
-                  {working === "launch" ? "启动中…" : "启动 OBS"}
-                </button>
+                <div className="conn-info"><ObsIcon /><span>{name}</span><span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.obs.ready ? "已连接" : "未启动"}</span></div>
+                <button type="button" className="btn-ghost" disabled={busy || !data || stale || data.obs.ready} onClick={() => void act("launch")}>{working === "launch" ? "启动中…" : "启动 OBS"}</button>
               </div>
-
               <div className="conn-box">
-                <div className="conn-info">
-                  <YouTubeIcon style={{ color: "#e11d48" }} />
-                  <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>YouTube 授权:</span>
-                  <span className={`conn-status ${data?.youtube.connected && !stale ? "connected" : "disconnected"}`}>
-                    {stale ? "未知" : data?.youtube.connected ? "已授权" : "未连接"}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  disabled={busy || !data || stale}
-                  onClick={() => void act("connect")}
-                >
-                  {data?.youtube.connected ? "重新授权" : "连接频道"}
-                </button>
-              </div>
-            </div>
-          </StepSection>
-
-          {/* 步骤 2: 节目编排 */}
-          <StepSection step="2" title="编排音视频素材">
-            {data?.media.error && <p className="readiness-text">{data.media.error}</p>}
-            {pending && !live && <p className="readiness-text">当前场次尚未结束，保留原素材重试或结束直播后再配置。</p>}
-            <div className="form-row">
-              <div className="field-group">
-                <label htmlFor={`video-${id}`} className="field-label">
-                  <VideoIcon /> 循环视频
-                </label>
-                <select
-                  id={`video-${id}`}
-                  value={selection.video}
-                  disabled={locked || !data?.media.videos.length}
-                  onChange={e => select({ video: e.target.value })}
-                >
-                  <option value="">选择视频素材</option>
-                  {selection.video && !data?.media.videos.includes(selection.video) && (
-                    <option value={selection.video}>{selection.video}（缺失）</option>
-                  )}
-                  {data?.media.videos.map(item => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="field-group">
-                <label htmlFor={`music-${id}`} className="field-label">
-                  <MusicIcon /> 背景音乐
-                </label>
-                <select
-                  id={`music-${id}`}
-                  value={selection.music}
-                  disabled={locked || !data?.media.music.length}
-                  onChange={e => select({ music: e.target.value })}
-                >
-                  <option value="">选择背景音频</option>
-                  {selection.music && !data?.media.music.includes(selection.music) && (
-                    <option value={selection.music}>{selection.music}（缺失）</option>
-                  )}
-                  {data?.media.music.map(item => (
-                    <option key={item} value={item}>
-                      {item}
-                    </option>
-                  ))}
-                </select>
+                <div className="conn-info"><YouTubeIcon /><span>{channel || "YouTube 频道"}</span><span className={`conn-status ${data?.youtube.connected && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.youtube.connected ? "已授权" : channel ? "授权异常" : "未连接"}</span></div>
+                <button type="button" className="btn-ghost" disabled={busy || !data || stale} onClick={() => void act("connect")}>{data?.youtube.connected ? "重新授权" : "连接频道"}</button>
               </div>
             </div>
 
-            <div className="switch-row">
-              <div className="switch-label">
-                {selection.videoAudio ? <VolumeIcon /> : <VolumeMuteIcon />}
-                <span>保留视频原声</span>
-                <small style={{ color: "var(--text-muted)", fontWeight: 400 }}>（关则只播背景音乐）</small>
-              </div>
-
-              <button
-                id={`audio-${id}`}
-                type="button"
-                role="switch"
-                aria-checked={selection.videoAudio}
-                aria-label={`${name} 视频原声`}
-                className={`switch-btn ${selection.videoAudio ? "active" : ""}`}
-                disabled={locked}
-                onClick={() => select({ videoAudio: !selection.videoAudio })}
-              >
-                {selection.videoAudio ? "开启 ON" : "静音 OFF"}
-              </button>
-            </div>
-          </StepSection>
-
-          {/* 步骤 3: 开播控制与就绪判断 */}
-          <StepSection step="3" title="开停播操作">
-            <div className="actions-buttons">
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={!!blocker}
-                aria-describedby={`readiness-${id}`}
-                onClick={() => void act("start")}
-              >
-                <PlayIcon />
-                <span>{working === "start" ? "准备推流中…" : pending && !live ? "重试开始直播" : "开始直播"}</span>
-              </button>
-
-              <button
-                type="button"
-                className="btn-danger"
-                disabled={busy || stale || !data}
-                onClick={() => void act("stop")}
-              >
-                <StopIcon />
-                <span>{working === "stop" ? "正在停止…" : "结束直播"}</span>
-              </button>
-            </div>
-
-            <div className={`readiness-text ${!blocker ? "ready" : ""}`} id={`readiness-${id}`}>
-              {blocker || "✓ 就绪 · 点击开始后将自动调度 OBS 并推送至 YouTube"}
-            </div>
-
-            <div className="sub-meta-row">
-              <span>{privacyText} · {data?.configuration.madeForKids ? "面向儿童" : "常规内容"}</span>
-              {data?.state.broadcastId && (
-                <a
-                  className="watch-link"
-                  href={`https://www.youtube.com/watch?v=${encodeURIComponent(data.state.broadcastId)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span>YouTube 直播页面</span>
-                  <ExternalLinkIcon />
-                </a>
-              )}
-            </div>
-          </StepSection>
-
-          {/* 步骤 4: 实时遥测 */}
-          <StepSection step="4" title="推流遥测监视">
-            {data?.operation && <p className="readiness-text">最近操作：{data.operation.actor} · {operationLabel}</p>}
-            <div className="telemetry-timer-banner">
-              <span className="telemetry-stage-text">
-                状态：<strong>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</strong>
-              </span>
-              <span className="telemetry-timer">{stale ? "—" : data?.obs.streaming ? formatDuration(data.obs.durationMs || 0) : "00:00:00"}</span>
-            </div>
-
-            <div className="telemetry-table">
-              <div className="telemetry-cell">
-                <span className="telemetry-cell-label">OBS 推流状态</span>
-                <span className="telemetry-cell-value">
-                  {stale || data?.obs.streaming == null
-                    ? "未知"
-                    : data.obs.reconnecting
-                    ? "重连中"
-                    : data.obs.streaming
-                    ? "Active (推流中)"
-                    : "未推流"}
-                </span>
-              </div>
-
-              <div className="telemetry-cell">
-                <span className="telemetry-cell-label">YouTube 周期</span>
-                <span className="telemetry-cell-value">{stale ? "未知" : data?.youtube.lifecycle || "—"}</span>
-              </div>
-            </div>
-          </StepSection>
-
-          {/* 卡片底部辅助与诊断 */}
-          <div className="card-footer">
-            <details style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-              <summary style={{ cursor: "pointer" }}>高级诊断与恢复</summary>
-              <div style={{ marginTop: "6px", fontSize: "11px", fontFamily: "var(--font-mono)" }}>
-                <div>Broadcast ID: {data?.state.broadcastId || "—"}</div>
-                <div>Stream ID: {data?.state.streamId || "—"}</div>
-                {!data?.state.broadcastId && data?.state.broadcastIntent && (
-                  <div style={{ marginTop: "6px" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                      <input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />
-                      已核对 Studio 无此场次
-                    </label>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      style={{ marginTop: "4px" }}
-                      disabled={busy || stale || !confirmed}
-                      onClick={() => void act("clear-uncertain")}
-                    >
-                      清理未确认状态
-                    </button>
-                  </div>
-                )}
-              </div>
-            </details>
-
-            <button type="button" className="btn-ghost" onClick={() => void refresh()}>
-              <RefreshIcon />
-              <span>刷新状态</span>
-            </button>
+            {data?.youtube.channelId && <a className="channel-link" href={`https://www.youtube.com/channel/${encodeURIComponent(data.youtube.channelId)}`} target="_blank" rel="noopener noreferrer">打开已绑定频道<ExternalLinkIcon /></a>}
+          </section>
+          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
+            <h3 id={`step-2-${id}`}><span className="step-number">2</span>音视频编排</h3>
+        <div className="form-row media-selection">
+          <div className="field-group">
+            <label htmlFor={`video-${id}`} className="field-label">循环视频</label>
+            <select id={`video-${id}`} value={selection.video} disabled={locked || !data?.media.videos.length} onChange={e => select({ video: e.target.value })}>
+              <option value="">选择视频素材</option>
+              {selection.video && !data?.media.videos.includes(selection.video) && <option value={selection.video}>{selection.video}（缺失）</option>}
+              {data?.media.videos.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+          <div className="field-group">
+            <label htmlFor={`music-${id}`} className="field-label">背景音乐</label>
+            <select id={`music-${id}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
+              <option value="">选择背景音乐</option>
+              {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
+              {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
           </div>
         </div>
-      )}
+        <div className="media-options">
+          <div className="switch-row">
+            <span className="switch-label">视频原声</span>
+            <button id={`audio-${id}`} type="button" role="switch" aria-checked={selection.videoAudio} aria-label={`${title} 视频原声`} className={`switch-btn ${selection.videoAudio ? "active" : ""}`} disabled={locked} onClick={() => select({ videoAudio: !selection.videoAudio })}>
+              <span className="switch-track" aria-hidden="true"><span /></span><span>{selection.videoAudio ? "开启" : "关闭"}</span>
+            </button>
+          </div>
+          {data?.state.broadcastId && <a className="watch-link" href={`https://www.youtube.com/watch?v=${encodeURIComponent(data.state.broadcastId)}`} target="_blank" rel="noopener noreferrer">查看直播<ExternalLinkIcon /></a>}
+        </div>
+
+
+          </section>
+          <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
+            <h3 id={`step-3-${id}`}><span className="step-number">3</span>直播控制</h3>
+            <div className="broadcast-actions">{broadcastControls}</div>
+          </section>
+          <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
+            <h3 id={`step-4-${id}`}><span className="step-number">4</span>运行状态</h3>
+            <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
+            <dl className="runtime-values">
+              <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
+              <div><dt>YouTube</dt><dd>{stale ? "未知" : data?.youtube.lifecycle || "—"}</dd></div>
+            </dl>
+          </section>
+        </div>
+
+        <details className="instance-diagnostics">
+          <summary>连接与诊断</summary>
+          <div className="diagnostics-content">
+            {!!data?.configuration.missing.length && <div className="banner error"><span>请在直播电脑补齐：{data.configuration.missing.join("、")}</span></div>}
+            {data?.obs.message && <p className="readiness-text">{data.obs.message}</p>}
+            {data?.youtube.error && <p className="readiness-text">{data.youtube.error}</p>}
+            <dl className="diagnostic-values">
+              <div><dt>频道 ID</dt><dd>{data?.youtube.channelId || "—"}</dd></div>
+              <div><dt>当前步骤</dt><dd>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</dd></div>
+              <div><dt>可见范围</dt><dd>{privacyText} · {data?.configuration.madeForKids ? "面向儿童" : "常规内容"}</dd></div>
+              <div><dt>实例</dt><dd>{instance.agentName || "本机"} / {instance.id}</dd></div>
+              <div><dt>Broadcast ID</dt><dd>{data?.state.broadcastId || "—"}</dd></div>
+              <div><dt>Stream ID</dt><dd>{data?.state.streamId || "—"}</dd></div>
+            </dl>
+            {!data?.state.broadcastId && data?.state.broadcastIntent && <div className="recovery-controls">
+              <label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />已核对 Studio 无此场次</label>
+              <button type="button" className="btn-secondary" disabled={busy || stale || !confirmed} onClick={() => void act("clear-uncertain")}>清理未确认状态</button>
+            </div>}
+            <button type="button" className="btn-ghost" onClick={() => void refresh()}><RefreshIcon />刷新状态</button>
+          </div>
+        </details>
+      </div>}
     </article>
   );
 }

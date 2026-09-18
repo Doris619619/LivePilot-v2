@@ -8,7 +8,7 @@ export const dashboardSchema = z.object({
   operation: operationSchema.optional(), busy: z.boolean(),
   state: z.object({ phase: z.enum(["idle", "starting", "live", "stopping", "stopped", "error"]), stage: text, updatedAt: text, error: text.optional(), channelId: text.optional(), broadcastId: text.optional(), streamId: text.optional(), broadcastTitle: text.optional(), streamTitle: text.optional(), broadcastIntent: z.boolean().optional(), streamIntent: z.boolean().optional(), obsStartRequested: z.boolean().optional(), selection: selection.optional(), startedAt: text.optional() }),
   obs: z.object({ ready: z.boolean(), running: z.boolean(), streaming: z.boolean().nullable(), reconnecting: z.boolean().optional(), durationMs: z.number().optional(), scene: text.optional(), version: text.optional(), message: text.optional() }),
-  youtube: z.object({ connected: z.boolean(), channel: text.optional(), ingest: text.optional(), lifecycle: text.optional(), checkedAt: text.optional(), error: text.optional() }),
+  youtube: z.object({ connected: z.boolean(), channel: text.optional(), channelId: text.optional(), ingest: text.optional(), lifecycle: text.optional(), checkedAt: text.optional(), error: text.optional() }),
   media: z.object({ videos: z.array(text).max(2000), music: z.array(text).max(2000), error: text.optional() }),
   configuration: z.object({ missing: z.array(text).max(30), privacy: text, madeForKids: z.boolean() }),
 });
