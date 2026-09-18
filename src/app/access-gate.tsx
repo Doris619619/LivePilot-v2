@@ -145,7 +145,6 @@ export default function AccessGate({ children }: { children: ReactNode }) {
                   className="pass-toggle-btn"
                   onClick={() => setVisible(!visible)}
                   aria-label={visible ? "隐藏密码" : "显示密码"}
-                  tabIndex={-1}
                 >
                   {visible ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
@@ -160,7 +159,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
             )}
 
             <button type="submit" className="btn-primary" disabled={busy} style={{ minHeight: "38px", marginTop: "4px" }}>
-              {busy ? "验证中…" : "登 录"}
+              {busy ? "验证中…" : "登录"}
             </button>
           </form>
         </section>

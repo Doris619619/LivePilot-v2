@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 const { chromium } = await import(process.env.LIVEPILOT_PLAYWRIGHT_MODULE ? pathToFileURL(process.env.LIVEPILOT_PLAYWRIGHT_MODULE).href : "playwright");
 const root = await mkdtemp(path.join(os.tmpdir(), "livepilot-cloud-smoke-"));
 const port = 3408; const origin = "https://127.0.0.1:3409";
-const screenshotDir = path.resolve("docs/screenshots/cloud-console");
+const screenshotDir = path.resolve(process.env.LIVEPILOT_SCREENSHOTS || ".data/review-pr4/screenshots");
 const password = randomBytes(24).toString("hex"); const salt = randomBytes(16).toString("hex");
 const access = path.join(root, "access"); const media = path.join(root, "media");
 await mkdir(access); await mkdir(path.join(media, "videos"), { recursive: true }); await mkdir(path.join(media, "music"));
@@ -58,31 +58,36 @@ try {
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 1050 } }); const page = await context.newPage();
   const errors = []; page.on("pageerror", e => errors.push(e.message));
-  await page.goto(origin); await page.getByRole("heading", { name: "登录工作台" }).waitFor();
+  await page.goto(origin); await page.getByRole("heading", { name: "LiveNest 控制台" }).waitFor();
   await page.screenshot({ path: path.join(screenshotDir, "login-desktop.png"), fullPage: true });
   assert.equal((await context.request.get(origin + "/api/instances")).status(), 401);
   await page.getByLabel("账号", { exact: true }).fill("qa_member"); await page.getByLabel("密码", { exact: true }).fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  await page.getByRole("heading", { name: "直播工作台", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "LiveNest 广播控制台", exact: true }).waitFor();
   assert.equal((await context.cookies()).find(c => c.name === "livepilot_session").secure, true);
-  await page.locator(".instance-panel").nth(1).waitFor();
-  assert.equal(await page.locator(".instance-panel").count(), 2);
-  await page.locator(".upload-panel summary").click(); await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
+  await page.locator(".instance-card").nth(1).waitFor();
+  assert.equal(await page.locator(".instance-card").count(), 2);
+  await page.locator(".dock-header button").click(); await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
   let interrupt = true;
   await page.route("**/api/uploads/*", async route => {
     if (interrupt && route.request().method() === "PUT" && Number(route.request().headers()["upload-offset"]) > 0) await route.abort();
     else await route.continue();
   });
-  await page.getByRole("button", { name: "上传到直播电脑", exact: true }).click();
+  await page.getByRole("button", { name: "开始上传", exact: true }).click();
   await page.waitForFunction(() => { const value = JSON.parse(localStorage.getItem("livepilot-upload") || "null"); return value?.received === 8 * 1024 * 1024; }, undefined, { timeout: 60000 });
-  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent === "继续上传" && !b.disabled), undefined, { timeout: 30000 });
+  await page.waitForFunction(() => Array.from(document.querySelectorAll("button")).some(b => b.textContent === "继续传输" && !b.disabled), undefined, { timeout: 30000 });
   interrupt = false; await page.reload();
-  await page.getByRole("heading", { name: "直播工作台", exact: true }).waitFor();
-  await page.locator(".upload-panel summary").click(); await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
-  await page.getByRole("button", { name: "继续上传", exact: true }).click();
-  await page.getByText(/已加入素材库：/).waitFor({ timeout: 60000 });
+  await page.getByRole("heading", { name: "LiveNest 广播控制台", exact: true }).waitFor();
+  await page.locator("#upload-file").setInputFiles(path.join(root, "demo.mp4"));
+  await page.getByRole("button", { name: "继续传输", exact: true }).click();
+  await page.getByText(/已保存至素材库：/).waitFor({ timeout: 60000 });
   const complete = await page.evaluate(() => JSON.parse(localStorage.getItem("livepilot-upload")));
   assert.equal(complete.received, fixture.length); assert.equal(complete.status, "complete");
+  for (const card of await page.locator(".instance-card").all()) {
+    const toggle = card.getByRole("button", { name: "展开详情", exact: true });
+    await toggle.press("Enter");
+    assert.equal(await card.getByRole("button", { name: "收起详情", exact: true }).getAttribute("aria-expanded"), "true");
+  }
   await page.waitForFunction(name => document.querySelector("#video-studio_a-main")?.textContent.includes(name), complete.publishedName);
   const saved = await readFile(path.join(media, "videos", complete.publishedName));
   assert.equal(createHash("sha256").update(saved).digest("hex"), createHash("sha256").update(fixture).digest("hex"));
@@ -108,6 +113,21 @@ try {
   assert.equal(operation.id, requestId); assert.equal(operation.status, "failed"); // 空 OBS 路径：预期安全失败，无外部副作用。
   const duplicate = await context.request.post(origin + "/api/control", { headers, data: { requestId, agentId: "studio_a", instanceId: "main", action: "launch" } });
   assert.equal((await duplicate.json()).operation.id, requestId);
+  const review = await context.newPage(); await review.goto(origin);
+  const firstCard = review.locator("#instance-studio_a-main");
+  await firstCard.getByRole("alert").waitFor();
+  assert.match(await firstCard.innerText(), /最近操作：.*需要处理/);
+  assert.equal(await firstCard.locator(".card-expanded-drawer").count(), 0);
+  let keyboardCommands = 0;
+  await review.route("**/api/control", async route => {
+    const body = route.request().postDataJSON();
+    assert.equal(body.agentId, "studio_a"); assert.equal(body.instanceId, "main"); assert.equal(body.action, "stop");
+    keyboardCommands++; await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ error: "隔离测试：操作被拒绝" }) });
+  });
+  await firstCard.getByRole("button", { name: "结束直播", exact: true }).press("Enter");
+  await firstCard.getByRole("alert").filter({ hasText: "隔离测试：操作被拒绝" }).waitFor();
+  assert.equal(keyboardCommands, 1); assert.equal(await firstCard.locator(".card-expanded-drawer").count(), 0);
+  await review.close();
   const evil = await context.request.post(origin + "/api/control", { headers: { ...headers, origin: "https://evil.test" }, data: { requestId: randomUUID(), agentId: "studio_a", instanceId: "main", action: "stop" } });
   assert.equal(evil.status(), 403);
   await context.request.delete(origin + "/api/session", { headers });

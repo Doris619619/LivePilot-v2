@@ -59,13 +59,15 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
 
   const [expanded, setExpanded] = useState(false);
 
+  const operationLabel = data?.operation && { queued: "等待设备接收", delivering: "等待设备确认", uncertain: "结果待核对", expired: "未接收已过期", accepted: "设备已接收", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status];
+
   const statusType: StatusType = stale
     ? "stale"
-    : live
+    : !data ? "busy" : live
     ? "live"
     : busy
     ? "busy"
-    : data?.state.phase === "error"
+    : error || data?.state.phase === "error"
     ? "error"
     : data?.state.phase === "live"
     ? "error"
@@ -75,11 +77,11 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
 
   const stateLabel = stale
     ? "离线/过期"
-    : live
+    : !data ? "读取中" : live
     ? "LIVE"
     : busy
-    ? "处理中"
-    : data?.state.phase === "error"
+    ? operationLabel || "处理中"
+    : error || data?.state.phase === "error"
     ? "需处理"
     : data?.state.phase === "live"
     ? "异常"
@@ -99,15 +101,6 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
       <div
         className="card-compact-bar"
         onClick={() => setExpanded(!expanded)}
-        role="button"
-        tabIndex={0}
-        aria-expanded={expanded}
-        onKeyDown={e => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setExpanded(!expanded);
-          }
-        }}
       >
         <div className="compact-info-col">
           <span className="compact-id-tag">
@@ -131,6 +124,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
             type="button"
             className="btn-primary"
             disabled={!!blocker}
+            aria-describedby={`compact-readiness-${id}`}
             onClick={() => void act("start")}
           >
             <PlayIcon />
@@ -152,6 +146,8 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
             className="expand-toggle-btn"
             onClick={() => setExpanded(!expanded)}
             aria-label={expanded ? "收起详情" : "展开详情"}
+            aria-expanded={expanded}
+            aria-controls={`details-${id}`}
           >
             <span>{expanded ? "收起" : "编排详情"}</span>
             <span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}>
@@ -161,19 +157,26 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
         </div>
       </div>
 
+      {/* 快捷操作结果始终可见，折叠不隐藏失败、离线或回执待核对。 */}
+      {(error || data?.state.error || stale) && (
+        <div className="banner error instance-feedback" role="alert">
+          <AlertCircleIcon />
+          <span>{stale ? `状态已过期：${error}；实际推流状态未知，已有直播可能仍在继续。` : error || data?.state.error}</span>
+        </div>
+      )}
+      {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
+      <p className={blocker && !live ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>
+        {blocker || "就绪 · 展开详情核对素材后开始直播"}
+      </p>
+
       {/* 展开后的 1-2-3-4 结构化详情工作台 */}
       {expanded && (
-        <div className="card-expanded-drawer">
-          {/* 错误提示条 */}
-          {(error || data?.state.error || stale) && (
-            <div className="banner error" role="alert">
-              <AlertCircleIcon />
-              <span>{stale ? `状态已过期：${error}` : error || data?.state.error}</span>
-            </div>
-          )}
-
+        <div className="card-expanded-drawer" id={`details-${id}`}>
           {/* 步骤 1: 管道连接 */}
           <StepSection step="1" title="连接管道检查">
+            {!!data?.configuration.missing.length && <div className="banner error"><span>请在目标直播电脑补齐配置：{data.configuration.missing.join("、")}</span></div>}
+            {data?.obs.message && <p className="readiness-text">{data.obs.message}</p>}
+            {data?.youtube.error && <p className="readiness-text">{data.youtube.error}</p>}
             <div className="connections-grid">
               <div className="conn-box">
                 <div className="conn-info">
@@ -215,6 +218,8 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
 
           {/* 步骤 2: 节目编排 */}
           <StepSection step="2" title="编排音视频素材">
+            {data?.media.error && <p className="readiness-text">{data.media.error}</p>}
+            {pending && !live && <p className="readiness-text">当前场次尚未结束，保留原素材重试或结束直播后再配置。</p>}
             <div className="form-row">
               <div className="field-group">
                 <label htmlFor={`video-${id}`} className="field-label">
@@ -273,6 +278,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
                 type="button"
                 role="switch"
                 aria-checked={selection.videoAudio}
+                aria-label={`${name} 视频原声`}
                 className={`switch-btn ${selection.videoAudio ? "active" : ""}`}
                 disabled={locked}
                 onClick={() => select({ videoAudio: !selection.videoAudio })}
@@ -329,6 +335,7 @@ export default function InstanceConsole({ instance }: { instance: InstanceDescri
 
           {/* 步骤 4: 实时遥测 */}
           <StepSection step="4" title="推流遥测监视">
+            {data?.operation && <p className="readiness-text">最近操作：{data.operation.actor} · {operationLabel}</p>}
             <div className="telemetry-timer-banner">
               <span className="telemetry-stage-text">
                 状态：<strong>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</strong>

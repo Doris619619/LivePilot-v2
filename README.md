@@ -10,6 +10,8 @@ LiveNest 是本项目的现代专业直播控制中枢与分布式调度发射�
 - 云端管理：`npm run agent:admin -- pair <设备ID> [名称]`、`list`、`revoke <设备ID>`。
 - 校验：`npm run verify` 包含网页及 Agent 构建；`scripts/cloud-smoke.mjs` 使用两个隔离 Agent 和空 OBS 配置验收网页与素材传输。
 
+控制台默认折叠显示实例；操作失败、设备离线及结果待核对会直接显示在卡片上。正常就绪实例保持紧凑布局，详情中可查看配置缺项、素材与完整操作状态；快捷操作支持键盘 Enter / 空格。
+
 以下原有本机配置说明适用于 local 模式及 Agent 的 OBS/素材配置；云端本身无需安装 OBS。
 
 
