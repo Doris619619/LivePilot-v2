@@ -1,7 +1,7 @@
 <!-- 文件用途：指导新 Windows 电脑从克隆仓库到配置多个 OBS / YouTube 频道并进行真实开停播验收。 -->
-# LivePilot v2
+# LivePilot v2 (LiveNest)
 
-当前提供 **local 本地模式** 与 **cloud 多电脑模式**：云端负责登录、设备管理和任务派发；每台 Windows Agent 独立完成开停播、保存频道授权和素材。多个设备可以各自拥有 `main`。原本地配置及授权保持兼容。
+LiveNest 是本项目的现代专业直播控制中枢与分布式调度发射台，当前提供 **local 本地模式** 与 **cloud 多电脑模式**：云端负责登录、设备管理和任务派发；每台 Windows Agent 独立完成开停播、保存频道授权和素材。多个设备可以各自拥有 `main`。原本地配置及授权保持兼容。
 
 - **首次部署入口：[从零部署](docs/从零部署.md)**，包含 DNS、Google 回调、Ubuntu 部署、Windows 配置/代理/自启、诊断与回退。
 - 初始化：`npm run setup:cloud -- --domain <域名>`、`npm run setup:agent -- --domain <域名> --id <设备ID>`。
