@@ -50,3 +50,5 @@ npm.cmd run verify
 `verify` 包含类型检查、Lint、业务测试、部署脚本测试、网页生产构建及 Agent 构建。测试使用隔离环境；通过构建不等于已完成真实频道授权或音画验收。模块与验证边界见[架构文档](docs/ARCHITECTURE.md)、[验证记录](docs/VALIDATION.md)。
 
 当前不提供 Start All / Stop All、批量素材分发、直播时间调度或 FFmpeg Worker。
+
+PR 默认采用 [PR #4](https://github.com/Doris619619/LivePilot-v2/pull/4) 的清晰分组结构；提交前阅读 [PR 撰写规范](docs/PR撰写规范.md)，并使用 [默认模板](.github/pull_request_template.md)。
