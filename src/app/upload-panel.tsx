@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
 import { targetKey } from "@/shared/remote";
@@ -20,11 +20,13 @@ import {
 
 const KEY = "livepilot-upload";
 
+/** 将上传字节数格式化为可比较的 MiB 数值。 */
 function bytes(value: number): string {
   return (value / 1024 ** 2).toFixed(1) + " MiB";
 }
 
-export default function UploadPanel({ instances }: { instances: InstanceDescriptor[] }) {
+/** 在选定直播电脑上传或恢复文件；上传进度不依赖面板展开状态。 */
+export default function UploadPanel({ instances, channels, heading }: { instances: InstanceDescriptor[]; channels: Record<string, string>; heading?: ReactNode }) {
   const [record, setRecord] = useState<UploadStatus>();
   const [instanceId, setInstanceId] = useState(instances[0] ? targetKey(instances[0]) : "main");
   const [kind, setKind] = useState<"videos" | "music">("videos");
@@ -190,19 +192,15 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
 
   return (
     <section className="media-dock" aria-label="素材上传">
-      <div className="dock-header" onClick={() => setIsOpen(!isOpen)}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <UploadIcon />
-          <strong style={{ fontSize: "14px" }}>素材上传分发</strong>
-          <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>将本地素材推送到目标直播电脑</span>
-        </div>
-        <button type="button" className="btn-ghost">
-          {isOpen ? "收起" : "展开"}
+      <div className="dock-header">
+        <div className="dock-heading">{heading || <h2>素材库</h2>}</div>
+        <button type="button" className="btn-secondary" aria-expanded={isOpen} aria-controls="upload-content" onClick={() => setIsOpen(!isOpen)}>
+          <UploadIcon />{isOpen ? "收起上传" : "上传素材"}
         </button>
       </div>
 
       {isOpen && (
-        <div className="dock-content">
+        <div className="dock-content" id="upload-content">
           <form onSubmit={submit}>
             <div className="form-row">
               <div className="field-group">
@@ -217,8 +215,7 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
                 >
                   {instances.map(i => (
                     <option key={targetKey(i)} value={targetKey(i)}>
-                      {i.agentName ? `${i.agentName} / ` : "本机 / "}
-                      {i.name}
+                      {channels[targetKey(i)] || i.name} · {i.agentName || "本机"} / {i.name} ({i.id})
                     </option>
                   ))}
                 </select>
@@ -281,15 +278,15 @@ export default function UploadPanel({ instances }: { instances: InstanceDescript
             </div>
           </form>
 
-          {stage && <p style={{ marginTop: "10px", fontSize: "12px", color: "var(--accent-primary)" }}>{stage}</p>}
+          {stage && <p style={{ marginTop: "10px", fontSize: "15px", color: "var(--accent-primary)" }}>{stage}</p>}
 
           {record && (
-            <div style={{ marginTop: "12px", padding: "10px", background: "var(--bg-subtle)", borderRadius: "var(--radius-sm)", fontSize: "12px" }}>
+            <div style={{ marginTop: "12px", padding: "10px", background: "var(--bg-subtle)", borderRadius: "var(--radius-sm)", fontSize: "15px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                 <strong>{record.filename}</strong>
                 <span>{bytes(record.received)} / {bytes(record.size)}</span>
               </div>
-              <progress max={record.size} value={record.received} style={{ width: "100%", height: "6px" }} />
+              <progress aria-label="素材上传进度" max={record.size} value={record.received} style={{ width: "100%", height: "6px" }} />
               <div style={{ marginTop: "6px", color: "var(--text-secondary)" }}>
                 {record.status === "complete" ? (
                   <span style={{ color: "var(--success-green)", display: "flex", alignItems: "center", gap: "4px" }}>

@@ -1,0 +1,26 @@
+/* 文件用途：品牌登录页与密码控件；桌面和手机使用一致尺寸、清晰焦点与克制留白。 */
+.login-wrapper { min-height: 100dvh; display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 112px 24px 104px; position: relative; background: var(--bg-app); }
+.login-brand { position: absolute; top: 32px; left: 40px; display: flex; align-items: center; gap: 10px; font-size: 21px; font-weight: 600; letter-spacing: -.7px; }
+.login-brand-caption { font-size: 15px; font-weight: 400; color: var(--text-muted); border-left: 1px solid var(--border-default); margin-left: 5px; padding-left: 15px; letter-spacing: 0; }
+.login-card { width: 100%; max-width: 420px; padding: 40px; background: var(--surface-base); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); animation: reveal .22s ease-out; }
+.login-head { margin-bottom: 32px; }
+.login-mark { display: inline-flex; align-items: center; justify-content: center; width: 56px; height: 56px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); margin-bottom: 24px; }
+.login-head h1 { font-size: 24px; font-weight: 600; letter-spacing: -.7px; line-height: 1.4; margin-bottom: 8px; }
+.login-head p { font-size: 15px; color: var(--text-muted); line-height: 1.7; }
+.login-form { display: flex; flex-direction: column; gap: 20px; }
+.login-form input:not([type="checkbox"]) { height: 48px; font-size: 15px; }
+.login-form .field-label { color: var(--text-primary); font-size: 15px; }
+.pass-toggle-btn { position: absolute; right: 2px; width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--text-muted); }
+.login-submit { width: 100%; min-height: 48px; margin-top: 4px; font-size: 14px; }
+.login-form .banner { margin: 0; align-items: flex-start; }
+.login-help { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--text-muted); font-size: 14px; margin-top: 24px; }
+.login-help svg { width: 13px; }
+.login-footer { position: absolute; bottom: 28px; left: 40px; right: 40px; display: flex; justify-content: space-between; gap: 16px; color: var(--text-muted); font-size: 14px; }
+@media (max-width: 600px) {
+  .login-wrapper { padding: 108px 20px 80px; background: var(--surface-base); }
+  .login-brand { top: 24px; left: 24px; }
+  .login-card { padding: 24px 8px; border: none; max-width: 380px; }
+  .login-head h1 { font-size: 24px; }
+  .login-form input:not([type="checkbox"]) { font-size: 16px; }
+  .login-footer { bottom: 20px; left: 28px; right: 28px; }
+}

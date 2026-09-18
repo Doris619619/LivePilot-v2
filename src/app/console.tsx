@@ -1,141 +1,98 @@
-/* 文件用途：LiveNest 广播控制台中枢，纯净浅色界面、清晰结构与零视觉噪音。 */
-
+/* 文件用途：组织设备导航、实例工作区和素材上传，并区分加载、空数据与连接失败。 */
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
 import UploadPanel from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
-import { AlertCircleIcon, DeviceIcon, RefreshIcon } from "./components/icons";
+import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
 
+/** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
 export default function Console() {
+  const [channels, setChannels] = useState<Record<string, string>>({});
+  /** 以设备与实例的稳定组合键共享频道名；名称变化不改变上传或控制目标。 */
+  const updateChannel = useCallback((key: string, channel: string) => {
+    setChannels(previous => {
+      if ((previous[key] || "") === channel) return previous;
+      const next = { ...previous };
+      if (channel) next[key] = channel;
+      else delete next[key];
+      return next;
+    });
+  }, []);
   const [instances, setInstances] = useState<InstanceDescriptor[]>([]);
   const [agents, setAgents] = useState<AgentDescriptor[] | undefined>();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     const abort = new AbortController();
-
+    let reading = false;
+    /** 同一轮不重叠请求；失败保留已有列表并提示状态可能过期。 */
     async function load() {
+      if (reading) return;
+      reading = true;
       const cookie = document.cookie.split("; ").find(v => v.startsWith("livepilot_notice="));
       if (cookie) {
         setNotice(decodeURIComponent(cookie.slice("livepilot_notice=".length)));
         document.cookie = "livepilot_notice=; Max-Age=0; Path=/; SameSite=Strict";
       }
       try {
-        const result = await api<{ instances: InstanceDescriptor[]; agents?: AgentDescriptor[] }>("/api/instances", {
-          signal: abort.signal,
-        });
+        const result = await api<{ instances: InstanceDescriptor[]; agents?: AgentDescriptor[] }>("/api/instances", { signal: abort.signal });
+        if (abort.signal.aborted) return;
         setInstances(result.instances);
         setAgents(result.agents);
         setLoaded(true);
         setError("");
       } catch (e) {
-        if (!abort.signal.aborted) {
-          setError(e instanceof Error ? e.message : "无法连接至控制服务");
-        }
-      }
+        if (!abort.signal.aborted) setError(e instanceof Error ? e.message : "无法连接至控制服务");
+      } finally { reading = false; }
     }
-
     void load();
     const timer = setInterval(() => void load(), 10_000);
-    return () => {
-      clearInterval(timer);
-      abort.abort();
-    };
-  }, []);
+    return () => { clearInterval(timer); abort.abort(); };
+  }, [refreshKey]);
 
-  const onlineAgentsCount = agents ? agents.filter(a => a.online && !a.revoked).length : 1;
+  const devices = agents?.filter(a => !a.revoked);
 
   return (
-    <main className="main-wrapper">
-      {/* 顶部概览栏 */}
-      <div className="overview-bar">
-        <div className="overview-title">
-          <h1>LiveNest 广播控制台</h1>
-          <p>多频道 OBS 独立推流与媒体调度工作台</p>
-        </div>
+    <div className="workspace-shell">
+      <aside className="workspace-sidebar" aria-label="工作台导航">
+        <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
+        <div className="sidebar-heading device-heading">直播设备</div>
+        <nav aria-label="设备定位">
+          {devices ? devices.map(agent => (
+            <a key={agent.id} className="sidebar-link" href={"#device-" + agent.id}>
+              <DeviceIcon /><span>{agent.name}</span><span className={"device-dot " + (agent.online ? "online" : "")} aria-label={agent.online ? "在线" : "离线"} />
+            </a>
+          )) : loaded && <a className="sidebar-link" href="#device-local"><DeviceIcon /><span>本机设备</span></a>}
+          {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
+          {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
+        </nav>
+      </aside>
 
-        <div className="overview-stats">
-          <div className="metric-badge">
-            <DeviceIcon />
-            <span>在线设备:</span>
-            <strong>{onlineAgentsCount}</strong>
-          </div>
-          <div className="metric-badge">
-            <span>实例总数:</span>
-            <strong>{instances.length}</strong>
-          </div>
-        </div>
-      </div>
+      <main className="main-wrapper" id="workspace" tabIndex={-1}>
+        {instances.length ? <UploadPanel instances={instances} channels={channels} heading={<h1>直播工作台</h1>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
-      {(error || notice) && (
-        <div className="banner error" role="alert">
-          <AlertCircleIcon />
-          <span>{error || notice}</span>
-        </div>
-      )}
-
-      {!loaded && !error && (
-        <div style={{ textAlign: "center", padding: "32px 0", color: "var(--text-muted)", fontSize: "13px" }}>
-          <RefreshIcon /> 同步实例状态中…
-        </div>
-      )}
-
-      {loaded && !instances.length && (
-        <div style={{ textAlign: "center", padding: "40px", background: "var(--surface-base)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-lg)" }}>
-          <DeviceIcon width={32} height={32} style={{ color: "var(--text-muted)", margin: "0 auto 8px" }} />
-          <h3 style={{ fontSize: "15px", marginBottom: "4px" }}>暂无连接的直播实例</h3>
-          <p style={{ fontSize: "13px", color: "var(--text-muted)" }}>请在直播电脑上启动 LiveNest Agent 或配置本地实例。</p>
-        </div>
-      )}
-
-      {!!instances.length && <UploadPanel instances={instances} />}
-
-      {agents ? (
-        agents
-          .filter(a => !a.revoked)
-          .map(agent => {
-            const agentInstances = instances.filter(i => i.agentId === agent.id);
-            return (
-              <section key={agent.id} style={{ marginBottom: "28px" }} aria-label={agent.name}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", padding: "0 4px" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", fontWeight: 600 }}>
-                    <DeviceIcon />
-                    <span>{agent.name}</span>
-                    <span style={{ fontSize: "12px", fontWeight: 500, color: agent.online ? "var(--success-green)" : "var(--text-muted)" }}>
-                      {agent.online ? "● 在线" : "○ 离线"}
-                    </span>
-                  </div>
-                  <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-                    {agent.lastSeen ? `最近心跳: ${new Date(agent.lastSeen).toLocaleTimeString("zh-CN", { hour12: false })}` : ""}
-                  </span>
-                </div>
-
-                <div className="instance-grid">
-                  {agentInstances.map(instance => (
-                    <InstanceConsole key={targetKey(instance)} instance={instance} />
-                  ))}
-                </div>
-              </section>
-            );
-          })
-      ) : (
-        <div className="instance-grid">
-          {instances.map(instance => (
-            <InstanceConsole key={targetKey(instance)} instance={instance} />
-          ))}
-        </div>
-      )}
-
-      <footer className="app-footer">
-        <span>LiveNest Studio Operations</span>
-        <span>Windows OBS → YouTube 独立直连推流</span>
-      </footer>
-    </main>
+        {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
+        {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
+        {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
+        {loaded && !instances.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接你的第一台直播电脑</h2><p>在直播电脑上启动已配对的 Agent，<br />实例上线后会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
+        {devices ? devices.map(agent => {
+          const agentInstances = instances.filter(i => i.agentId === agent.id);
+          return (
+            <section className="device-section" id={"device-" + agent.id} key={agent.id} aria-label={agent.name}>
+              <div className="device-header"><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.online ? "在线" : "离线"}</span></h2></div>
+              <div className="instance-grid">{agentInstances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} />)}</div>
+              {!agentInstances.length && <p className="device-empty">设备尚未上报直播实例。</p>}
+            </section>
+          );
+        }) : <section className="device-section" id="device-local" aria-label="本机设备"><div className="instance-grid">{instances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} />)}</div></section>}
+      </main>
+    </div>
   );
 }

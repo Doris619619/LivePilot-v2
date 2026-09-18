@@ -1,0 +1,6 @@
+{
+  "description": "服务端内置 Do 成员的初始 scrypt 凭据；仅在该成员不存在时追加，不覆盖重置或禁用状态。",
+  "username": "Do",
+  "salt": "4c3c28f49386c04e799e555cdc58b509",
+  "hash": "00d0122a7df6a63e989c55802da989e1981881c12354ea44ebd7e90a2a1231807ce6e4df295a3d87abe9f7b8f26551a17112edac560e85f7db6f6a6f2677aa34"
+}

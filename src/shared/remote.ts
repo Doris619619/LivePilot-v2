@@ -26,7 +26,7 @@ export const taskPayloadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("upload-chunk"), uploadId: uuidSchema, offset: z.number().int().nonnegative(), hash: z.string().regex(/^[a-f0-9]{64}$/), slot: uuidSchema, size: z.number().int().positive().max(8 * 1024 ** 2) }).strict(),
 ]);
 export type TaskPayload = z.infer<typeof taskPayloadSchema>;
-export const taskSchema = z.object({ protocol: z.literal(PROTOCOL), id: uuidSchema, agentId: idSchema, instanceId: idSchema, actor: z.string().regex(/^[a-z0-9_]{3,32}$/), expiresAt: z.number(), payload: taskPayloadSchema });
+export const taskSchema = z.object({ protocol: z.literal(PROTOCOL), id: uuidSchema, agentId: idSchema, instanceId: idSchema, actor: z.string().regex(/^[A-Za-z0-9_]{2,32}$/), expiresAt: z.number(), payload: taskPayloadSchema });
 export type RemoteTask = z.infer<typeof taskSchema>;
 export type DeliveryState = "queued" | "delivering" | "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "expired" | "uncertain";
 export const reportSchema = z.object({ id: uuidSchema, status: z.enum(["accepted", "running", "succeeded", "failed", "interrupted", "expired"]), result: z.unknown().optional(), error: z.string().max(500).optional(), httpStatus: z.number().int().min(400).max(599).optional() }).strict();

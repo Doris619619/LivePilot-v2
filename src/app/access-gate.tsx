@@ -1,4 +1,4 @@
-/* 文件用途：LiveNest 登录鉴权门禁组件，采用现代精简浅色表单卡片与标准管理员顶栏。 */
+/* 文件用途：LiveNest 登录门禁、会话反馈与工作台顶栏；账号凭据仅提交到服务端。 */
 
 "use client";
 
@@ -24,8 +24,11 @@ export default function AccessGate({ children }: { children: ReactNode }) {
       try {
         const data = await api<{ user: User }>("/api/session");
         if (active) setUser(data.user);
-      } catch {
-        if (active) setUser(null);
+      } catch (e) {
+        if (active) {
+          setUser(null);
+          if ((e as { status?: number }).status !== 401) setError((e as Error).message);
+        }
       }
     }
 
@@ -42,6 +45,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  /** 提交成员凭据，验证期间禁用重复提交；失败保留表单供修改。 */
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (busy) return;
@@ -65,6 +69,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
     }
   }
 
+  /** 撤销当前会话并返回登录页，不改变直播实例状态。 */
   async function exitSession() {
     setBusy(true);
     setError("");
@@ -89,14 +94,15 @@ export default function AccessGate({ children }: { children: ReactNode }) {
   if (!user) {
     return (
       <main className="login-wrapper">
+        <div className="login-brand"><LiveNestLogo width={28} height={28} /><span>LiveNest</span><span className="login-brand-caption">工作台</span></div>
         <section className="login-card" aria-labelledby="login-title">
           <div className="login-head">
-            <LiveNestLogo width={28} height={28} />
+            <div className="login-mark"><LiveNestLogo width={32} height={32} /></div>
             <h1 id="login-title">LiveNest 控制台</h1>
-            <p>登录以管理 OBS 直播与推流任务</p>
+            <p>登录工作台，管理你的设备与直播频道。</p>
           </div>
 
-          <form onSubmit={submit} className="login-form">
+          <form onSubmit={submit} className="login-form" aria-busy={busy}>
             <div className="field-group">
               <label htmlFor="username" className="field-label">
                 账号
@@ -108,12 +114,16 @@ export default function AccessGate({ children }: { children: ReactNode }) {
                 <input
                   id="username"
                   name="username"
+                  type="text"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="input-with-icon"
                   autoComplete="username"
-                  pattern="[a-z0-9_]{3,32}"
-                  minLength={3}
+                  pattern="[A-Za-z0-9_]{2,32}"
+                  minLength={2}
                   maxLength={32}
-                  placeholder="管理员用户名"
+                  placeholder="输入成员账号"
+                  title="2–32 位字母、数字或下划线，区分大小写"
                   required
                   disabled={busy}
                   autoFocus
@@ -145,6 +155,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
                   className="pass-toggle-btn"
                   onClick={() => setVisible(!visible)}
                   aria-label={visible ? "隐藏密码" : "显示密码"}
+                  aria-pressed={visible}
                 >
                   {visible ? <EyeOffIcon /> : <EyeIcon />}
                 </button>
@@ -158,17 +169,20 @@ export default function AccessGate({ children }: { children: ReactNode }) {
               </div>
             )}
 
-            <button type="submit" className="btn-primary" disabled={busy} style={{ minHeight: "38px", marginTop: "4px" }}>
+            <button type="submit" className="btn-primary login-submit" disabled={busy}>
               {busy ? "验证中…" : "登录"}
             </button>
           </form>
+          <p className="login-help"><LockIcon /> 仅限已授权成员访问</p>
         </section>
+        <footer className="login-footer"><span>LiveNest Studio</span><span>OBS × YouTube</span></footer>
       </main>
     );
   }
 
   return (
     <>
+      <a className="skip-link" href="#workspace">跳转到工作台</a>
       <header className="app-header">
         <div className="header-container">
           <div className="brand-section">
@@ -180,7 +194,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           <div className="header-actions">
             <div className="user-tag">
               <UserIcon />
-              <span>{user.username}</span>
+              <span title={user.username}>{user.username}</span>
             </div>
             <button
               type="button"

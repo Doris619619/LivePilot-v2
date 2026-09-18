@@ -9,8 +9,8 @@ export function LiveNestLogo(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" {...props}>
       <circle cx="12" cy="12" r="9" />
-      <path d="M12 3a9 9 0 0 0-9 9" stroke="#1d63ed" strokeWidth="2.5" />
-      <circle cx="12" cy="12" r="3" fill="#1d63ed" stroke="none" />
+      <path d="M12 3a9 9 0 0 0-9 9" stroke="var(--accent-primary)" strokeWidth="2.5" />
+      <circle cx="12" cy="12" r="3" fill="var(--accent-primary)" stroke="none" />
     </svg>
   );
 }

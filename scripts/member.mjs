@@ -9,7 +9,7 @@ if (process.env.LIVEPILOT_ENV_FILE) process.loadEnvFile(process.env.LIVEPILOT_EN
 else nextEnv.loadEnvConfig(process.cwd());
 import { promisify } from "node:util";
 const [action, username] = process.argv.slice(2);
-if (!["create", "reset", "disable", "list"].includes(action) || (action !== "list" && !/^[a-z0-9_]{3,32}$/.test(username || ""))) {
+if (!["create", "reset", "disable", "list"].includes(action) || (action !== "list" && !/^[A-Za-z0-9_]{2,32}$/.test(username || ""))) {
   console.error("用法：npm run member -- create|reset|disable <用户名>，或 npm run member -- list"); process.exit(1);
 }
 const dir = path.resolve(process.env.LIVEPILOT_ACCESS_DIR || path.join(process.env.LIVEPILOT_DATA_ROOT || ".data", "access"));
@@ -22,6 +22,13 @@ try {
   await handle.writeFile(String(process.pid));
   let state;
   try { state = JSON.parse(await readFile(file, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; state = { users: [], sessions: {}, attempts: {} }; }
+  // 与服务端使用相同的首次追加规则，允许首次登录前直接禁用或重置内置成员。
+  const { username: builtinName, salt, hash } = JSON.parse(await readFile(new URL("../src/server/builtin-member.json", import.meta.url), "utf8"));
+  if (!state.users.some(user => user.username === builtinName)) {
+    state.users.push({ username: builtinName, salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });
+    const temp = file + "." + randomBytes(8).toString("hex") + ".tmp";
+    await writeFile(temp, JSON.stringify(state), { mode: 0o600 }); await rename(temp, file);
+  }
   if (action === "list") console.log(state.users.map(u => u.username + (u.disabled ? "（已禁用）" : "（启用）")).join("\n") || "尚无成员");
   else {
     let user = state.users.find(u => u.username === username);
