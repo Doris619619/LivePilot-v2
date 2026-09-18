@@ -3,10 +3,12 @@
 
 云端网页 → HTTPS 出站 Agent → 本机多个 Portable OBS → YouTube。云端管理成员、设备和投递记录；完整开停播、频道令牌、素材和执行结果归直播电脑。不同设备可同时拥有 `main`，身份始终为 `agentId + instanceId`。
 
+新电脑的逐步操作与 OBS 实机标注见根目录 [配置.md](../配置.md)；本文主要解释部署、设备身份及恢复语义。
+
 ## 模式与运行边界
 
-- `LIVEPILOT_MODE=local` 保留原有单机服务；`cloud` 使用设备目录及远程任务，不读取 Windows OBS 配置。Agent 是独立 Node 22 程序，运行时不需要 Next.js。
-- 当前每台设备登记最多 64 个实例；能力及实际上限仍取决于 CPU、GPU 和上传带宽。实例 ID 清单配对后保持稳定；改变清单须显式迁移或注册新设备，避免把旧任务交给不同实例。
+- `LIVEPILOT_MODE=local` 保留原有单机服务；`cloud` 使用设备目录及远程任务，不读取 Windows OBS 配置。Agent 是独立 Node 程序（22.23+ 的 22 系列或 24+），运行时不需要 Next.js。
+- 当前每台设备登记最多 64 个实例；能力及实际上限仍取决于 CPU、GPU 和上传带宽。实例 ID 清单首次上线后保持稳定；改变清单须显式迁移或注册新设备，避免把旧任务交给不同实例。
 - 成员依旧共享所有设备的控制权限，没有公开注册。设备管理仅通过云端 CLI。
 - 云端只开放 HTTP 证书续期、HTTPS 和受限 SSH；直播电脑不开放入站端口，OBS WebSocket 仍是 `ws://127.0.0.1:端口`。
 - Agent 与云端断线时已接收任务继续执行，但直播电脑断电、退出登录、OBS 退出或断开 YouTube 网络不在保证范围内。
@@ -40,7 +42,7 @@ Google 的网页 OAuth 回调不支持普通公网 IP。IP 网站上连接频道
 ## Windows 直播电脑接入
 
 1. 每台机器准备 Node 22.23+ 或 24+、独立 Portable OBS、LIVE / VIDEO / MUSIC 及本机 WebSocket 密码。使用 `npm ci && npm run agent:build` 构建 Agent。
-2. 将 `config/agent.env.example` 复制为 `.env.agent`。已有机器从旧配置保留原 `LIVEPILOT_DATA_ROOT`、加密密钥、实例 ID、OBS 路径/端口、媒体目录和 Google 客户端配置；仅添加云端 origin 和设备 ID。不要生成新密钥覆盖原授权。
+2. 新电脑运行 `npm run setup:agent -- --domain <真实域名> --id <设备ID>`，生成 `.env.agent` 和独立随机密钥，再填入本机参数，详见[配置第 6 步](../配置.md#step-6)。已有机器从旧配置保留原 `LIVEPILOT_DATA_ROOT`、加密密钥、实例 ID、OBS 路径/端口、媒体目录和 Google 客户端配置；仅添加云端 origin 和设备 ID。不要生成新密钥覆盖原授权。
 3. 在直播停止后备份配置和数据，停止旧 LivePilot 本地服务。Agent 和本地服务通过 `host.lock` 互斥；不能改成不同数据目录绕过该限制去控制相同 OBS。
 4. `npm run agent:pair`，输入云端一次性配对码。设备私钥式随机凭据保存在本机 `.data/agent/identity.json`；不要分享或复制给其他电脑。相同数据目录不得重复配对到别的设备。
 5. `npm run agent:start`，确认网页出现正确电脑及 OBS。首次接入会登记已有频道；频道属于其他设备时停止接收新任务，不能绕过冲突。
