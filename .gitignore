@@ -12,3 +12,11 @@ playwright-report/
 test-results/
 .DS_Store
 Thumbs.db
+desktop/.next/
+desktop/out/
+desktop/public/help/
+desktop/next-env.d.ts
+dist-electron/
+desktop-resources/
+build/
+release/

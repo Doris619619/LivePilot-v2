@@ -7,6 +7,7 @@ import UploadPanel from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
+import DevicePairing from "./device-pairing";
 import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
@@ -73,6 +74,7 @@ export default function Console() {
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
         </nav>
+        {agents && <DevicePairing agents={agents} />}
       </aside>
 
       <main className="main-wrapper" id="workspace" tabIndex={-1}>
@@ -86,7 +88,7 @@ export default function Console() {
           const agentInstances = instances.filter(i => i.agentId === agent.id);
           return (
             <section className="device-section" id={"device-" + agent.id} key={agent.id} aria-label={agent.name}>
-              <div className="device-header"><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.online ? "在线" : "离线"}</span></h2></div>
+              <div className="device-header"><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.maintenance ? "维护中" : agent.paired === false ? "等待配对" : agent.online ? "在线" : "离线"}</span></h2></div>
               <div className="instance-grid">{agentInstances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} />)}</div>
               {!agentInstances.length && <p className="device-empty">设备尚未上报直播实例。</p>}
             </section>

@@ -1,54 +1,20 @@
-<!-- 文件用途：介绍 LivePilot v2，并为新电脑配置、本地使用、云端部署和开发维护提供文档入口。 -->
-# LivePilot v2（LiveNest）
+<!-- 文件用途：LiveNest 下载、配置和开发文档导航。 -->
+# LiveNest
 
-用浏览器控制 Windows 电脑上的 OBS 向 YouTube 直播：选择循环视频、背景音乐和视频原声，启动 OBS、开始/结束直播，也可以把素材上传到指定直播电脑。
+在网页选择素材、授权频道并控制直播；Windows 客户端配置本机 OBS、运行 Agent 和检查故障。支持多台电脑，每台可使用多个独立 OBS。
 
-支持一台或多台 Windows 电脑，每台可配置多个独立 Portable OBS；每个实例绑定不同频道。云端负责成员登录、设备身份和命令投递，Windows Agent 保存频道授权与素材，并执行完整开停播。直播音视频由 OBS 直接发送到 YouTube。
+**[下载 Windows x64 安装版](https://github.com/Doris619619/LiveNest-Releases/releases)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
-## 从这里开始
+安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要另装 Node、Git 或 Docker。尚未出现公开版本时，以维护者提供的已验证安装器为准。
 
-**要把导师电脑上的 OBS 接进来，请阅读：[配置.md — 新电脑接入与 OBS 配置图文教程](配置.md)。**
-
-教程按操作顺序说明：在哪台电脑做、建什么文件夹、安装 Node/Git、下载和构建 Agent、配置文件填什么、OBS 在哪里点击、云端配对、频道授权、上传素材、实际开停播验收、登录自启和故障处理。OBS 部分配有实机截图及编号标注。
-
-| 你的任务 | 文档 |
+| 需要做什么 | 文档 |
 | --- | --- |
-| 只在网页操作已经接好的设备 | [网页连接频道与素材](配置.md#step-10)、[开停播](配置.md#step-11) |
-| 新 Windows 电脑接入现有云端 | [从准备资料开始](配置.md#step-0) |
-| 尚无云端服务器或域名 | [从零部署](docs/从零部署.md) |
-| 一台电脑本地运行，不接云端 | [本地模式与多实例](docs/本地模式与多实例.md) |
-| 旧本地安装迁移为 Agent | [保留配置和授权的迁移流程](配置.md#migration) |
-| 同机多个 OBS / 再接一台电脑 | [配置时机与限制](配置.md#more-instances) |
-| 部署与恢复原理 | [多电脑云端与 Agent](docs/多电脑云端与Agent.md)、[远程控制与素材上传](docs/远程控制与素材上传.md) |
+| 安装、登录、配置 OBS、配对、网页操作和故障恢复 | [桌面配置与网页协作](docs/桌面配置与网页协作.md) |
+| 开发预览、NSIS 打包、GitHub 发布和更新 | [桌面安装与发布](docs/桌面安装与发布.md) |
+| 手动安装 Agent / OBS 点击图解 | [配置.md](配置.md) |
+| 本地模式与旧配置 | [本地模式与多实例](docs/本地模式与多实例.md) |
+| 云端从零部署 | [从零部署](docs/从零部署.md) |
+| 多电脑和远程控制原理 | [多电脑云端与 Agent](docs/多电脑云端与Agent.md)、[远程控制与素材上传](docs/远程控制与素材上传.md) |
+| 架构、开发规范与验证 | [架构](docs/ARCHITECTURE.md)、[工程协作规范](docs/工程协作规范.md)、[PR 规范](docs/PR撰写规范.md)、[桌面验收记录](docs/desktop/验证记录.md) |
 
-Agent 是仓库内的后台程序，目前没有独立双击安装包。“安装 Agent”包含下载代码、安装依赖、构建、填配置、配对和持续运行；只打开网页的操作电脑不需要安装 Agent。
-
-## 使用边界
-
-- Windows 10/11 x64；Node.js `^22.23.0 || >=24.0.0`，新装建议按教程选 24 LTS；OBS 28+ 内置 WebSocket。教程截图为 OBS 32.2.2 简体中文版。
-- OBS 的 `LIVE` 场景只包含两个直接媒体源 `VIDEO`、`MUSIC`，禁用所有全局音频采集。目录、端口、密码逐个配置，不能把任意现有直播间直接照搬进来。
-- 导师电脑保持开机、联网、不休眠和 Windows 用户登录。关闭控制网页不会结束已经运行的直播；设备离线也不代表 OBS 已停止推流。
-- 成员使用各自账号，共享全部设备控制权限；内置成员 `Do` 使用维护者指定的初始密码，可通过 `npm run member -- reset Do` / `disable Do` 管理（见[成员登录](docs/远程控制与素材上传.md#成员登录)）。频道持有人完成 Google 授权，每个实例使用不同频道。
-- Agent 首次上线后实例 ID 清单固定；当前不能通过直接增删配置来给已上线设备扩容。多实例应在首次上线前准备好。
-- 新电脑不能复制旧电脑的 `.env`、`.data` 或 OBS 凭据。已有安装升级则必须保留原密钥和状态。
-
-## 界面
-
-工作台按设备组织直播实例，以已绑定的 YouTube 频道名为主标题，同时显示电脑、OBS 名称和实例 ID。每个实例按 1 设备与频道、2 音视频编排、3 直播控制、4 运行状态在桌面同一行排列（窄屏按顺序单列）；上传目标同步显示频道和设备，详细诊断按需展开。推流时长以 OBS 状态校准并在页面逐秒显示，断线或快照过期时停止推算。中英文字体随应用提供，详见[界面与字体说明](docs/界面与内置成员.md)。
-
-## 开发与维护
-
-本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，旧 LivePilot 仅作历史参考。开发前阅读 [AGENTS.md](AGENTS.md)、[工程协作规范](docs/工程协作规范.md) 和 [PR 撰写规范](docs/PR撰写规范.md)。
-
-在仓库根目录安装依赖并验证：
-
-```powershell
-npm.cmd ci
-npm.cmd run verify
-```
-
-`verify` 包含类型检查、Lint、业务测试、部署脚本测试、网页生产构建及 Agent 构建。测试使用隔离环境；通过构建不等于已完成真实频道授权或音画验收。模块与验证边界见[架构文档](docs/ARCHITECTURE.md)、[验证记录](docs/VALIDATION.md)。
-
-当前不提供 Start All / Stop All、批量素材分发、直播时间调度或 FFmpeg Worker。
-
-PR 默认采用 [PR #4](https://github.com/Doris619619/LivePilot-v2/pull/4) 的清晰分组结构；提交前阅读 [PR 撰写规范](docs/PR撰写规范.md)，并使用 [默认模板](.github/pull_request_template.md)。
+本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，独立于旧 LivePilot。开发验证：`npm.cmd ci` → `npm.cmd run verify`。真实频道授权及音画验收由用户主动完成。
