@@ -8,20 +8,26 @@ using System.Text;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 public static class ObsImageIdentity {
   [DllImport("kernel32.dll")] static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
   [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
   [DllImport("psapi.dll", CharSet=CharSet.Unicode)] static extern uint GetProcessImageFileName(IntPtr handle, StringBuilder path, int size);
   [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern uint GetFinalPathNameByHandle(IntPtr handle, StringBuilder path, uint size, uint flags);
-  // 对目标文件句柄和进程内核镜像使用同一种 NT 路径，拒绝逻辑别名误匹配。
-  public static int[] Find(string filename) {
-    string target;
-    using (var file = new FileStream(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern SafeFileHandle CreateFile(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+  // 规范化句柄路径，兼容进程镜像名中的 8.3 短目录名。
+  static string FinalPath(string filename) {
+    using (var file = CreateFile(filename, 0x80, 7, IntPtr.Zero, 3, 0, IntPtr.Zero)) {
+      if (file.IsInvalid) throw new IOException("Cannot open executable identity");
       var path = new StringBuilder(32768);
-      var length = GetFinalPathNameByHandle(file.SafeFileHandle.DangerousGetHandle(), path, (uint)path.Capacity, 2);
+      var length = GetFinalPathNameByHandle(file.DangerousGetHandle(), path, (uint)path.Capacity, 2);
       if (length == 0 || length >= path.Capacity) throw new IOException("Cannot resolve executable identity");
-      target = path.ToString();
+      return path.ToString();
     }
+  }
+  // 只通过物理设备路径打开运行镜像；不能转回可能被 MSIX 重定向的盘符路径。
+  public static int[] Find(string filename) {
+    var target = FinalPath(filename);
     var matches = new List<int>();
     foreach (var process in Process.GetProcessesByName("obs64")) {
       using (process) {
@@ -29,7 +35,12 @@ public static class ObsImageIdentity {
         if (handle == IntPtr.Zero) continue;
         try {
           var path = new StringBuilder(32768);
-          if (GetProcessImageFileName(handle, path, path.Capacity) > 0 && String.Equals(target, path.ToString(), StringComparison.OrdinalIgnoreCase)) matches.Add(process.Id);
+          if (GetProcessImageFileName(handle, path, path.Capacity) > 0) {
+            try {
+              var actual = FinalPath(@"\\?\GLOBALROOT" + path.ToString());
+              if (String.Equals(target, actual, StringComparison.OrdinalIgnoreCase)) matches.Add(process.Id);
+            } catch (IOException) { /* 已退出或无权读取的进程不认领，端口归属检查仍保留。 */ }
+          }
         } finally { CloseHandle(handle); }
       }
     }

@@ -17,7 +17,14 @@ it.skipIf(process.platform !== "win32")("matches kernel executable identity acro
   async function query(exe: string) { return exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", obsProcessQuery], { windowsHide: true, timeout: 15_000, env: { ...process.env, LIVEPILOT_TARGET_EXE: exe } }); }
   try {
     for (const exe of [first, second]) { await mkdir(path.dirname(exe)); await copyFile(process.execPath, exe); }
-    const a = await launch(first); const b = await launch(second);
+    // 某些 Windows 用户目录和临时目录使用 8.3 名称；实际从短路径启动。
+    const shortScript = `[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+Add-Type -TypeDefinition 'using System; using System.Text; using System.Runtime.InteropServices; public static class ShortName { [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] public static extern uint GetShortPathName(string path, StringBuilder buffer, uint size); }'
+$buffer=[Text.StringBuilder]::new(32768)
+if([ShortName]::GetShortPathName($env:LIVEPILOT_TARGET_EXE,$buffer,32768) -eq 0){throw 'Cannot query short path'}
+$buffer.ToString()`;
+    const short = (await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", shortScript], { windowsHide: true, timeout: 15_000, env: { ...process.env, LIVEPILOT_TARGET_EXE: first } })).stdout.trim();
+    const a = await launch(short); const b = await launch(second);
     await symlink(path.dirname(first), path.join(root, "alias"), "junction");
     expect(JSON.parse((await query(path.join(root, "alias", "obs64.exe"))).stdout).pid).toBe(a);
     expect(JSON.parse((await query(second)).stdout).pid).toBe(b);

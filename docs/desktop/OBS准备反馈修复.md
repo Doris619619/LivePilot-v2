@@ -19,11 +19,13 @@
 ## 验证
 
 - `npm.cmd run verify`：类型、ESLint、147 项测试、8 项部署测试、网页构建及 Agent 构建通过。
-- Windows 原生测试用两份专用临时 Node 程序模拟进程：区分不同 exe、识别目录 junction、拒绝同 exe 重复进程。测试不控制真实 OBS，结束清理自己的进程与临时目录。
+- Windows 原生测试用两份专用临时 Node 程序模拟进程：区分不同 exe、识别目录 junction 和 Windows 短路径启动、拒绝同 exe 重复进程。测试不控制真实 OBS，结束清理自己的进程与临时目录。
 - `npm.cmd run desktop:renderer`、`npm.cmd run desktop:compile`：静态桌面页面和宿主构建通过。
 - `node scripts/desktop/feedback-acceptance.mjs`：Edge 无头浏览器、示例桥接状态；阶段和计时、按钮禁用、切页、表单保留、就地错误、重新登录恢复、800px 无横向溢出、重试与完成通过。
 - 原用户安装版：清理已确认空闲的测试进程后，用户重试成功。
 - 未执行：新修复安装包的干净 Windows 验收、跨 MSIX/普通桌面的新二进制安装验收、实际频道授权和直播音画验收。本次不替换用户客户端，不更新云端，不发布安装器。
+
+Windows CI 首轮发现原生镜像路径比较遗漏短路径形式；补充通过物理设备路径打开镜像文件并按句柄规范化，同时加入短路径启动回归。相关 API 约定见 [GetFinalPathNameByHandle](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew)。
 
 ## 示例截图
 
