@@ -182,6 +182,16 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     }
   }
 
+  /** 服务端确认取消后只清理匹配的记录，其他上传和用户新选的文件保持不变。 */
+  function cancelled(id: string) {
+    if (record?.id === id) { setRecord(undefined); setFile(undefined); }
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
+      if (saved?.id === id) localStorage.removeItem(KEY);
+      if (createIntent.current?.requestId === id) { createIntent.current = null; localStorage.removeItem(KEY + ".intent"); }
+    } catch { /* 服务端取消已确认，缓存失败不影响真实结果。 */ }
+  }
+
   async function clear() {
     setError("");
     try {
@@ -287,7 +297,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
             </div>
           </form>
 
-          <UploadRecovery key={instanceId} agentId={instances.find(i => targetKey(i) === instanceId)?.agentId} instanceId={instances.find(i => targetKey(i) === instanceId)?.id || "main"} restore={remember} />
+          <UploadRecovery key={instanceId} agentId={instances.find(i => targetKey(i) === instanceId)?.agentId} instanceId={instances.find(i => targetKey(i) === instanceId)?.id || "main"} restore={remember} cancelled={cancelled} />
           {stage && <p style={{ marginTop: "10px", fontSize: "15px", color: "var(--accent-primary)" }}>{stage}</p>}
 
           {record && (

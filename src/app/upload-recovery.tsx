@@ -6,7 +6,7 @@ import { uploadUrl } from "./upload-client";
 import type { UploadStatus } from "@/shared/uploads";
 type Recovery = Pick<UploadStatus, "id" | "instanceId" | "agentId" | "filename"> & { message: string };
 /** 查询与取消严格等待服务器回报；失败不从界面抹去待确认记录。 */
-export default function UploadRecovery({ agentId, instanceId, restore }: { agentId?: string; instanceId: string; restore: (status: UploadStatus) => void }) {
+export default function UploadRecovery({ agentId, instanceId, restore, cancelled }: { agentId?: string; instanceId: string; restore: (status: UploadStatus) => void; cancelled: (id: string) => void }) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [items, setItems] = useState<Recovery[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
@@ -17,7 +17,7 @@ export default function UploadRecovery({ agentId, instanceId, restore }: { agent
     if (busy) return; setBusy(true); setError("");
     try {
       if (item) {
-        if (cancel) await api(uploadUrl(item), { method: "DELETE", headers: { "x-livepilot": "1" } });
+        if (cancel) { await api(uploadUrl(item), { method: "DELETE", headers: { "x-livepilot": "1" } }); if (mounted.current) cancelled(item.id); }
         else { const status = await api<UploadStatus>(uploadUrl(item)); if (mounted.current) restore(status); }
       }
     } catch (e) { if (mounted.current) setError((e as Error).message); }
