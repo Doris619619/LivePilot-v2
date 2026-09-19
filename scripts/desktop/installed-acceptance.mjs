@@ -28,6 +28,10 @@ try {
   const state = await page.evaluate(() => window.liveNest.state()); if (state.paired || state.agentRunning || state.instances.length) throw new Error("Installed acceptance requires fresh unpaired state");
   if (state.dataRoot.toLowerCase() !== path.join(process.env.LOCALAPPDATA, "LiveNest").toLowerCase()) throw new Error("Unexpected default data directory");
   if (state.checks.length < 7 || state.checks.some(c => c.id !== "cloud" && c.status !== "ready")) throw new Error("Installed resources check failed");
+  // 主进程检查完成后，继续等待两秒轮询将结果渲染到真实窗口，避免截到旧状态。
+  await page.getByText("正常", { exact: true }).first().waitFor();
+  await page.getByRole("button", { name: "检查电脑", exact: true }).waitFor();
+  while (!(await page.getByRole("button", { name: "检查电脑", exact: true }).isEnabled())) { if (Date.now() > readyDeadline) throw new Error("Rendered checks did not settle"); await new Promise(resolve => setTimeout(resolve, 100)); }
   await page.screenshot({ path: "docs/desktop/screenshots/installed.png", fullPage: true });
   await page.getByRole("button", { name: "退出登录", exact: true }).click(); await page.getByRole("heading", { name: "登录 LiveNest" }).waitFor();
   console.log(JSON.stringify({ result: "passed", executable, version: state.version, systemNodeOnPath: false, checks: state.checks.map(c => ({ id: c.id, status: c.status })) }));

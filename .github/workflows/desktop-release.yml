@@ -19,7 +19,7 @@ jobs:
       - run: npm run verify
       - run: npm run desktop:release
         env:
-          GH_TOKEN: ${{ secrets.LIVENEST_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.LIVENESTRELEASETOKEN }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
