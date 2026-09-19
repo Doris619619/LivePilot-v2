@@ -28,25 +28,30 @@ export async function createPairing(id: string, name: string) {
   });
   return { agentId: id, code, expiresInSeconds: 600 };
 }
-/** Agent 在本地生成并先保存凭据，配对响应丢失后可凭同一凭据重试。 */
+/** Agent 先保存凭据；响应丢失可重试，已撤销身份必须同时验证新邀请与旧凭据。 */
 export async function pairAgent(id: string, code: string, token: string) {
   const store = cloudStore();
   if (!/^[a-f0-9]{64}$/.test(code) || !/^[a-f0-9]{64}$/.test(token)) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
   return transaction(store, async () => {
     const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
-    if (!agent || agent.revoked) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
+    if (!agent) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
+    if (agent.revoked) {
+      if (!matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now() || (agent.tokenHash && !matches(token, agent.tokenHash))) throw new AppError("AGENT_AUTH", "恢复配对需要新的邀请和原电脑身份，请在原 Windows 账户的 LiveNest 中重试。", 401);
+      agent.revoked = false; agent.tokenHash = digest(token); delete agent.pairingHash; delete agent.pairingExpires;
+      await store.write("agents.json", registry); return { protocol: PROTOCOL };
+    }
     if (matches(token, agent.tokenHash)) return { protocol: PROTOCOL };
     if (agent.tokenHash || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("AGENT_AUTH", "配对码无效或已过期。", 401);
     agent.tokenHash = digest(token); delete agent.pairingHash; delete agent.pairingExpires;
     await store.write("agents.json", registry); return { protocol: PROTOCOL };
   });
 }
-/** 仅续期尚未认领的邀请，不替换已配对设备的凭据。 */
+/** 未认领邀请可续期；已移除设备只发恢复邀请，必须由原凭据认领。 */
 export async function renewPairing(id: string) {
   agentStore(id); const store = cloudStore(); const code = randomBytes(32).toString("hex");
   await transaction(store, async () => {
     const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
-    if (!agent || agent.revoked || agent.tokenHash) throw new AppError("AGENT_BOUND", "只能重新生成尚未使用的配对信息。", 409);
+    if (!agent || (!agent.revoked && agent.tokenHash)) throw new AppError("AGENT_BOUND", "请先移除设备，再生成恢复配对信息。", 409);
     agent.pairingHash = digest(code); agent.pairingExpires = Date.now() + 600_000;
     await store.write("agents.json", registry);
   });
@@ -110,11 +115,21 @@ export async function requireTarget(agentId: string, instanceId: string, online 
 }
 /** 读取由设备上报的状态；调用者须额外标记过期和命令交付状态。 */
 export async function snapshotFor(agentId: string, instanceId: string) { return (await agentStore(agentId).read<Heartbeat>("heartbeat.json"))?.snapshots.find(s => s.instance.id === instanceId); }
-/** 撤销仅阻止新通信；不假装能停止已经离线执行的 OBS。 */
+/** 在派发锁内重新检查撤销，避免请求认证后移除设备的竞争。 */
+export async function assertAgentActive(id: string) {
+  const registry = await cloudStore().read<Registry>("agents.json");
+  if (!registry?.agents.some(a => a.id === id && !a.revoked)) throw new AppError("AGENT_AUTH", "设备已移除，请从网页恢复配对。", 401);
+}
+/** 撤销与派发互斥，过期从未派发的任务；已送达任务和所有配置保留待核对。 */
 export async function revokeAgent(id: string) {
-  const store = cloudStore(); await transaction(store, async () => {
-    const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
-    if (!agent) throw new AppError("AGENT", "设备不存在。", 404);
-    agent.revoked = true; await store.write("agents.json", registry);
-  });
+  const local = agentStore(id); const store = cloudStore(); await transaction(local, async () => {
+    await transaction(store, async () => {
+      const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
+      if (!agent) throw new AppError("AGENT", "设备不存在。", 404);
+      delete agent.pairingHash; delete agent.pairingExpires;
+      agent.revoked = true; await store.write("agents.json", registry);
+    });
+    const queue = await local.read<{ records: import("./tasks").TaskRecord[] }>("tasks.json");
+    if (queue) { for (const task of queue.records) if (task.status === "queued") { task.status = "expired"; task.updatedAt = Date.now(); task.message = "设备已移除，此任务尚未派发。"; } await local.write("tasks.json", queue); }
+  }, "tasks.lock");
 }

@@ -102,7 +102,10 @@ input.input-with-action { padding-right: 48px !important; }
 .workspace-heading h1, .dock-heading h1 { font-size: 24px; line-height: 1.5; font-weight: 600; letter-spacing: 0; }
 .dock-heading h2 { font-size: 20px; font-weight: 500; }
 .device-section { margin: 0 0 28px; scroll-margin-top: 88px; }
-.device-header { display: flex; align-items: center; padding: 4px 0 16px; }
+.device-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0 16px; }
+.device-header > button { flex-shrink: 0; }
+.device-remove-confirm { display: grid; gap: 12px; padding: 0 0 20px; max-width: 720px; }
+.device-remove-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .device-header h2 { min-width: 0; max-width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .device-state { font-size: 14px; color: var(--text-muted); font-weight: 400; }
 .device-state.online { color: var(--success-green); }

@@ -4,7 +4,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { createPairing, pairAgent, openSession, heartbeatAgent, authenticateAgent, revokeAgent, agentStore } from "@/cloud/agents";
+import { createPairing, pairAgent, openSession, heartbeatAgent, authenticateAgent, revokeAgent, agentStore, renewPairing, listAgents } from "@/cloud/agents";
 import { enqueue, pollTasks, readTask, reportTasks } from "@/cloud/tasks";
 import { claimChannel } from "@/cloud/bindings";
 import { remoteDashboard, target } from "@/server/remote";
@@ -63,6 +63,40 @@ it("revokes device credentials and refuses copied active sessions", async () => 
   expect((await authenticateAgent(request)).id).toBe("studio_a");
   await expect(openSession("studio_a", randomUUID(), [{ id: "main", name: "主 OBS" }])).rejects.toMatchObject({ status: 409 });
   await revokeAgent("studio_a"); await expect(authenticateAgent(request)).rejects.toMatchObject({ status: 401 });
+});
+/** 移除只隔离控制，不清空正在执行的任务、维护凭据和频道归属。 */
+it("removes a PC and restores the original identity without replaying unsent work", async () => {
+  const a = await connect("studio_a"); await claimChannel(destination, "UC_preserved", true);
+  const sent = await enqueue(destination, "alice", { kind: "upload-status", uploadId: randomUUID() }); await pollTasks("studio_a");
+  const queued = await enqueue(destination, "alice", { kind: "control", input: { action: "launch" } });
+  await agentStore("studio_a").write("maintenance.json", { token: "d".repeat(64), activities: { "upload:fixture": 1 } });
+  await revokeAgent("studio_a"); await revokeAgent("studio_a");
+  expect((await listAgents())[0]).toMatchObject({ revoked: true, online: false, instances: [{ id: "main" }] });
+  expect((await readTask("studio_a", queued.id))?.status).toBe("expired");
+  expect((await readTask("studio_a", sent.id))?.status).toBe("delivering");
+  await expect(pollTasks("studio_a")).rejects.toMatchObject({ status: 401 });
+  const invite = await renewPairing("studio_a");
+  await expect(pairAgent("studio_a", invite.code, "c".repeat(64))).rejects.toMatchObject({ status: 401 });
+  await pairAgent("studio_a", invite.code, a.token); await pairAgent("studio_a", invite.code, a.token);
+  expect((await listAgents())[0].revoked).toBe(false);
+  expect((await agentStore("studio_a").read<{ token: string }>("maintenance.json"))?.token).toBe("d".repeat(64));
+  await connect("studio_b"); await expect(claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_preserved")).rejects.toMatchObject({ status: 409 });
+  expect((await pollTasks("studio_a")).map(t => t.id)).toEqual([sent.id]);
+});
+/** 旧配对码和无有效恢复邀请的旧凭据都不能自动恢复已撤销电脑。 */
+it("requires a fresh unexpired recovery invitation and invalidates it on removal", async () => {
+  const old = await createPairing("studio_a", "A"); const key = "b".repeat(64); await pairAgent("studio_a", old.code, key);
+  await revokeAgent("studio_a"); await expect(pairAgent("studio_a", old.code, key)).rejects.toMatchObject({ status: 401 });
+  const first = await renewPairing("studio_a"); const second = await renewPairing("studio_a");
+  await expect(pairAgent("studio_a", first.code, key)).rejects.toMatchObject({ status: 401 });
+  vi.setSystemTime(Date.now() + 601_000); await expect(pairAgent("studio_a", second.code, key)).rejects.toMatchObject({ status: 401 });
+  const latest = await renewPairing("studio_a"); await revokeAgent("studio_a"); await expect(pairAgent("studio_a", latest.code, key)).rejects.toMatchObject({ status: 401 });
+});
+/** 从未认领的空设备也可移除并恢复，不要求不存在的旧 token。 */
+it("recovers a removed unclaimed invitation without creating duplicate device IDs", async () => {
+  await createPairing("studio_a", "A"); await revokeAgent("studio_a"); const next = await renewPairing("studio_a");
+  await pairAgent("studio_a", next.code, "b".repeat(64)); expect(await listAgents()).toHaveLength(1);
+  await expect(renewPairing("studio_a")).rejects.toMatchObject({ status: 409 });
 });
 it("reserves global channel ownership permanently even if the owning device goes offline", async () => {
   await connect("studio_a"); await connect("studio_b"); await claimChannel(destination, "UC_fixture", false);

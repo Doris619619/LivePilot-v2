@@ -3,9 +3,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { Manager } from "../electron/manager";
 import { separateCandidates } from "../electron/candidates";
 import type { Settings } from "../electron/settings";
-const f = vi.hoisted(() => ({ write: vi.fn(), rpc: vi.fn(), initialize: vi.fn(), idle: vi.fn(), start: vi.fn(), stop: vi.fn(), ready: vi.fn() }));
+const f = vi.hoisted(() => ({ write: vi.fn(), rpc: vi.fn(), initialize: vi.fn(), idle: vi.fn(), start: vi.fn(), stop: vi.fn(), ready: vi.fn(), fetch: vi.fn() }));
 vi.mock("node:fs/promises", () => ({ mkdir: vi.fn() }));
-vi.mock("electron", () => ({ app: { getVersion: () => "test", getLoginItemSettings: () => ({ openAtLogin: false }) }, dialog: {}, net: {}, shell: {} }));
+vi.mock("electron", () => ({ app: { getVersion: () => "test", getLoginItemSettings: () => ({ openAtLogin: false }) }, dialog: {}, net: { fetch: f.fetch }, shell: {} }));
 vi.mock("../electron/settings", () => ({ SettingsStore: class { write = f.write; } }));
 vi.mock("../electron/agent-host", () => ({ AgentHost: class { child = {}; snapshots = []; lastHeartbeat = 0; rpc = f.rpc; start = f.start; stop = f.stop; ready = f.ready; } }));
 vi.mock("../electron/diagnostics", () => ({ diagnose: vi.fn() }));
@@ -50,4 +50,14 @@ it("migrates old uninitialized entries without changing registered IDs", () => {
   const settings = structuredClone(manager.settings) as Settings; settings.instances.push({ ...settings.instances[0], id: "failed", initialized: false });
   separateCandidates(settings); separateCandidates(settings);
   expect(settings.instances.map(i => i.id)).toEqual(["main"]); expect(settings.candidates?.map(i => i.id)).toEqual(["failed"]);
+});
+/** 恢复邀请仅允许同一设备；网络响应丢失重试也保留原始密钥。 */
+it("allows a paired PC to recover using the same identity and rejects another PC invitation", async () => {
+  manager.settings.identity!.origin = "https://livenest.duckdns.org";
+  const original = structuredClone(manager.settings);
+  const invitation = (agentId: string) => "LN1." + Buffer.from(JSON.stringify({ origin: "https://livenest.duckdns.org", agentId, code: "e".repeat(64) })).toString("base64url");
+  await expect(manager.act("pair", { invitation: invitation("another") })).rejects.toThrow("另一台"); expect(f.fetch).not.toHaveBeenCalled();
+  f.fetch.mockRejectedValueOnce(new Error("network")); await expect(manager.act("pair", { invitation: invitation("test") })).rejects.toThrow("身份已保留");
+  f.fetch.mockResolvedValueOnce(new Response("{}")); await manager.act("pair", { invitation: invitation("test") });
+  expect(manager.settings).toEqual(original); expect(JSON.parse(f.fetch.mock.calls[1][1].body).token).toBe(original.identity!.token);
 });

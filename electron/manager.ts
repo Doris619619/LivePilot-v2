@@ -78,13 +78,12 @@ export class Manager {
     await this.agent.rpc("instances", { token: this.settings.maintenance, instances: this.settings.instances.map(({ id, name }) => ({ id, name })) });
     await this.store.write(this.settings); await this.agent.stop(); this.activity.progress("正在等待旧连接结束（约 21 秒）"); await new Promise(r => setTimeout(r, 21_000)); await this.start();
   }
-  /** 邀请必须来自固定正式网站，重试复用已保存的随机设备令牌。 */
+  /** 邀请必须来自固定网站；恢复配对仍使用同一电脑身份，绝不覆盖旧授权。 */
   private async pair(invitation: unknown) {
-    if (this.settings.paired) throw new Error("这台电脑已经配对，不能覆盖设备身份。");
     if (typeof invitation !== "string" || invitation.length > 4096 || !invitation.trim().startsWith("LN1.")) throw new Error("请粘贴网页生成的完整配对信息。");
     let value: z.infer<typeof invitationSchema>;
     try { value = invitationSchema.parse(JSON.parse(Buffer.from(invitation.trim().slice(4), "base64url").toString("utf8"))); } catch { throw new Error("配对信息无效，或不属于 LiveNest 正式网站。"); }
-    if (this.settings.identity && this.settings.identity.agentId !== value.agentId) throw new Error("有尚未完成的配对，请在网页重新生成原设备的邀请。");
+    if (this.settings.identity && this.settings.identity.agentId !== value.agentId) throw new Error("此邀请属于另一台设备。请在网页选择原电脑（设备 ID：" + this.settings.identity.agentId + "）生成恢复配对信息，原身份和授权已保留。");
     this.settings.identity ||= { agentId: value.agentId, origin: value.origin, token: randomBytes(32).toString("hex") }; await this.store.write(this.settings);
     let response: Response;
     try { response = await net.fetch(value.origin + "/api/agent/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ protocol: 1, agentId: value.agentId, code: value.code, token: this.settings.identity.token }), redirect: "error", signal: AbortSignal.timeout(20_000) }); } catch { throw new Error("无法连接网页服务，请检查网络后重试。配对身份已保留。"); }

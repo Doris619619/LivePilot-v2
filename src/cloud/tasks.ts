@@ -6,7 +6,7 @@ import { AppError, sleep } from "@/core/errors";
 import { ACCEPT_MS, PROTOCOL, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
 import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
 import type { CommandStatus } from "@/shared/types";
-import { requireTarget, agentStore } from "./agents";
+import { requireTarget, agentStore, assertAgentActive } from "./agents";
 import { transaction } from "./store";
 import { reconcileUploads, uploadId, type MaintenanceState } from "./upload-activities";
 import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
@@ -53,6 +53,7 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
 export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
   const store = agentStore(agentId);
   return transaction(store, async () => {
+    await assertAgentActive(agentId);
     const queue = await store.read<Queue>("tasks.json") || { records: [] }; queue.records.forEach(expire);
     const records = queue.records.filter(r => !terminal(r.status)).slice(0, 32);
     for (const r of records) if (r.status === "queued") { r.status = "delivering"; r.updatedAt = Date.now(); }
