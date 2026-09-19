@@ -23,7 +23,7 @@ async function invite(id: string) { const value = await createPairing(id, "电�
 function settings(): Settings { return { dataRoot: root, encryptionKey: "d".repeat(64), instances: [{ id: "main", name: "原 OBS", managed: true, exe: "C:/fixture/obs64.exe", port: 4455, password: "fixture-password", initialized: true }], google: { clientId: "fixture", clientSecret: "fixture" }, maintenance: "e".repeat(64) }; }
 /** 登记一台旧电脑，保留实例与身份供移除恢复。 */
 async function enrolled(id = "original", token = "b".repeat(64)) { const local = settings(); const p = await createPairing(id, "原电脑"); await pairAgent(id, p.code, token); await openSession(id, randomUUID(), [{ id: "main", name: "原 OBS" }]); local.identity = { agentId: id, origin: DESKTOP_ORIGIN, token }; local.paired = true; return local; }
-it("reconnects a removed PC with a completely new invitation while preserving identity, OBS, maintenance and channel ownership", async () => {
+it("reconnects a removed PC preserving local configuration while released channels can bind elsewhere", async () => {
   const local = await enrolled(); const before = structuredClone(local); await claimChannel({ agentId: "original", instanceId: "main" }, "UC_preserved", true);
   await agentStore("original").write("maintenance.json", { token: local.maintenance }); await revokeAgent("original");
   const save = vi.fn(async () => {}); await pairDesktop(local, await invite("new_invitation"), save, request);
@@ -31,7 +31,8 @@ it("reconnects a removed PC with a completely new invitation while preserving id
   expect((await listAgents()).find(a => a.id === "original")).toMatchObject({ revoked: false, paired: true, instances: [{ id: "main" }] });
   expect((await listAgents()).find(a => a.id === "new_invitation")).toMatchObject({ revoked: true, pairedTo: "original", instances: [] });
   expect(await agentStore("original").read("maintenance.json")).toEqual({ token: local.maintenance });
-  await enrolled("other", "c".repeat(64)); await expect(claimChannel({ agentId: "other", instanceId: "main" }, "UC_preserved", true)).rejects.toMatchObject({ status: 409 });
+  await enrolled("other", "c".repeat(64)); await claimChannel({ agentId: "other", instanceId: "main" }, "UC_preserved", true);
+  await expect(claimChannel({ agentId: "original", instanceId: "main" }, "UC_preserved", true)).rejects.toMatchObject({ status: 409 });
 });
 it("retries a lost successful response with the same code and keeps only the original connected device", async () => {
   const local = await enrolled(); await revokeAgent("original"); const code = await invite("new_invitation");

@@ -1,4 +1,4 @@
-/** 已登录成员移除云端设备登记；保留本机数据、频道归属和待核对任务。 */
+/** 已登录成员移除云端设备并释放频道归属；保留本机数据和待核对任务。 */
 import { z } from "zod";
 import { authenticate } from "@/server/access";
 import { guard, failed } from "@/server/http";

@@ -4,6 +4,7 @@ import path from "node:path";
 import { Store } from "@/core/storage";
 import { AppError } from "@/core/errors";
 import { cloudStore, transaction } from "./store";
+import { releaseAgentChannels } from "./bindings";
 import { idSchema, OFFLINE_MS, PROTOCOL, type AgentDescriptor, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
 type Agent = { id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
@@ -56,6 +57,7 @@ export async function pairAgent(id: string, code: string, token: string, current
     if (currentAgentId && current?.id !== id) {
       if (agent.tokenHash || agent.revoked || agent.instances.length || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("AGENT_AUTH", "请使用新生成且未使用的配对码。", 401);
       if (current?.tokenHash) {
+        if (current.revoked) await releaseAgentChannels(store, current.id);
         current.revoked = false; delete current.pairingHash; delete current.pairingExpires;
         agent.pairedTo = current.id; agent.pairingReceiptHash = digest(code); agent.revoked = true;
         delete agent.pairingHash; delete agent.pairingExpires;
@@ -66,6 +68,7 @@ export async function pairAgent(id: string, code: string, token: string, current
     }
     if (agent.revoked) {
       if (!matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now() || (agent.tokenHash && !matches(token, agent.tokenHash))) throw new AppError("AGENT_AUTH", "恢复配对需要新的邀请和原电脑身份，请在原 Windows 账户的 LiveNest 中重试。", 401);
+      await releaseAgentChannels(store, agent.id);
       agent.revoked = false; agent.tokenHash = digest(token); delete agent.pairingHash; delete agent.pairingExpires;
       await store.write("agents.json", registry); return { protocol: PROTOCOL, agentId: id };
     }
@@ -149,7 +152,7 @@ export async function assertAgentActive(id: string) {
   const registry = await cloudStore().read<Registry>("agents.json");
   if (!registry?.agents.some(a => a.id === id && !a.revoked)) throw new AppError("AGENT_AUTH", "设备已移除，请从网页恢复配对。", 401);
 }
-/** 撤销与派发互斥，过期从未派发的任务；已送达任务和所有配置保留待核对。 */
+/** 撤销与派发互斥并释放频道归属；已送达任务、本机授权与文件保留待核对。 */
 export async function revokeAgent(id: string) {
   const local = agentStore(id); const store = cloudStore(); await transaction(local, async () => {
     await transaction(store, async () => {
@@ -157,6 +160,7 @@ export async function revokeAgent(id: string) {
       if (!agent) throw new AppError("AGENT", "设备不存在。", 404);
       delete agent.pairingHash; delete agent.pairingExpires; delete agent.pairingReceiptHash;
       agent.revoked = true; await store.write("agents.json", registry);
+      await releaseAgentChannels(store, id);
     });
     const queue = await local.read<{ records: import("./tasks").TaskRecord[] }>("tasks.json");
     if (queue) { for (const task of queue.records) if (task.status === "queued") { task.status = "expired"; task.updatedAt = Date.now(); task.message = "设备已移除，此任务尚未派发。"; } await local.write("tasks.json", queue); }

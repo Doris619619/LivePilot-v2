@@ -35,6 +35,7 @@ try {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
   await page.goto(origin); await page.getByRole("button", { name: "移除电脑", exact: true }).click();
+  assert.ok(await page.getByText("移除后，频道可连接到其他电脑。", { exact: false }).isVisible());
   assert.equal(await page.locator("#device-pc_pending").count(), 0);
   await page.getByRole("button", { name: "取消", exact: true }).click(); assert.equal(attempts, 0);
   await page.getByRole("button", { name: "移除电脑", exact: true }).click(); await page.getByRole("button", { name: "确认移除", exact: true }).click();

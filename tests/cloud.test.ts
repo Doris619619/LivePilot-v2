@@ -64,7 +64,7 @@ it("revokes device credentials and refuses copied active sessions", async () => 
   await expect(openSession("studio_a", randomUUID(), [{ id: "main", name: "主 OBS" }])).rejects.toMatchObject({ status: 409 });
   await revokeAgent("studio_a"); await expect(authenticateAgent(request)).rejects.toMatchObject({ status: 401 });
 });
-/** 移除只隔离控制，不清空正在执行的任务、维护凭据和频道归属。 */
+/** 移除释放频道占用，但不清空正在执行的任务、维护凭据和原身份。 */
 it("removes a PC and restores the original identity without replaying unsent work", async () => {
   const a = await connect("studio_a"); await claimChannel(destination, "UC_preserved", true);
   const sent = await enqueue(destination, "alice", { kind: "upload-status", uploadId: randomUUID() }); await pollTasks("studio_a");
@@ -80,7 +80,8 @@ it("removes a PC and restores the original identity without replaying unsent wor
   await pairAgent("studio_a", invite.code, a.token); await pairAgent("studio_a", invite.code, a.token);
   expect((await listAgents())[0].revoked).toBe(false);
   expect((await agentStore("studio_a").read<{ token: string }>("maintenance.json"))?.token).toBe("d".repeat(64));
-  await connect("studio_b"); await expect(claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_preserved")).rejects.toMatchObject({ status: 409 });
+  await connect("studio_b"); await claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_preserved");
+  await expect(claimChannel(destination, "UC_preserved")).rejects.toMatchObject({ code: "CHANNEL_IN_USE" });
   expect((await pollTasks("studio_a")).map(t => t.id)).toEqual([sent.id]);
 });
 /** 旧配对码和无有效恢复邀请的旧凭据都不能自动恢复已撤销电脑。 */
@@ -98,11 +99,13 @@ it("recovers a removed unclaimed invitation without creating duplicate device ID
   await pairAgent("studio_a", next.code, "b".repeat(64)); expect(await listAgents()).toHaveLength(1);
   await expect(renewPairing("studio_a")).rejects.toMatchObject({ status: 409 });
 });
-it("reserves global channel ownership permanently even if the owning device goes offline", async () => {
+it("preserves offline ownership but releases it when the owning device is removed", async () => {
   await connect("studio_a"); await connect("studio_b"); await claimChannel(destination, "UC_fixture", false);
   await expect(claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_fixture", true)).rejects.toMatchObject({ status: 409 });
-  await claimChannel(destination, "UC_fixture", true); await revokeAgent("studio_a");
+  vi.setSystemTime(Date.now() + 21_000);
   await expect(claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_fixture")).rejects.toMatchObject({ status: 409 });
+  await claimChannel(destination, "UC_fixture", true); await revokeAgent("studio_a");
+  await claimChannel({ agentId: "studio_b", instanceId: "main" }, "UC_fixture");
 });
 it("keeps OAuth codes encrypted and limits pair retries to the originally enrolled key", async () => {
   const pairing = await createPairing("studio_a", "A"); await pairAgent("studio_a", pairing.code, "b".repeat(64));
