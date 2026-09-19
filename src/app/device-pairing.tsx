@@ -1,6 +1,7 @@
 /** 网页添加电脑：一次性邀请只保存在当前页面，不写本地缓存或 URL。 */
 "use client";
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { api } from "./client-request";
 import type { AgentDescriptor } from "@/shared/remote";
 /** 成员创建或恢复邀请；已移除电脑沿用原身份，不能被另一台电脑接管。 */
@@ -31,7 +32,7 @@ export default function DevicePairing({ agents }: { agents: AgentDescriptor[] })
         <button className="btn-primary" onClick={() => void navigator.clipboard.writeText(invitation).then(() => setMessage("已复制，请到 LiveNest 粘贴并连接。"), () => setMessage("复制失败，请展开下方配对码，选中后按 Ctrl+C。"))}>复制配对码</button>
         <details><summary>查看配对码</summary><label className="field-group">配对码（10 分钟内有效）<textarea readOnly value={invitation} rows={3} /></label><button disabled={busy} onClick={() => void create()}>{busy ? "正在生成…" : "重新生成配对码"}</button></details>
       </> : <button className="btn-primary" disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? "正在生成…" : "生成配对码"}</button>}
-      {message && <p role="status">{message}</p>}<a href="https://github.com/Doris619619/LiveNest-Releases/releases/latest" target="_blank" rel="noreferrer">下载 Windows 安装版</a>
+      {message && <p role="status">{message}</p>}<Link href="/download">下载 Windows 客户端</Link>
     </>}
   </section>}</div>;
 }

@@ -3,7 +3,7 @@
 
 在网页选择素材、授权频道并控制直播；Windows 客户端配置本机 OBS、运行 Agent 和检查故障。支持多台电脑，每台可使用多个独立 OBS。
 
-**[下载 Windows x64 安装版](https://github.com/Doris619619/LiveNest-Releases/releases)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
+**[下载 Windows x64 安装版](https://livenest.duckdns.org/download)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要预装 OBS，也不需要另装 Node、Git 或 Docker；点击“自动准备 OBS”即可。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
 
@@ -21,7 +21,7 @@
 
 本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，独立于旧 LivePilot。开发验证：`npm.cmd ci` → `npm.cmd run verify`。真实频道授权及音画验收由用户主动完成。
 
-## 故障恢复（待发布）
+## 故障恢复
 
 新增 OBS 先保存在“待配置 OBS”，验证成功后才登记到网页。失败可重试、修正手动连接或撤销新增；撤销只归档配置，不删除 OBS 文件。旧实例及频道绑定保留。“修复连接（先关闭 OBS）”仅修改已停止且归属匹配的自有实例，并要求已配对设备取得维护锁；正常启动沿用原端口和密码。
 
@@ -35,4 +35,4 @@
 
 托盘“退出”不再依赖云端维护锁：断网也可在已接收任务处理完毕后退出，OBS 保持运行。配置中或 Agent 尚未确认退出时保留客户端并提示重试，不强杀进程。客户端内“重启更新”和 OBS 配置变更仍要求维护许可。
 
-兼容旧 Agent 协议。网页上传对账、设备移除与恢复邀请已于 2026-09-19 经用户确认部署提交 `1c0a10d`；客户端恢复入口需新版安装包，目前仍仅本地试用，未正式发布。PR 保持开放。详见 [故障恢复与验收](docs/故障恢复与验收.md) 和 [网页部署记录](docs/desktop/网页故障恢复部署.md)。
+兼容旧 Agent 协议。网页提供公开 `/download` 页面，直接下载已经完整打包验证的 Windows 0.1.1 安装器；此入口独立于 GitHub 自动更新源。上传区按文件、进度、操作排列，历史恢复入口折叠；没有素材时可点“添加视频／音乐”，自动带入对应 OBS，并保留进行中的上传。详见 [故障恢复与验收](docs/故障恢复与验收.md) 和 [网页部署记录](docs/desktop/网页故障恢复部署.md)。

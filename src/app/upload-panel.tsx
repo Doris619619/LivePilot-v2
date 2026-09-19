@@ -20,6 +20,7 @@ import {
 } from "./components/icons";
 
 const KEY = "livepilot-upload";
+export type UploadRequest = { target: string; kind: "videos" | "music"; sequence: number };
 
 /** 将上传字节数格式化为可比较的 MiB 数值。 */
 function bytes(value: number): string {
@@ -27,7 +28,7 @@ function bytes(value: number): string {
 }
 
 /** 在选定直播电脑上传或恢复文件；上传进度不依赖面板展开状态。 */
-export default function UploadPanel({ instances, channels, heading }: { instances: InstanceDescriptor[]; channels: Record<string, string>; heading?: ReactNode }) {
+export default function UploadPanel({ instances, channels, heading, request }: { instances: InstanceDescriptor[]; channels: Record<string, string>; heading?: ReactNode; request?: UploadRequest }) {
   const [record, setRecord] = useState<UploadStatus>();
   const [instanceId, setInstanceId] = useState(instances[0] ? targetKey(instances[0]) : "main");
   const [kind, setKind] = useState<"videos" | "music">("videos");
@@ -36,9 +37,24 @@ export default function UploadPanel({ instances, channels, heading }: { instance
   const [stage, setStage] = useState("");
   const [error, setError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
+  const [requestNotice, setRequestNotice] = useState("");
+  const [lastRequest, setLastRequest] = useState(0);
+  const [hasIntent, setHasIntent] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const createIntent = useRef<{ fingerprint: string; target: string; kind: string; requestId: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
+  /** 只消费一次入口请求；有文件、待确认创建或任务时保留原目标与进度。 */
+  if (request && lastRequest !== request.sequence) {
+    setLastRequest(request.sequence); setIsOpen(true); setRequestNotice("");
+    if (busy || record || file || hasIntent) {
+      if (request.target !== instanceId || request.kind !== kind) setRequestNotice("已保留当前上传，请先完成或取消，再添加到其他 OBS。");
+    } else { setInstanceId(request.target); setKind(request.kind); }
+  }
+  useEffect(() => {
+    if (!lastRequest) return;
+    const panel = document.getElementById("upload-content"); panel?.focus({ preventScroll: true }); panel?.scrollIntoView({ block: "start" });
+  }, [lastRequest]);
 
   function remember(next: UploadStatus) {
     setRecord(next);
@@ -58,6 +74,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     async function restore() {
       try {
         createIntent.current = JSON.parse(localStorage.getItem(KEY + ".intent") || "null");
+        setHasIntent(!!createIntent.current);
         const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
         if (saved?.id && saved.instanceId) {
           const next = await api<UploadStatus>(uploadUrl(saved));
@@ -111,7 +128,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     abort.current = controller;
     setBusy(true);
     setError("");
-    setStage("计算文件指纹…");
+    setStage("正在检查文件…");
 
     try {
       const identity = await identify(file, controller.signal);
@@ -142,6 +159,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
 
         // 创建前持久化幂等身份；响应丢失或刷新后仍复用同一请求。
         localStorage.setItem(KEY + ".intent", JSON.stringify(createIntent.current));
+        setHasIntent(true);
         current = await api<UploadStatus>("/api/uploads", {
           method: "POST",
           signal: controller.signal,
@@ -159,7 +177,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
       }
 
       remember(current);
-      setStage("分片传输中…");
+      setStage("正在上传…");
 
       if (current.status === "uploading") {
         await transfer(file, current, identity.hashes, controller.signal, remember);
@@ -188,7 +206,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     try {
       const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
       if (saved?.id === id) localStorage.removeItem(KEY);
-      if (createIntent.current?.requestId === id) { createIntent.current = null; localStorage.removeItem(KEY + ".intent"); }
+      if (createIntent.current?.requestId === id) { createIntent.current = null; setHasIntent(false); localStorage.removeItem(KEY + ".intent"); }
     } catch { /* 服务端取消已确认，缓存失败不影响真实结果。 */ }
   }
 
@@ -202,6 +220,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
         await api(uploadUrl({ id: createIntent.current.requestId, instanceId: destination.id, agentId: destination.agentId }), { method: "DELETE", headers: { "x-livepilot": "1" } });
       }
       localStorage.removeItem(KEY); localStorage.removeItem(KEY + ".intent"); createIntent.current = null;
+      setHasIntent(false); setRequestNotice("");
       setRecord(undefined);
       setFile(undefined);
     } catch (e) {
@@ -209,6 +228,9 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     }
   }
 
+  const destination = instances.find(i => targetKey(i) === instanceId);
+  const destinationLabel = destination ? `${channels[instanceId] || destination.name} · ${destination.agentName || "本机"} / ${destination.name}` : "原上传目标暂不可用";
+  const progressLabel = record?.status === "complete" ? "上传完成" : record?.status === "verifying" ? "正在校验文件…" : busy ? stage : "等待继续上传";
   return (
     <section className="media-dock" aria-label="素材上传">
       <div className="dock-header">
@@ -217,118 +239,44 @@ export default function UploadPanel({ instances, channels, heading }: { instance
           <UploadIcon />{isOpen ? "收起上传" : "上传素材"}
         </button>
       </div>
-
-      {isOpen && (
-        <div className="dock-content" id="upload-content">
-          <form onSubmit={submit}>
-            <div className="form-row">
-              <div className="field-group">
-                <label htmlFor="upload-instance" className="field-label">
-                  <DeviceIcon /> 目标实例
-                </label>
-                <select
-                  id="upload-instance"
-                  value={instanceId}
-                  disabled={!!record || busy}
-                  onChange={e => setInstanceId(e.target.value)}
-                >
-                  {instances.map(i => (
-                    <option key={targetKey(i)} value={targetKey(i)}>
-                      {channels[targetKey(i)] || i.name} · {i.agentName || "本机"} / {i.name} ({i.id})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="field-group">
-                <label htmlFor="upload-kind" className="field-label">
-                  {kind === "videos" ? <VideoIcon /> : <MusicIcon />} 素材类型
-                </label>
-                <select
-                  id="upload-kind"
-                  value={kind}
-                  disabled={!!record || busy}
-                  onChange={e => setKind(e.target.value as "videos" | "music")}
-                >
-                  <option value="videos">视频 (MP4, MKV, MOV, WEBM)</option>
-                  <option value="music">音乐 (MP3, WAV, FLAC, AAC)</option>
-                </select>
-              </div>
-
-              <div className="field-group" style={{ gridColumn: "1 / -1" }}>
-                <label htmlFor="upload-file" className="field-label">
-                  选择文件
-                </label>
-                <input
-                  id="upload-file"
-                  type="file"
-                  disabled={busy || (!!record && record.status !== "uploading")}
-                  accept={kind === "videos" ? ".mp4,.mkv,.mov,.webm,.avi,.m4v" : ".mp3,.wav,.flac,.aac,.m4a,.ogg"}
-                  onChange={e => setFile(e.target.files?.[0])}
-                />
-              </div>
+      {isOpen && <div className="dock-content" id="upload-content" tabIndex={-1}>
+        {requestNotice && <p className="upload-hint" role="status">{requestNotice}</p>}
+        <form onSubmit={submit}>
+          {record || busy ? <p className="upload-destination"><DeviceIcon /><span>{destinationLabel}</span><span>{kind === "videos" ? "视频" : "音乐"}</span></p> : <div className="form-row">
+            <div className="field-group">
+              <label htmlFor="upload-instance" className="field-label">上传到</label>
+              <select id="upload-instance" value={instanceId} onChange={e => setInstanceId(e.target.value)}>
+                {instances.map(i => <option key={targetKey(i)} value={targetKey(i)}>{channels[targetKey(i)] || i.name} · {i.agentName || "本机"} / {i.name}</option>)}
+              </select>
             </div>
-
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              {(!record || record.status === "uploading") && (
-                <button type="submit" className="btn-primary" disabled={!file || busy} style={{ flex: "none" }}>
-                  <UploadIcon />
-                  <span>{busy ? "传输中…" : record ? "继续传输" : "开始上传"}</span>
-                </button>
-              )}
-
-              {busy && (
-                <button type="button" className="btn-secondary" onClick={() => abort.current?.abort()}>
-                  暂停
-                </button>
-              )}
-
-              {!busy && record?.status === "verifying" && (
-                <button type="button" className="btn-primary" onClick={() => void retryFinish()}>
-                  <RefreshIcon /> 完成校验
-                </button>
-              )}
-
-              {!busy && (record || file) && (
-                <button type="button" className="btn-secondary" onClick={() => void clear()}>
-                  {record?.status === "complete" ? "上传下一个" : "清除记录"}
-                </button>
-              )}
+            <div className="field-group">
+              <label htmlFor="upload-kind" className="field-label">素材类型</label>
+              <select id="upload-kind" value={kind} onChange={e => { setKind(e.target.value as "videos" | "music"); setFile(undefined); }}>
+                <option value="videos">视频</option><option value="music">音乐</option>
+              </select>
             </div>
-          </form>
-
-          <UploadRecovery key={instanceId} agentId={instances.find(i => targetKey(i) === instanceId)?.agentId} instanceId={instances.find(i => targetKey(i) === instanceId)?.id || "main"} restore={remember} cancelled={cancelled} />
-          {stage && <p style={{ marginTop: "10px", fontSize: "15px", color: "var(--accent-primary)" }}>{stage}</p>}
-
-          {record && (
-            <div style={{ marginTop: "12px", padding: "10px", background: "var(--bg-subtle)", borderRadius: "var(--radius-sm)", fontSize: "15px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                <strong>{record.filename}</strong>
-                <span>{bytes(record.received)} / {bytes(record.size)}</span>
-              </div>
-              <progress aria-label="素材上传进度" max={record.size} value={record.received} style={{ width: "100%", height: "6px" }} />
-              <div style={{ marginTop: "6px", color: "var(--text-secondary)" }}>
-                {record.status === "complete" ? (
-                  <span style={{ color: "var(--success-green)", display: "flex", alignItems: "center", gap: "4px" }}>
-                    <CheckCircleIcon /> 已保存至素材库：{record.publishedName}
-                  </span>
-                ) : record.status === "verifying" ? (
-                  "正在由直播电脑进行哈希校验…"
-                ) : (
-                  "进度已在直播电脑保存，支持断点续传。"
-                )}
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="banner error" style={{ marginTop: "12px" }} role="alert">
-              <AlertCircleIcon />
-              <span>{error}</span>
-            </div>
-          )}
-        </div>
-      )}
+          </div>}
+          {!busy && (!record || record.status === "uploading") && <div className="upload-file-picker">
+            <input ref={fileInput} id="upload-file" className="visually-hidden" type="file" aria-label={kind === "videos" ? "选择视频文件" : "选择音乐文件"} accept={kind === "videos" ? ".mp4,.mkv,.mov,.webm,.avi,.m4v" : ".mp3,.wav,.flac,.aac,.m4a,.ogg"} onChange={e => setFile(e.target.files?.[0])} />
+            <button type="button" className="btn-secondary" onClick={() => fileInput.current?.click()}>{kind === "videos" ? <VideoIcon /> : <MusicIcon />}{record ? "重新选择同一文件" : file ? "更换文件" : kind === "videos" ? "选择视频" : "选择音乐"}</button>
+            <span>{file?.name || (record ? "选择原文件后继续上传" : kind === "videos" ? "支持 MP4、MKV、MOV、WEBM 等" : "支持 MP3、WAV、FLAC、AAC 等")}</span>
+          </div>}
+          {record ? <div className="upload-progress">
+            <div className="upload-progress-title"><strong>{record.filename}</strong><span role="status">{progressLabel}</span></div>
+            <progress aria-label="素材上传进度" max={record.size} value={record.received} />
+            <div className="upload-progress-meta"><span>{bytes(record.received)} / {bytes(record.size)}</span><span>{Math.floor(record.received / Math.max(1, record.size) * 100)}%</span></div>
+            {record.status === "complete" ? <p className="upload-success"><CheckCircleIcon />已添加到素材库，可回到下方选择使用。</p> : <p className="upload-hint">{record.status === "verifying" ? "文件已传完，正在确认完整性。" : "支持暂停，稍后可继续上传。"}</p>}
+          </div> : busy && <p className="upload-hint" role="status">{stage}</p>}
+          <div className="upload-actions">
+            {!busy && (!record || record.status === "uploading") && <button type="submit" className="btn-primary" disabled={!file}><UploadIcon />{record ? "继续上传" : "开始上传"}</button>}
+            {busy && <button type="button" className="btn-secondary" onClick={() => abort.current?.abort()}>暂停上传</button>}
+            {!busy && record?.status === "verifying" && <button type="button" className="btn-secondary" onClick={() => void retryFinish()}><RefreshIcon />重新检查</button>}
+            {!busy && (record || file || hasIntent) && <button type="button" className={record?.status === "complete" ? "btn-primary" : "btn-ghost"} onClick={() => void clear()}>{record?.status === "complete" ? "上传下一个" : record || hasIntent ? "取消上传" : "清除选择"}</button>}
+          </div>
+        </form>
+        {error && <div className="banner error upload-error" role="alert"><AlertCircleIcon /><span>{error}</span></div>}
+        <UploadRecovery key={instanceId} agentId={destination?.agentId} instanceId={destination?.id || "main"} currentId={record?.id} disabled={busy} restore={remember} cancelled={cancelled} />
+      </div>}
     </section>
   );
 }

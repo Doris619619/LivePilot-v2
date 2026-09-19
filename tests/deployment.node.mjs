@@ -51,6 +51,11 @@ test("真实 cloud CLI 生成配置与 Google 清单，重复运行保持原数�
   const out = path.join(dir, "rendered"); await render(path.join(dir, ".env.cloud"), out, "/usr/bin/node", "/usr/bin/certbot");
   const nginx = await readFile(path.join(out, "nginx-https.conf"), "utf8");
   assert.ok(nginx.includes("server_name live.example.com;")); assert.ok(!nginx.includes(parseEnv(before).LIVEPILOT_ENCRYPTION_KEY));
+  assert.match(nginx, /location \^~ \/downloads\/ \{/);
+  assert.match(nginx, /alias \/var\/www\/livenest-downloads\/;/);
+  assert.match(nginx, /autoindex off;/); assert.match(nginx, /disable_symlinks on;/);
+  assert.match(nginx, /limit_except GET \{ deny all; \}/);
+  assert.ok(!nginx.includes("alias /var/lib/livepilot"));
   const cli = spawnSync(process.execPath, [path.join(root, "scripts/deployment/render.mjs"), "--env", path.join(dir, ".env.cloud"), "--out", out], { encoding: "utf8" });
   assert.equal(cli.status, 0, cli.stderr); assert.equal(cli.stdout.trim(), "live.example.com");
 }));
