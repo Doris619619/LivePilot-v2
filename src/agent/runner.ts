@@ -32,8 +32,8 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
         transport.session = session.session; await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
       }
       const result = await (await transport.request("/api/agent/poll")).json() as { tasks: unknown[] };
-      // 停止请求后不接收新任务；云端维护锁会确保没有在途投递。
-      if (!hooks.stopped()) for (const raw of result.tasks) { const task = taskSchema.parse(raw); if (task.agentId !== identity.agentId) throw new AppError("AGENT", "任务设备不匹配。", 403); await worker.receive(task); }
+      // 普通离线退出不依赖维护锁；逐条检查停止标志，已投递但未接收的任务留待云端核对。
+      for (const raw of result.tasks) { if (hooks.stopped()) break; const task = taskSchema.parse(raw); if (task.agentId !== identity.agentId) throw new AppError("AGENT", "任务设备不匹配。", 403); await worker.receive(task); }
       delay = 1000; if (result.tasks.length) await sleep(500);
     } catch (error) { connected = false; hooks.error?.(safeError(error)); await sleep(delay); delay = Math.min(30_000, delay * 2); }
   }

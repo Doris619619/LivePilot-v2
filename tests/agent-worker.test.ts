@@ -39,3 +39,14 @@ it("runs independent instances concurrently and strips upstream errors", async (
   await vi.waitFor(async () => expect((await worker.reports()).find(r => r.id === b.id)?.status).toBe("failed"));
   expect(JSON.stringify(await worker.reports())).not.toContain("SECRET_UPSTREAM_TOKEN"); finish(); await worker.drain();
 });
+it("drains tasks whose initial acceptance write is still pending", async () => {
+  const store = new Store(dir); const originalWrite = store.write.bind(store); let accept!: () => void; let finish!: () => void;
+  vi.spyOn(store, "write").mockImplementationOnce(async (name, value) => { await new Promise<void>(resolve => { accept = resolve; }); await originalWrite(name, value); });
+  const execute = vi.fn(() => new Promise(resolve => { finish = () => resolve({ ok: true }); }));
+  const worker = new Worker(store, execute); const received = worker.receive(task());
+  await vi.waitFor(() => expect(accept).toBeTypeOf("function"));
+  let drained = false; const draining = worker.drain().then(() => { drained = true; });
+  await Promise.resolve(); expect(drained).toBe(false); accept(); await received;
+  await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce()); expect(drained).toBe(false);
+  finish(); await draining; expect((await worker.reports())[0].status).toBe("succeeded");
+});
