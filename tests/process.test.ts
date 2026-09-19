@@ -1,7 +1,23 @@
 /** 原生端口解析与启动保护的回归；不启动真实进程。 */
 import { expect, it, vi } from "vitest";
 import { listenerPid, ObsProcessManager } from "@/server/obs/process";
+import { matchingObsPid } from "@/core/obs/process";
 const tcp = "TCP 0.0.0.0:4455 0.0.0.0:0 LISTENING 123";
+/** Windows 可报告逻辑路径，文件系统却返回 MSIX 的真实路径；必须仍认出同一 OBS。 */
+it("recognizes redirected OBS paths without claiming another installation", async () => {
+  const output = JSON.stringify({ processes: [{ pid: 123, exe: "C:/Local/LiveNest/obs64.exe" }, { pid: 456, exe: "D:/Other/obs64.exe" }] });
+  const resolve = async (filename: string) => filename.startsWith("C:") ? "C:/Packages/LocalCache/LiveNest/obs64.exe" : filename;
+  await expect(matchingObsPid(output, "c:/packages/localcache/LiveNest/obs64.exe", resolve)).resolves.toBe(123);
+});
+/** 两个逻辑别名指向同一程序时，不任意选择一个进程。 */
+it("rejects duplicate processes after canonicalization", async () => {
+  await expect(matchingObsPid(JSON.stringify({ processes: [{ pid: 1, exe: "alias-a" }, { pid: 2, exe: "alias-b" }] }), "canonical", async () => "canonical")).rejects.toThrow("多个进程");
+});
+/** 不可访问或已退出的进程不能被认领；端口占用仍由 inspect/ensureRunning 阻止。 */
+it("does not claim an inaccessible executable", async () => {
+  await expect(matchingObsPid(JSON.stringify({ processes: [{ pid: 1, exe: "gone" }] }), "canonical", async () => { throw new Error("gone"); })).resolves.toBeNull();
+  await expect(matchingObsPid('{"processes":[{"pid":0,"exe":"bad"}]}', "canonical")).rejects.toThrow("状态无效");
+});
 /** 同端口 IPv4/IPv6 的同一 PID 去重；其他端口和连接状态不计入。 */
 it("finds only the local listening owner", () => {
   expect(listenerPid(tcp + "\nTCP [::]:4455 [::]:0 LISTENING 123\nTCP 127.0.0.1:9999 127.0.0.1:4455 ESTABLISHED 900\nTCP 0.0.0.0:4456 0.0.0.0:0 LISTENING 456", 4455)).toBe(123);
