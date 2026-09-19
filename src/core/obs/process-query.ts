@@ -32,15 +32,15 @@ public static class ObsImageIdentity {
     foreach (var process in Process.GetProcessesByName("obs64")) {
       using (process) {
         var handle = OpenProcess(0x1000, false, (uint)process.Id);
-        if (handle == IntPtr.Zero) continue;
+        if (handle == IntPtr.Zero) { if (process.HasExited) continue; throw new IOException("Cannot inspect OBS process identity"); }
         try {
           var path = new StringBuilder(32768);
           if (GetProcessImageFileName(handle, path, path.Capacity) > 0) {
             try {
               var actual = FinalPath(@"\\?\GLOBALROOT" + path.ToString());
               if (String.Equals(target, actual, StringComparison.OrdinalIgnoreCase)) matches.Add(process.Id);
-            } catch (IOException) { /* 已退出或无权读取的进程不认领，端口归属检查仍保留。 */ }
-          }
+            } catch (IOException) { if (!process.HasExited) throw; }
+          } else if (!process.HasExited) { throw new IOException("Cannot inspect OBS process image"); }
         } finally { CloseHandle(handle); }
       }
     }

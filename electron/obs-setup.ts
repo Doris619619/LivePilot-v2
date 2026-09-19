@@ -36,7 +36,7 @@ export async function freePort(excluded: number[], start = 4455): Promise<number
 }
 /** 生成身份后先持久化，解压失败仍可用相同密码继续。 */
 export async function newInstance(settings: Settings): Promise<DesktopInstance> {
-  const id = settings.instances.length ? "obs_" + randomBytes(4).toString("hex") : "main";
+  const id = settings.instances.some(i => i.id === "main" && i.initialized) ? "obs_" + randomBytes(4).toString("hex") : "main";
   return { id, name: settings.instances.length ? "OBS " + (settings.instances.length + 1) : "主 OBS", managed: true, exe: path.join(settings.dataRoot, "obs", id, "bin", "64bit", "obs64.exe"), port: await freePort(settings.instances.map(i => i.port)), password: randomBytes(24).toString("hex"), initialized: false };
 }
 /** 仅生成缺失的默认文件，已有配置保持不变。 */

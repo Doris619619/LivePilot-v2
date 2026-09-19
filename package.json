@@ -1,6 +1,6 @@
 {
   "name": "livepilot-v2",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "main": "dist-electron/main.cjs",
   "engines": {
@@ -57,7 +57,7 @@
     "eslint-config-next": "16.3.3",
     "playwright": "1.62.1",
     "typescript": "^5.9.2",
-    "vitest": "^3.2.4"
+    "vitest": "4.1.11"
   },
   "description": "LivePilot 多电脑直播控制台及独立 Windows Agent"
 }

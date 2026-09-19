@@ -48,7 +48,7 @@ async function launch() {
   ipcMain.handle("desktop:login", (event, username, password) => { trusted(event); return auth.login(username, password); });
   ipcMain.handle("desktop:logout", event => { trusted(event); auth.logout(); });
   ipcMain.handle("desktop:state", event => { trusted(event); auth.require(); return manager.state(); });
-  const action = z.enum(["check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
+  const action = z.enum(["check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
   ipcMain.handle("desktop:act", (event, name, input) => { trusted(event); auth.require(); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });
   const image = nativeImage.createFromPath(path.join(resources, "icon.png")); tray = new Tray(image); tray.setToolTip("LiveNest");
   tray.setContextMenu(Menu.buildFromTemplate([{ label: "打开 LiveNest", click: () => window?.show() }, { label: "网页工作台", click: () => { void manager.act("web"); } }, { type: "separator" }, { label: "退出", click: () => { void quit(); } }])); tray.on("double-click", () => window?.show());

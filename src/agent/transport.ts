@@ -17,7 +17,12 @@ export class Transport {
     let response: Response;
     try { response = await fetch(this.origin + route, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(timeout), cache: "no-store" }); }
     catch { throw new AppError("CLOUD_NETWORK", "暂时无法连接控制端，任务和素材进度保留。", 503); }
-    if (!response.ok) { await response.body?.cancel(); throw new AppError(response.status === 401 ? "AGENT_AUTH" : "CLOUD_REQUEST", response.status === 401 ? "设备凭据失效，请检查是否已撤销。" : "控制端尚未确认设备请求，请检查配置或稍后重连。", response.status); }
+    if (!response.ok) {
+      if (route === "/api/agent/maintenance-begin" && response.status === 409) {
+        const body = await response.json().catch(() => null) as { error?: unknown } | null;
+        if (typeof body?.error === "string" && body.error.length <= 500) throw new AppError("MAINTENANCE", body.error, 409);
+      }
+      await response.body?.cancel(); throw new AppError(response.status === 401 ? "AGENT_AUTH" : "CLOUD_REQUEST", response.status === 401 ? "设备凭据失效，请检查是否已撤销。" : "控制端尚未确认设备请求，请检查配置或稍后重连。", response.status); }
     return response;
   }
   /** JSON 数据限于协议消息，素材本体使用独立二进制分片请求。 */

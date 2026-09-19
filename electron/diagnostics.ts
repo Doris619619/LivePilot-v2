@@ -5,6 +5,7 @@ import path from "node:path";
 import { net } from "electron";
 import type { Check } from "../src/shared/desktop";
 import type { Settings } from "./settings";
+import { checkObsNetwork } from "./obs-network";
 /** 每项独立返回修复说明，失败不会清空其他已完成配置。 */
 export async function diagnose(settings: Settings, resources: string): Promise<Check[]> {
   const checks: Check[] = [{ id: "system", label: "Windows x64", status: process.platform === "win32" && process.arch === "x64" ? "ready" : "error", ...(process.platform !== "win32" || process.arch !== "x64" ? { message: "此安装版需要 Windows x64。" } : {}) }];
@@ -17,5 +18,6 @@ export async function diagnose(settings: Settings, resources: string): Promise<C
   }
   try { const response = await net.fetch((settings.identity?.origin || "https://livenest.duckdns.org") + "/api/health", { redirect: "error", signal: AbortSignal.timeout(10_000) }); if (!response.ok) throw new Error(); await response.body?.cancel(); checks.push({ id: "cloud", label: "网页服务", status: "ready" }); }
   catch { checks.push({ id: "cloud", label: "网页服务", status: "error", message: "无法连接网页服务，请检查网络；离线帮助仍可使用。" }); }
+  checks.push(...await Promise.all(settings.instances.map(checkObsNetwork)));
   return checks;
 }

@@ -7,6 +7,7 @@ import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
 import { targetKey } from "@/shared/remote";
 import { api } from "./client-request";
+import UploadRecovery from "./upload-recovery";
 import { identify, transfer, uploadUrl } from "./upload-client";
 import {
   UploadIcon,
@@ -56,6 +57,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
 
     async function restore() {
       try {
+        createIntent.current = JSON.parse(localStorage.getItem(KEY + ".intent") || "null");
         const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
         if (saved?.id && saved.instanceId) {
           const next = await api<UploadStatus>(uploadUrl(saved));
@@ -138,6 +140,8 @@ export default function UploadPanel({ instances, channels, heading }: { instance
           };
         }
 
+        // 创建前持久化幂等身份；响应丢失或刷新后仍复用同一请求。
+        localStorage.setItem(KEY + ".intent", JSON.stringify(createIntent.current));
         current = await api<UploadStatus>("/api/uploads", {
           method: "POST",
           signal: controller.signal,
@@ -182,7 +186,12 @@ export default function UploadPanel({ instances, channels, heading }: { instance
     setError("");
     try {
       if (record) await api(uploadUrl(record), { method: "DELETE", headers: { "x-livepilot": "1" } });
-      localStorage.removeItem(KEY);
+      else if (createIntent.current) {
+        const destination = instances.find(i => targetKey(i) === createIntent.current!.target);
+        if (!destination) throw new Error("原上传目标暂不可用，请查询未结束的上传后处理。");
+        await api(uploadUrl({ id: createIntent.current.requestId, instanceId: destination.id, agentId: destination.agentId }), { method: "DELETE", headers: { "x-livepilot": "1" } });
+      }
+      localStorage.removeItem(KEY); localStorage.removeItem(KEY + ".intent"); createIntent.current = null;
       setRecord(undefined);
       setFile(undefined);
     } catch (e) {
@@ -278,6 +287,7 @@ export default function UploadPanel({ instances, channels, heading }: { instance
             </div>
           </form>
 
+          <UploadRecovery key={instanceId} agentId={instances.find(i => targetKey(i) === instanceId)?.agentId} instanceId={instances.find(i => targetKey(i) === instanceId)?.id || "main"} restore={remember} />
           {stage && <p style={{ marginTop: "10px", fontSize: "15px", color: "var(--accent-primary)" }}>{stage}</p>}
 
           {record && (

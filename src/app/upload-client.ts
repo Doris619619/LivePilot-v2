@@ -15,7 +15,7 @@ export async function identify(file: File, signal: AbortSignal) {
   return { fingerprint: await sha(new TextEncoder().encode(hashes.join("")).buffer), hashes };
 }
 /** API 路径包含实例，服务器再次核对记录归属。 */
-export function uploadUrl(record: UploadStatus, complete = false) { return "/api/uploads/" + record.id + (complete ? "/complete" : "") + "?instanceId=" + encodeURIComponent(record.instanceId) + (record.agentId ? "&agentId=" + encodeURIComponent(record.agentId) : ""); }
+export function uploadUrl(record: Pick<UploadStatus, "id" | "instanceId" | "agentId">, complete = false) { return "/api/uploads/" + record.id + (complete ? "/complete" : "") + "?instanceId=" + encodeURIComponent(record.instanceId) + (record.agentId ? "&agentId=" + encodeURIComponent(record.agentId) : ""); }
 /** 上传或续传；不重试控制命令，仅允许幂等分片重传。 */
 export async function transfer(file: File, record: UploadStatus, hashes: string[], signal: AbortSignal, update: (status: UploadStatus) => void) {
   let current = record;

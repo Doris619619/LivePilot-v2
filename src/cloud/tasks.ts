@@ -8,8 +8,9 @@ import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation"
 import type { CommandStatus } from "@/shared/types";
 import { requireTarget, agentStore } from "./agents";
 import { transaction } from "./store";
+import { reconcileUploads, uploadId, type MaintenanceState } from "./upload-activities";
 import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
-export type TaskRecord = Target & { id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number };
+export type TaskRecord = Target & { id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number; uploadStable?: boolean };
 type Queue = { records: TaskRecord[] };
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
 /** 控制和授权共享实例互斥，上传有独立任务并发。 */
@@ -33,9 +34,17 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     if (previous) { if (previous.fingerprint !== hash) throw new AppError("REQUEST", "请求标识已用于其他操作。", 409); await store.write("tasks.json", queue); return previous; }
     await requireTarget(target.agentId, target.instanceId, true);
     await assertAvailable(target.agentId);
+    if ("uploadId" in payload) {
+      const owner = queue.records.find(r => uploadId(r) === payload.uploadId && (r.kind === "upload-create" || (r.kind === "upload-status" && r.status === "succeeded")));
+      if (owner && (owner.actor !== actor || owner.instanceId !== target.instanceId)) throw new AppError("UPLOAD", "上传记录不存在或不属于当前账号和实例。", 404);
+    }
+    if (payload.kind === "upload-cancel" && !queue.records.some(r => uploadId(r) === payload.uploadId && r.actor === actor && r.instanceId === target.instanceId && (r.kind === "upload-create" || (r.kind === "upload-status" && r.status === "succeeded")))) throw new AppError("UPLOAD", "上传归属尚未确认，请先在原账号和目标实例查询上传。", 409);
+    if (payload.kind === "upload-cancel" && queue.records.some(r => uploadId(r) === payload.uploadId && r.kind !== "upload-status" && !terminal(r.status))) throw new AppError("BUSY", "该上传仍有执行中或待确认的任务，请先查询状态，确认后再取消。", 409);
     if (exclusive(payload.kind) && queue.records.some(r => r.instanceId === target.instanceId && exclusive(r.kind) && !terminal(r.status))) throw new AppError("BUSY", "该实例仍有未完成或待核对任务，请等待设备回报。", 409);
-    queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000);
+    const activities = (await store.read<MaintenanceState>("maintenance.json"))?.activities || {};
+    queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000 || !!activities["upload:" + uploadId(r)]);
     const record: TaskRecord = { ...target, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
+    if (payload.kind === "upload-status") record.uploadStable = !queue.records.some(r => uploadId(r) === payload.uploadId && r.kind !== "upload-status" && !terminal(r.status));
     await trackActivity(target.agentId, payload.kind, target.instanceId, "uploadId" in payload ? payload.uploadId : undefined);
     queue.records.push(record); await store.write("tasks.json", queue); return record;
   }, "tasks.lock");
@@ -47,7 +56,7 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
     const queue = await store.read<Queue>("tasks.json") || { records: [] }; queue.records.forEach(expire);
     const records = queue.records.filter(r => !terminal(r.status)).slice(0, 32);
     for (const r of records) if (r.status === "queued") { r.status = "delivering"; r.updatedAt = Date.now(); }
-    await store.write("tasks.json", queue);
+    await store.write("tasks.json", queue); await reconcileUploads(agentId, queue.records);
     return records.map(r => ({ protocol: PROTOCOL, id: r.id, agentId, instanceId: r.instanceId, actor: r.actor, expiresAt: r.expiresAt, payload: unseal<TaskPayload>(r.payload) }));
   }, "tasks.lock");
 }
@@ -61,13 +70,13 @@ function resultFor(record: TaskRecord, value: unknown) {
   }
   if (record.kind === "oauth-finish" || record.kind === "upload-cancel") return { ok: true };
   const result = uploadStatusSchema.parse(value);
-  if (result.instanceId !== record.instanceId) throw new AppError("INSTANCE", "设备上报了其他实例的上传。", 403);
+  if (result.instanceId !== record.instanceId || result.id !== uploadId(record)) throw new AppError("INSTANCE", "设备上报了其他实例的上传。", 403);
   return result;
 }
 /** 回报只能更新该设备的记录；终态不会被迟到的 accepted/running 覆盖。 */
 export async function reportTasks(agentId: string, reports: TaskReport[]) {
   const store = agentStore(agentId);
-  return transaction(store, async () => {
+  const result = await transaction(store, async () => {
     const queue = await store.read<Queue>("tasks.json") || { records: [] }; const acknowledged: string[] = [];
     for (const report of reports) {
       const record = queue.records.find(r => r.id === report.id); if (!record) { acknowledged.push(report.id); continue; }
@@ -82,8 +91,22 @@ export async function reportTasks(agentId: string, reports: TaskReport[]) {
       }
       if (terminal(record.status)) acknowledged.push(report.id);
     }
-    await store.write("tasks.json", queue); return acknowledged;
+    await store.write("tasks.json", queue); await reconcileUploads(agentId, queue.records); return acknowledged;
   }, "tasks.lock");
+  // 失败创建可能已落盘但响应丢失，使用旧协议 upload-status 对账，不能直接删除活动。
+  for (const report of reports.filter(r => ["failed", "interrupted"].includes(r.status))) {
+    const record = await readTask(agentId, report.id);
+    if (record?.kind === "upload-create" || record?.kind === "upload-finish" || record?.kind === "upload-cancel") {
+      const id = uploadId(record)!;
+      await enqueue({ agentId, instanceId: record.instanceId }, record.actor, { kind: "upload-status", uploadId: id }, reconciliationId(record.id)).catch(() => {});
+    }
+  }
+  return result;
+}
+/** 从原任务产生稳定的查询 ID，重复心跳不会不断新建对账任务。 */
+function reconciliationId(id: string) {
+  const h = createHash("sha256").update("upload-reconcile:" + id).digest("hex");
+  return h.slice(0, 8) + "-" + h.slice(8, 12) + "-4" + h.slice(13, 16) + "-8" + h.slice(17, 20) + "-" + h.slice(20, 32);
 }
 /** 获取单个任务；同名任务在不同设备目录中完全隔离。 */
 export async function readTask(agentId: string, id: string) { const result = (await agentStore(agentId).read<Queue>("tasks.json"))?.records.find(r => r.id === id); if (result) expire(result); return result; }

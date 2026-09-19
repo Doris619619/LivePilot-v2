@@ -106,7 +106,7 @@ export async function createUpload(instanceId: string, actor: string, input: Inp
 /** 上传续传绑定创建人和实例；更换用户不能拼接另一人的上传。 */
 async function load(instanceId: string, actor: string, id: string) {
   const { root, temp } = await location(instanceId);
-  const store = await recordStore(temp, id);
+  const store = await recordStore(temp, id).catch(e => { if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new AppError("UPLOAD", "上传记录不存在。", 404); throw e; });
   const record = await store.read<UploadRecord>("upload.json");
   if (!record || record.actor !== actor || record.instanceId !== instanceId) throw new AppError("UPLOAD", "上传记录不存在或不属于当前账号。", 404);
   if (record.expiresAt < Date.now()) throw new AppError("UPLOAD", "上传记录已过期，请重新上传。", 410);
@@ -204,9 +204,19 @@ export async function finishUpload(instanceId: string, actor: string, id: string
 }
 /** 仅删除当前上传的自有临时文件；已发布素材不能通过此入口删除。 */
 export async function cancelUpload(instanceId: string, actor: string, id: string) {
-  const { store, record } = await load(instanceId, actor, id);
-  await store.exclusive(() => removeTemporary(store.dir), "upload.lock");
-  await audit(actor, "upload", instanceId, record.status === "complete" ? "dismissed" : "cancelled", id);
+  validId(id);
+  const { temp } = await location(instanceId);
+  // 根锁与创建互斥；已取消、未创建和过期上传均可再次取消，不碰已发布素材。
+  await new Store(temp).exclusive(async () => {
+    const folder = await recordStore(temp, id).catch(e => { if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; });
+    if (!folder) return;
+    const existing = await folder.read<UploadRecord>("upload.json");
+    if (existing && (existing.actor !== actor || existing.instanceId !== instanceId)) throw new AppError("UPLOAD", "上传不属于当前账号。", 404);
+    // 没有元数据的残留可能来自创建中断；未知文件保留，只有已验证归属的记录可清理。
+    if (!existing) return;
+    await folder.exclusive(() => removeTemporary(folder.dir), "upload.lock");
+    await audit(actor, "upload", instanceId, existing.status === "complete" ? "dismissed" : "cancelled", id);
+  }, "uploads.lock");
 }
 
 /** 完成校验失败时保留可行动错误，不向浏览器透出原始磁盘路径。 */
