@@ -15,7 +15,7 @@ import { isAppError, safeError } from "../src/core/errors";
 import { Activity } from "./activity";
 import { separateCandidates, acceptCandidate, archiveCandidate } from "./candidates";
 import { repairManagedObs } from "./obs-repair";
-const invitationSchema = z.object({ origin: z.literal(DESKTOP_ORIGIN), agentId: idSchema, code: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+import { pairDesktop } from "./pairing";
 export class Manager {
   settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
   readonly activity = new Activity();
@@ -78,17 +78,10 @@ export class Manager {
     await this.agent.rpc("instances", { token: this.settings.maintenance, instances: this.settings.instances.map(({ id, name }) => ({ id, name })) });
     await this.store.write(this.settings); await this.agent.stop(); this.activity.progress("正在等待旧连接结束（约 21 秒）"); await new Promise(r => setTimeout(r, 21_000)); await this.start();
   }
-  /** 邀请必须来自固定网站；恢复配对仍使用同一电脑身份，绝不覆盖旧授权。 */
+  /** 新邀请可恢复原电脑；只有云端确认结果且本机保存成功后才等待 Agent 上线。 */
   private async pair(invitation: unknown) {
-    if (typeof invitation !== "string" || invitation.length > 4096 || !invitation.trim().startsWith("LN1.")) throw new Error("请粘贴网页生成的完整配对信息。");
-    let value: z.infer<typeof invitationSchema>;
-    try { value = invitationSchema.parse(JSON.parse(Buffer.from(invitation.trim().slice(4), "base64url").toString("utf8"))); } catch { throw new Error("配对信息无效，或不属于 LiveNest 正式网站。"); }
-    if (this.settings.identity && this.settings.identity.agentId !== value.agentId) throw new Error("此邀请属于另一台设备。请在网页选择原电脑（设备 ID：" + this.settings.identity.agentId + "）生成恢复配对信息，原身份和授权已保留。");
-    this.settings.identity ||= { agentId: value.agentId, origin: value.origin, token: randomBytes(32).toString("hex") }; await this.store.write(this.settings);
-    let response: Response;
-    try { response = await net.fetch(value.origin + "/api/agent/pair", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ protocol: 1, agentId: value.agentId, code: value.code, token: this.settings.identity.token }), redirect: "error", signal: AbortSignal.timeout(20_000) }); } catch { throw new Error("无法连接网页服务，请检查网络后重试。配对身份已保留。"); }
-    if (!response.ok) { await response.body?.cancel(); throw new Error("配对未成功，请确认网页已升级，或重新生成原设备的配对信息。"); }
-    await response.body?.cancel(); this.settings.paired = true; await this.store.write(this.settings); await this.start();
+    await pairDesktop(this.settings, invitation, () => this.store.write(this.settings), (url, init) => net.fetch(url, init));
+    await this.start();
   }
   /** 全部写操作去重，失败保存配置并显示下一步提示。 */
   async act(action: DesktopAction, input: Record<string, unknown> = {}) {

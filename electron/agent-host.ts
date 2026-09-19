@@ -37,7 +37,7 @@ export class AgentHost {
       else if (this.child.pid) {
         try { process.kill(this.child.pid, 0); }
         catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw new Error("无法确认 Agent 进程状态，未重复启动。"); this.finish(this.child, "Agent 已退出。", true); }
-        if (this.child) { if (!this.child.connected) throw new Error("Agent 进程仍存在但通信已断开，请等待其退出后重试。"); return; }
+        if (this.child) { if (!this.child.connected) throw new Error("Agent 进程仍存在但通信已断开，请等待其退出后重试。"); this.message = ""; this.errorCode = undefined; return; }
       } else this.finish(this.child, "Agent 未成功启动。", true);
     }
     this.starting = this.launch(settings, resources, saveGoogle);
@@ -61,7 +61,7 @@ export class AgentHost {
         if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; this.errorCode = undefined; }
         if (value.type === "error") {
           this.lastHeartbeat = 0; this.errorCode = value.code;
-          this.message = value.code === "AGENT_AUTH" ? "配对已失效。请在网页恢复这台电脑，粘贴新的配对码后连接。" : value.code === "CLOUD_NETWORK" ? "网络连接失败，正在自动重试。请检查网络或系统代理，无需重新配对。" : value.message || "连接失败，请重试。";
+          this.message = value.code === "AGENT_AUTH" ? "配对已失效。请在网页生成新配对码，粘贴后连接。原配置会保留。" : value.code === "CLOUD_NETWORK" ? "网络连接失败，正在自动重试。请检查网络或系统代理，无需重新配对。" : value.message || "连接失败，请重试。";
         }
         if (value.type === "google" && value.google) try { await saveGoogle(value.google); } catch { this.message = "无法保存本机配置，请检查目录权限。"; }
         if (value.type === "reply" && value.id) { const reply = this.replies.get(value.id); if (reply) { clearTimeout(reply.timer); this.replies.delete(value.id); if (value.error) reply.reject(new Error(value.error)); else reply.resolve(value.result); } }

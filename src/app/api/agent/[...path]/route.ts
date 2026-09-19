@@ -40,8 +40,8 @@ export async function POST(request: Request, context: Context) {
   try {
     guardAgent(request); const route = (await context.params).path.join("/"); const raw = await readJson(request, 2 * 1024 * 1024);
     if (route === "pair") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), agentId: idSchema, code: z.string().length(64), token: z.string().length(64) }).strict().parse(raw);
-      return Response.json(await pairAgent(value.agentId, value.code, value.token));
+      const value = z.object({ protocol: z.literal(PROTOCOL), agentId: idSchema, code: z.string().length(64), token: z.string().length(64), currentAgentId: idSchema.optional() }).strict().parse(raw);
+      return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId));
     }
     const agent = await authenticateAgent(request, route !== "session");
     // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。

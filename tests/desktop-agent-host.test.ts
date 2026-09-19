@@ -71,7 +71,7 @@ it("surfaces connection failure promptly, invalidates stale heartbeats, and reco
 it("keeps pairing recovery separate from network advice and clears the classification on heartbeat", async () => {
   const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
   child.emit("message", { type: "error", code: "AGENT_AUTH", message: "设备凭据失效" });
-  expect(host.message).toContain("新的配对码"); expect(host.message).not.toContain("代理"); expect(host.errorCode).toBe("AGENT_AUTH");
+  expect(host.message).toContain("新配对码"); expect(host.message).not.toContain("代理"); expect(host.errorCode).toBe("AGENT_AUTH");
   child.emit("message", { type: "error", code: "CLOUD_NETWORK", message: "连接失败" });
   expect(host.message).toContain("无需重新配对"); expect(host.message).toContain("自动重试");
   child.emit("message", { type: "heartbeat", at: Date.now() });
@@ -81,4 +81,11 @@ it("preserves legacy Agent errors without inventing a network cause", async () =
   const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
   child.emit("message", { type: "error", message: "设备凭据失效，请检查是否已撤销。" });
   expect(host.message).toBe("设备凭据失效，请检查是否已撤销。"); expect(host.errorCode).toBeUndefined();
+});
+it("waits for a fresh outcome after successful re-pairing instead of failing on the cached authentication error", async () => {
+  vi.useFakeTimers(); const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
+  child.emit("message", { type: "error", code: "AGENT_AUTH", message: "旧认证失败" });
+  await host.start(settings, "fixture", async () => {}); const ready = host.ready();
+  await vi.advanceTimersByTimeAsync(1000); child.emit("message", { type: "heartbeat", at: Date.now() });
+  await vi.advanceTimersByTimeAsync(500); await ready; expect(spawn).toHaveBeenCalledTimes(1); expect(host.message).toBe("");
 });

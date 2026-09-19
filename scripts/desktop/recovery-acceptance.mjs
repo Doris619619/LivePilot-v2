@@ -55,7 +55,7 @@ try {
   assert.equal(await page.getByLabel("配对码", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "重新连接", exact: true }).count(), 0);
   await page.evaluate(() => { window.recoveryFixture.state.online = false; window.recoveryFixture.state.connectionError = "AGENT_AUTH"; });
-  await page.getByRole("button", { name: "打开网页，恢复这台电脑 ↗", exact: true }).waitFor();
+  await page.getByRole("button", { name: "打开网页，获取配对码 ↗", exact: true }).waitFor();
   await page.getByLabel("配对码", { exact: true }).fill("LN1.synthetic-recovery");
   await page.getByRole("button", { name: "连接", exact: true }).click();
   assert.equal(await page.getByLabel("配对码", { exact: true }).inputValue(), "");

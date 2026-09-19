@@ -51,13 +51,14 @@ it("migrates old uninitialized entries without changing registered IDs", () => {
   separateCandidates(settings); separateCandidates(settings);
   expect(settings.instances.map(i => i.id)).toEqual(["main"]); expect(settings.candidates?.map(i => i.id)).toEqual(["failed"]);
 });
-/** 恢复邀请仅允许同一设备；网络响应丢失重试也保留原始密钥。 */
-it("allows a paired PC to recover using the same identity and rejects another PC invitation", async () => {
+/** 新码交给云端验证原身份；错误目标与响应丢失都不能覆盖本机配置。 */
+it("redeems a fresh invitation for the existing identity and rejects a redirected identity", async () => {
   manager.settings.identity!.origin = "https://livenest.duckdns.org";
   const original = structuredClone(manager.settings);
   const invitation = (agentId: string) => "LN1." + Buffer.from(JSON.stringify({ origin: "https://livenest.duckdns.org", agentId, code: "e".repeat(64) })).toString("base64url");
-  await expect(manager.act("pair", { invitation: invitation("another") })).rejects.toThrow("另一台"); expect(f.fetch).not.toHaveBeenCalled();
-  f.fetch.mockRejectedValueOnce(new Error("network")); await expect(manager.act("pair", { invitation: invitation("test") })).rejects.toThrow("身份已保留");
-  f.fetch.mockResolvedValueOnce(new Response("{}")); await manager.act("pair", { invitation: invitation("test") });
-  expect(manager.settings).toEqual(original); expect(JSON.parse(f.fetch.mock.calls[1][1].body).token).toBe(original.identity!.token);
+  f.fetch.mockResolvedValueOnce(Response.json({ protocol: 1, agentId: "another" }));
+  await expect(manager.act("pair", { invitation: invitation("another") })).rejects.toThrow("未覆盖原身份"); expect(f.start).not.toHaveBeenCalled();
+  f.fetch.mockRejectedValueOnce(new Error("network")); await expect(manager.act("pair", { invitation: invitation("another") })).rejects.toThrow("原配置已保留");
+  f.fetch.mockResolvedValueOnce(Response.json({ protocol: 1, agentId: "test" })); await manager.act("pair", { invitation: invitation("another") });
+  expect(manager.settings).toEqual(original); expect(JSON.parse(f.fetch.mock.calls[2][1].body)).toMatchObject({ agentId: "another", currentAgentId: "test", token: original.identity!.token }); expect(f.start).toHaveBeenCalledOnce();
 });
