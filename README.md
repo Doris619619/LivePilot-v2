@@ -5,7 +5,7 @@
 
 **[下载 Windows x64 安装版](https://github.com/Doris619619/LiveNest-Releases/releases)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
-安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要另装 Node、Git 或 Docker。尚未出现公开版本时，以维护者提供的已验证安装器为准。
+安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要另装 Node、Git 或 Docker。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
 
 | 需要做什么 | 文档 |
 | --- | --- |
