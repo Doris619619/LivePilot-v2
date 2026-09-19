@@ -7,6 +7,8 @@
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要另装 Node、Git 或 Docker。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
 
+开发分支补充 OBS 实例识别及步骤内进度、失败原因和重试反馈；尚未发布到 0.1.0，详见[本次验证记录](docs/desktop/OBS准备反馈修复.md)。
+
 | 需要做什么 | 文档 |
 | --- | --- |
 | 安装、登录、配置 OBS、配对、网页操作和故障恢复 | [桌面配置与网页协作](docs/桌面配置与网页协作.md) |

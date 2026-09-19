@@ -31,12 +31,14 @@ export class LocalObsRuntime implements ObsRuntime {
   async ensureReady() {
     await this.processManager.ensureRunning();
     const deadline = Date.now() + 60_000;
+    let reason = "尚未收到 OBS 响应";
     do {
       const status = await this.status();
       if (status.ready) return;
+      reason = status.message || reason;
       await sleep(1500);
     } while (Date.now() < deadline);
-    throw new AppError("OBS_READY", "OBS 已尝试启动，但 WebSocket 在 60 秒内未就绪。请完成 OBS 首次设置、启用 WebSocket 并检查密码。");
+    throw new AppError("OBS_READY", "OBS 连接检查超时。最后检查结果：" + reason + "。请查看 OBS 窗口或配置图解，处理后重试。");
   }
   async validate() { await this.controller.validate(); }
   async setMedia(video: string, music: string, audio: boolean) { await this.controller.configureMedia(video, music, audio); }
