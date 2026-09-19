@@ -20,7 +20,7 @@
 
 ## 验证
 
-- `npm.cmd run verify`：类型、ESLint、147 项测试、8 项部署测试、网页构建及 Agent 构建通过。
+- `npm.cmd run verify`：类型、ESLint、149 项测试、8 项部署测试、网页构建及 Agent 构建通过。
 - Windows 原生测试用两份专用临时 Node 程序模拟进程：区分不同 exe、识别目录 junction 和 Windows 短路径启动、拒绝同 exe 重复进程。测试不控制真实 OBS，结束清理自己的进程与临时目录。
 - `npm.cmd run desktop:renderer`、`npm.cmd run desktop:compile`：静态桌面页面和宿主构建通过。
 - `node scripts/desktop/feedback-acceptance.mjs`：Edge 无头浏览器、示例桥接状态；阶段和计时、按钮禁用、切页、表单保留、就地错误、重新登录恢复、800px 无横向溢出、重试与完成通过。
@@ -46,3 +46,11 @@ Windows CI 首轮发现原生镜像路径比较遗漏短路径形式；补充通
 ![设置页](screenshots/settings.png)
 
 ![设置页窄窗口](screenshots/settings-narrow.png)
+
+## 主界面更新入口示例
+
+参考 Threadline：仅发现版本后出现标题栏小入口，点击才打开详情；下载完成不自动展开或安装。设置页与浮层共用动作，保留原有宿主维护保护。浏览器示例验证显隐、Escape 返回焦点、外部点击关闭、下载进度、完成后保持收起、错误重试及窄窗口位置。
+
+![主界面更新入口](screenshots/update-entry.png)
+
+![窄窗口更新详情](screenshots/update-details-narrow.png)

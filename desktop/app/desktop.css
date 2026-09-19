@@ -45,3 +45,12 @@
 .settings-version .setup-state { white-space: normal; }
 .settings-row > .switch-btn { flex-shrink: 0; }
 @media(max-width: 900px) { .settings-row { flex-wrap: wrap; gap: 16px; } .settings-row .settings-actions { margin-left: auto; } .settings-value { flex: 1 1 240px; } }
+
+.desktop-update-entry { min-height: 28px; padding: 3px 8px; gap: 5px; border: 0; background: transparent; color: var(--accent-primary); font-size: 13px; white-space: nowrap; }
+.desktop-update-entry svg { width: 14px; height: 14px; }
+.desktop-update-panel { position: fixed; z-index: 100; width: min(280px, calc(100vw - 24px)); max-height: calc(100dvh - 96px); overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-base, #fff); box-shadow: 0 8px 24px rgb(20 35 60 / 12%); }
+.desktop-update-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.desktop-update-heading strong { font-size: 16px; font-weight: 500; }
+.desktop-update-heading button { min-height: 32px; min-width: 32px; padding: 2px; font-size: 22px; }
+.desktop-update-panel p { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.desktop-update-panel progress { width: 100%; accent-color: var(--accent-primary); }

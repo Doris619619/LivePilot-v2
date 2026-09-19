@@ -26,7 +26,7 @@ try {
     const state = { version: "PR 示例", dataRoot: "C:/LiveNest", paired: false, agentRunning: false, online: false, autoStart: false, busy: false, instances: [{ id: "main", name: "主 OBS", initialized: false, managed: true, port: 4457, exe: "C:/LiveNest/obs/main/bin/64bit/obs64.exe" }], checks: ["Windows x64", "数据目录", "磁盘空间", "内置 Node 与 Agent", "Agent 程序", "内置 OBS", "网页服务"].map((label, id) => ({ id: String(id), label, status: "ready" })), snapshots: [], update: { status: "idle" } };
     let finish; window.feedbackTest = { state, calls: 0, settingsActions: [], fail() { state.busy = false; state.activity.status = "failed"; state.activity.message = "OBS 连接检查超时。最后检查结果：端口不属于指定 OBS。请查看 OBS 窗口或配置图解，处理后重试。"; state.message = state.activity.message; finish?.(); }, complete() { state.busy = false; state.activity.status = "complete"; state.message = ""; state.instances[0].initialized = true; finish?.(); } };
     window.liveNest = { session: async () => ({ authenticated: true }), logout: async () => {}, login: async () => ({ ok: true }), state: async () => structuredClone(state), act: async (action, input) => {
-      if (["autostart", "open-data", "update-download", "update-install"].includes(action)) { window.feedbackTest.settingsActions.push(action); if (action === "autostart") state.autoStart = input.enabled; if (action === "update-download") state.update = { status: "downloading", percent: 32, message: "正在下载" }; if (action === "update-install") state.update = { status: "installing", message: "正在安装更新" }; return structuredClone(state); }
+      if (["autostart", "open-data", "update-download", "update-install"].includes(action)) { window.feedbackTest.settingsActions.push(action); if (action === "autostart") state.autoStart = input.enabled; if (action === "update-download") state.update = { ...state.update, status: "downloading", percent: 32, message: "正在下载" }; if (action === "update-install") state.update = { ...state.update, status: "installing", message: "正在安装更新" }; return structuredClone(state); }
       if (action === "web") return structuredClone(state);
       window.feedbackTest.calls++; state.busy = true; state.message = ""; state.activity = { action, step: 2, status: "running", stage: "主 OBS · 正在启动 OBS 并检查端口 4457（连接检查最多约 60 秒）", startedAt: Date.now() - 65_000 };
       await new Promise(resolve => { finish = resolve; });
@@ -83,5 +83,33 @@ try {
   await page.getByRole("button", { name: "重启更新", exact: true }).click();
   assert.deepEqual(await page.evaluate(() => window.feedbackTest.settingsActions), ["autostart", "open-data", "update-download", "update-install"]);
   assert.deepEqual(errors, []);
-  console.log("PASS: progress, elapsed time, duplicate prevention, navigation, preserved input, inline failure, relogin, narrow layout, retry, completion, settings keyboard switch, folder action, narrow/long paths and update states (example data)");
+  await page.getByRole("button", { name: "设备配置", exact: true }).click();
+  await page.evaluate(() => { window.feedbackTest.state.update = { status: "available", version: "0.1.1", message: "发现新版本 0.1.1" }; });
+  const trigger = page.getByRole("button", { name: "软件更新：更新", exact: true });
+  await trigger.waitFor(); assert.equal(await page.getByRole("region", { name: "软件更新详情" }).count(), 0);
+  await page.evaluate(() => { window.feedbackTest.state.update = { status: "error", message: "后台检查未成功" }; });
+  await trigger.waitFor({ state: "hidden" }); assert.equal(await page.getByRole("region", { name: "软件更新详情" }).count(), 0);
+  await page.evaluate(() => { window.feedbackTest.state.update = { status: "available", version: "0.1.1", message: "发现新版本 0.1.1" }; });
+  await trigger.waitFor();
+  await page.setViewportSize({ width: 1280, height: 880 });
+  await page.screenshot({ path: path.join(output, "update-entry.png"), fullPage: false });
+  await trigger.click(); const details = page.getByRole("region", { name: "软件更新详情" }); await details.waitFor();
+  await page.keyboard.press("Escape"); assert.equal(await details.count(), 0); assert.equal(await trigger.evaluate(button => document.activeElement === button), true);
+  await trigger.click(); await page.getByRole("heading", { name: "设备配置", exact: true }).click(); assert.equal(await details.count(), 0);
+  await trigger.click(); await details.getByRole("button", { name: "下载更新", exact: true }).click();
+  await page.getByRole("button", { name: "软件更新：下载中", exact: true }).waitFor();
+  assert.equal(await details.getByRole("progressbar", { name: "更新下载进度" }).getAttribute("value"), "32");
+  await details.getByRole("button", { name: "关闭更新详情", exact: true }).click();
+  const installs = await page.evaluate(() => window.feedbackTest.settingsActions.filter(action => action === "update-install").length);
+  await page.evaluate(() => { window.feedbackTest.state.update = { status: "downloaded", version: "0.1.1", message: "下载完成，可以重启更新" }; });
+  const restart = page.getByRole("button", { name: "软件更新：重启更新", exact: true }); await restart.waitFor();
+  assert.equal(await details.count(), 0); assert.equal(await page.evaluate(() => window.feedbackTest.settingsActions.filter(action => action === "update-install").length), installs);
+  await page.setViewportSize({ width: 800, height: 750 }); await restart.click(); await details.waitFor();
+  const bounds = await details.boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 800);
+  await page.screenshot({ path: path.join(output, "update-details-narrow.png"), fullPage: false });
+  await page.evaluate(() => { window.feedbackTest.state.update = { status: "error", version: "0.1.1", message: "下载未完成，请重新检查更新。" }; });
+  await details.getByRole("button", { name: "检查更新", exact: true }).waitFor(); await trigger.waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  assert.deepEqual(errors, []);
+  console.log("PASS: progress, elapsed time, duplicate prevention, navigation, preserved input, inline failure, relogin, narrow layout, retry, completion, settings keyboard switch, folder action, narrow/long paths, header update entry, popup dismissal, download progress, no automatic restart and failure retry (example data)");
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }
