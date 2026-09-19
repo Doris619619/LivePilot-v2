@@ -51,14 +51,21 @@ try {
   assert.equal(await page.getByRole("button", { name: "修复连接（先关闭 OBS）", exact: true }).count(), 1);
   assert.deepEqual(await page.evaluate(() => window.recoveryFixture.calls.map(c => c.action)), ["prepare", "discard"]);
   await page.getByRole("button", { name: "设备配置", exact: true }).click();
-  await page.getByText(/无需预装 OBS/).waitFor(); await page.getByText("重新配对", { exact: true }).click();
-  await page.getByLabel("恢复配对信息", { exact: true }).fill("LN1.synthetic-recovery");
-  await page.getByRole("button", { name: "恢复配对并连接", exact: true }).click();
-  assert.equal(await page.getByLabel("恢复配对信息", { exact: true }).inputValue(), "");
+  await page.getByText(/无需预装 OBS/).waitFor();
+  assert.equal(await page.getByLabel("配对码", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "重新连接", exact: true }).count(), 0);
+  await page.evaluate(() => { window.recoveryFixture.state.online = false; window.recoveryFixture.state.connectionError = "AGENT_AUTH"; });
+  await page.getByRole("button", { name: "打开网页，恢复这台电脑 ↗", exact: true }).waitFor();
+  await page.getByLabel("配对码", { exact: true }).fill("LN1.synthetic-recovery");
+  await page.getByRole("button", { name: "连接", exact: true }).click();
+  assert.equal(await page.getByLabel("配对码", { exact: true }).inputValue(), "");
   assert.deepEqual(await page.evaluate(() => window.recoveryFixture.calls.at(-1)), { action: "pair", input: { invitation: "LN1.synthetic-recovery" } });
   await page.screenshot({ path: path.join(output, "device-repairing.png") });
+  await page.evaluate(() => { window.recoveryFixture.state.connectionError = undefined; });
   await page.getByRole("button", { name: "重新连接", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "网络连接失败" }).waitFor();
+  await page.getByText("连接未完成", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("alert").filter({ hasText: "正在连接网页" }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "重试", exact: true }).isEnabled(), true);
   await page.evaluate(() => { window.recoveryFixture.state.online = true; window.recoveryFixture.state.maintenance = true; });
   await page.getByText("设备维护尚未确认结束，原配置已保留。").waitFor();
@@ -66,5 +73,12 @@ try {
   await page.evaluate(() => { window.recoveryFixture.state.maintenance = false; });
   await page.getByRole("alert").filter({ hasText: "网络连接失败" }).waitFor({ state: "hidden" });
   await page.getByText("本机已连接网页工作台", { exact: true }).waitFor();
+  assert.equal(await page.getByLabel("配对码", { exact: true }).count(), 0);
+  // 自动启动也会产生失败活动；没有手动点击时仍应随新鲜心跳恢复。
+  await page.reload();
+  await page.evaluate(() => { Object.assign(window.recoveryFixture.state, { online: false, message: "启动时网络失败", activity: { action: "start", step: 3, status: "failed", stage: "正在连接网页", message: "启动时网络失败", startedAt: Date.now() } }); });
+  await page.getByRole("alert").filter({ hasText: "启动时网络失败" }).waitFor();
+  await page.evaluate(() => { window.recoveryFixture.state.online = true; });
+  await page.getByRole("alert").filter({ hasText: "启动时网络失败" }).waitFor({ state: "hidden" });
   assert.deepEqual(errors, []); console.log("Recovery UI passed: pending, duplicate prevention, retry, archive, old instance, 800px layout and network failure/recovery with maintenance guard (synthetic state).");
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

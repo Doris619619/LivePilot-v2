@@ -133,7 +133,7 @@ export default function InstanceConsole({ instance, onChannelChange }: { instanc
       </div>
 
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? `状态已过期：${error}；实际推流状态未知，已有直播可能仍在继续。` : error || data?.state.error}</span></div>}
+      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? (error?.includes("实际推流状态未知") ? error : `${error || "设备状态已过期"}；实际推流状态未知，已有直播可能仍在继续。`) : error || data?.state.error}</span></div>}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 

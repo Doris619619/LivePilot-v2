@@ -25,11 +25,11 @@ export class Manager {
   /** 启动只连接 Agent，不启动推流，失败留在可恢复界面。 */
   async init() {
     this.settings = await this.store.read(); separateCandidates(this.settings); await this.store.write(this.settings); this.busy = true;
-    void (async () => { try { this.checks = await diagnose(this.settings, this.resources); if (this.settings.paired) await this.start(); } catch (e) { this.message = this.error(e); } finally { this.busy = false; } })();
+    void (async () => { try { this.checks = await diagnose(this.settings, this.resources); if (this.settings.paired) { this.activity.begin("start"); await this.start(); this.activity.complete(); } } catch (e) { this.message = this.error(e); this.activity.fail(this.message); } finally { this.busy = false; } })();
   }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
-    return { activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
+    return { activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
   }
   /** 核心错误已过滤敏感字段，未知第三方异常使用固定提示。 */
   private error(e: unknown) { return isAppError(e) ? safeError(e) : e instanceof z.ZodError ? "输入无效，请检查填写内容。" : e instanceof Error ? e.message : "操作未完成，请查看帮助并重试。"; }

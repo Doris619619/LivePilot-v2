@@ -59,7 +59,8 @@ export default function Console() {
     return () => { clearInterval(timer); abort.abort(); };
   }, [refreshKey]);
 
-  const devices = agents?.filter(a => !a.revoked);
+  // 未完成的邀请留在配对入口，不冒充另一台已接入的电脑。
+  const devices = agents?.filter(a => !a.revoked && a.paired !== false);
 
   return (
     <div className="workspace-shell">
@@ -84,7 +85,7 @@ export default function Console() {
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
         {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
         {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
-        {loaded && !instances.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接你的第一台直播电脑</h2><p>在直播电脑上启动已配对的 Agent，<br />实例上线后会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
+        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接直播电脑</h2><p>点击“添加直播电脑”，复制配对码到 LiveNest。<br />连接后，直播实例会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
         {devices ? devices.map(agent => {
           const agentInstances = instances.filter(i => i.agentId === agent.id);
           return (

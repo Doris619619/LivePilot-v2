@@ -10,7 +10,7 @@ import { Executor } from "./executor";
 import { Worker } from "./worker";
 import { Transport } from "./transport";
 export type Identity = { agentId: string; origin: string; token: string };
-export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; error?(message: string): void };
+export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; error?(message: string, code?: string): void };
 /** 保留既有会话、心跳、去重与完整业务执行语义；桌面只获得受限状态回报。 */
 export async function runAgent(identity: Identity, hooks: AgentHooks) {
   if (identity.origin !== config().origin) throw new AppError("CONFIG", "控制端地址与配对记录不一致。");
@@ -20,7 +20,7 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
   const readers = instanceDescriptors().map(async instance => { while (!hooks.stopped()) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); hooks.snapshots?.([...snapshots.values()]); } catch { /* 旧快照保留时间，不能伪装新鲜。 */ } await sleep(HEARTBEAT_MS); } });
   const heartbeat = (async () => { while (!hooks.stopped()) {
     if (connected) try { const result = await transport.post<{ acknowledged: string[] }>("/api/agent/heartbeat", { protocol: PROTOCOL, snapshots: [...snapshots.values()], reports: await worker.reports() }); await worker.acknowledge(result.acknowledged); hooks.heartbeat?.(); }
-    catch (error) { if (error instanceof AppError && [401, 409].includes(error.status)) connected = false; hooks.error?.(safeError(error)); }
+    catch (error) { if (error instanceof AppError && [401, 409].includes(error.status)) connected = false; hooks.error?.(safeError(error), error instanceof AppError ? error.code : undefined); }
     await sleep(HEARTBEAT_MS);
   } })();
   let delay = 1000;
@@ -35,7 +35,7 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
       // 普通离线退出不依赖维护锁；逐条检查停止标志，已投递但未接收的任务留待云端核对。
       for (const raw of result.tasks) { if (hooks.stopped()) break; const task = taskSchema.parse(raw); if (task.agentId !== identity.agentId) throw new AppError("AGENT", "任务设备不匹配。", 403); await worker.receive(task); }
       delay = 1000; if (result.tasks.length) await sleep(500);
-    } catch (error) { connected = false; hooks.error?.(safeError(error)); await sleep(delay); delay = Math.min(30_000, delay * 2); }
+    } catch (error) { connected = false; hooks.error?.(safeError(error), error instanceof AppError ? error.code : undefined); await sleep(delay); delay = Math.min(30_000, delay * 2); }
   }
   await worker.drain(); await Promise.all([...readers, heartbeat]);
 }

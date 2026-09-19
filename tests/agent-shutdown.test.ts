@@ -8,6 +8,7 @@ vi.mock("@/agent/executor", () => ({ Executor: class { registerChannels = vi.fn(
 vi.mock("@/agent/worker", () => ({ Worker: class { receive = state.receive; drain = state.drain; reports = vi.fn().mockResolvedValue([]); acknowledge = vi.fn(); } }));
 vi.mock("@/agent/transport", () => ({ Transport: class { post = vi.fn().mockResolvedValue({ session: "fixture" }); request = state.poll; } }));
 import { runAgent } from "@/agent/runner";
+import { AppError } from "@/core/errors";
 /** 使用合法合成任务，绝不调用真实执行器或控制端。 */
 function task() { return { protocol: 1, id: randomUUID(), agentId: "fixture", instanceId: "main", actor: "test", expiresAt: Date.now() + 60_000, payload: { kind: "upload-status", uploadId: randomUUID() } }; }
 beforeEach(() => { vi.useFakeTimers(); vi.clearAllMocks(); state.stopped = false; state.drain.mockResolvedValue(undefined); });
@@ -24,4 +25,11 @@ it("ignores a late poll response after shutdown without treating it as completed
   const running = runAgent({ agentId: "fixture", origin: "https://example.invalid", token: "fixture" }, { stopped: () => state.stopped });
   await vi.advanceTimersByTimeAsync(10_000); await running;
   expect(state.receive).not.toHaveBeenCalled(); expect(state.drain).toHaveBeenCalledOnce();
+});
+it("reports trusted error codes for pairing recovery while keeping legacy one-argument hooks compatible", async () => {
+  state.poll.mockRejectedValue(new AppError("AGENT_AUTH", "设备凭据失效", 401));
+  const error = vi.fn(() => { state.stopped = true; });
+  const running = runAgent({ agentId: "fixture", origin: "https://example.invalid", token: "fixture" }, { stopped: () => state.stopped, error });
+  await vi.advanceTimersByTimeAsync(10_000); await running;
+  expect(error).toHaveBeenCalledWith("设备凭据失效", "AGENT_AUTH");
 });

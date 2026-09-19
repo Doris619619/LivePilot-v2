@@ -68,3 +68,17 @@ it("surfaces connection failure promptly, invalidates stale heartbeats, and reco
   await host.start(settings, "fixture", async () => {}); expect(spawn).toHaveBeenCalledTimes(1);
   child.emit("message", { type: "heartbeat", at: Date.now() }); await host.ready(); expect(host.message).toBe("");
 });
+it("keeps pairing recovery separate from network advice and clears the classification on heartbeat", async () => {
+  const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
+  child.emit("message", { type: "error", code: "AGENT_AUTH", message: "设备凭据失效" });
+  expect(host.message).toContain("新的配对码"); expect(host.message).not.toContain("代理"); expect(host.errorCode).toBe("AGENT_AUTH");
+  child.emit("message", { type: "error", code: "CLOUD_NETWORK", message: "连接失败" });
+  expect(host.message).toContain("无需重新配对"); expect(host.message).toContain("自动重试");
+  child.emit("message", { type: "heartbeat", at: Date.now() });
+  expect(host.errorCode).toBeUndefined(); expect(host.message).toBe("");
+});
+it("preserves legacy Agent errors without inventing a network cause", async () => {
+  const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
+  child.emit("message", { type: "error", message: "设备凭据失效，请检查是否已撤销。" });
+  expect(host.message).toBe("设备凭据失效，请检查是否已撤销。"); expect(host.errorCode).toBeUndefined();
+});

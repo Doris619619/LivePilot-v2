@@ -7,7 +7,7 @@ import type { AgentSnapshot } from "../src/shared/remote";
 import { environment, type Settings } from "./settings";
 import { agentEnvironment, type ProxyResolver } from "./agent-network";
 export class AgentHost {
-  child?: ChildProcess; snapshots: AgentSnapshot[] = []; lastHeartbeat = 0; message = "";
+  child?: ChildProcess; snapshots: AgentSnapshot[] = []; lastHeartbeat = 0; message = ""; errorCode?: string;
   private starting?: Promise<void>;
   /** 生产环境由 Electron 提供系统代理解析器，测试无需启动桌面会话。 */
   constructor(private readonly resolveProxy?: ProxyResolver) {}
@@ -24,7 +24,7 @@ export class AgentHost {
   /** error 不代表进程必然死亡；仅无 PID、确认退出或 close 时释放引用。 */
   private finish(child: ChildProcess, message: string, closed = false) {
     if (this.child !== child) return;
-    this.message = message; this.lastHeartbeat = 0;
+    this.message = message; this.lastHeartbeat = 0; this.errorCode = undefined;
     for (const r of this.replies.values()) { clearTimeout(r.timer); r.reject(new Error(message)); }
     this.replies.clear();
     if (closed || !child.pid || child.exitCode !== null || child.signalCode !== null) { this.child = undefined; this.snapshots = []; }
@@ -47,7 +47,7 @@ export class AgentHost {
   private async launch(settings: Settings, resources: string, saveGoogle: (google: { clientId: string; clientSecret: string }) => Promise<void>) {
     if (!settings.paired || !settings.identity) throw new Error("请先完成设备配对。");
     await this.recover(settings); await mkdir(path.join(settings.dataRoot, "logs"), { recursive: true });
-    this.lastHeartbeat = 0; this.message = "";
+    this.lastHeartbeat = 0; this.message = ""; this.errorCode = undefined;
     const env = await agentEnvironment(process.env, settings.identity.origin, this.resolveProxy);
     await new Promise<void>((resolve, reject) => {
       let child: ChildProcess;
@@ -56,10 +56,13 @@ export class AgentHost {
       this.child = child;
       child.on("message", async raw => {
         if (this.child !== child) return;
-        const value = raw as { type: string; snapshots?: AgentSnapshot[]; at?: number; message?: string; google?: { clientId: string; clientSecret: string }; id?: string; error?: string; result?: unknown };
+        const value = raw as { type: string; snapshots?: AgentSnapshot[]; at?: number; message?: string; code?: string; google?: { clientId: string; clientSecret: string }; id?: string; error?: string; result?: unknown };
         if (value.type === "snapshots") this.snapshots = value.snapshots || [];
-        if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; }
-        if (value.type === "error") { this.lastHeartbeat = 0; this.message = (value.message || "Agent 连接失败。") + " 客户端仍会自动重试。网络故障请检查系统代理，无需重新配对。"; }
+        if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; this.errorCode = undefined; }
+        if (value.type === "error") {
+          this.lastHeartbeat = 0; this.errorCode = value.code;
+          this.message = value.code === "AGENT_AUTH" ? "配对已失效。请在网页恢复这台电脑，粘贴新的配对码后连接。" : value.code === "CLOUD_NETWORK" ? "网络连接失败，正在自动重试。请检查网络或系统代理，无需重新配对。" : value.message || "连接失败，请重试。";
+        }
         if (value.type === "google" && value.google) try { await saveGoogle(value.google); } catch { this.message = "无法保存本机配置，请检查目录权限。"; }
         if (value.type === "reply" && value.id) { const reply = this.replies.get(value.id); if (reply) { clearTimeout(reply.timer); this.replies.delete(value.id); if (value.error) reply.reject(new Error(value.error)); else reply.resolve(value.result); } }
       });

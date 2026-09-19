@@ -28,7 +28,7 @@ process.on("message", async raw => {
       stopped: () => stopped,
       snapshots: snapshots => send({ type: "snapshots", snapshots }),
       heartbeat: () => send({ type: "heartbeat", at: Date.now() }),
-      error: message => { send({ type: "error", message }); },
+      error: (message, code) => { send({ type: "error", message, code }); },
       connected: async active => {
         // 与已有 Agent API 相同：Bearer、设备 ID、有效会话全部必需。
         const google = await active.post<{ clientId: string; clientSecret: string }>("/api/agent/bootstrap", {});

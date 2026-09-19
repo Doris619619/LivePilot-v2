@@ -5,7 +5,7 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
 const root = path.resolve("desktop/out");
-const output = path.resolve("docs/desktop/screenshots"); await mkdir(output, { recursive: true });
+const output = path.resolve(process.env.LIVENEST_TEST_SCREENSHOTS || "docs/desktop/screenshots"); await mkdir(output, { recursive: true });
 /** 仅托管构建输出，拒绝目录越界，不连接远程服务。 */
 const server = createServer(async (request, response) => {
   try {
@@ -36,7 +36,7 @@ try {
   });
   await page.goto("http://127.0.0.1:" + server.address().port);
   const obs = page.locator(".setup-row").filter({ has: page.getByRole("heading", { name: "准备 OBS", exact: true }) });
-  await page.getByPlaceholder("粘贴网页生成的配对信息").fill("保留用户尚未提交的内容");
+  await page.getByPlaceholder("粘贴网页复制的配对码").fill("保留用户尚未提交的内容");
   await page.getByRole("button", { name: "自动准备 OBS", exact: true }).click();
   await obs.getByText(/正在启动 OBS 并检查端口/).waitFor();
   assert.equal(await obs.getByRole("button", { name: "正在准备 OBS…", exact: true }).isDisabled(), true);
@@ -45,7 +45,7 @@ try {
   await page.getByRole("button", { name: "本机 OBS", exact: true }).click();
   await page.getByText(/正在启动 OBS 并检查端口/).waitFor();
   await page.getByRole("button", { name: "设备配置", exact: true }).click();
-  assert.equal(await page.getByPlaceholder("粘贴网页生成的配对信息").inputValue(), "保留用户尚未提交的内容");
+  assert.equal(await page.getByPlaceholder("粘贴网页复制的配对码").inputValue(), "保留用户尚未提交的内容");
   await page.evaluate(() => window.feedbackTest.fail());
   await obs.getByRole("alert").getByText(/端口不属于指定 OBS/).waitFor();
   assert.equal(await page.locator(".banner.error").count(), 0);

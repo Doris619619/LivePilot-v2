@@ -5,7 +5,7 @@ export type DesktopInstance = { id: string; name: string; managed: boolean; exe:
 export type PublicInstance = Omit<DesktopInstance, "password">;
 export type DesktopState = {
   version: string; dataRoot: string; paired: boolean; agentId?: string; agentRunning: boolean;
-  online: boolean; autoStart: boolean; busy: boolean; message?: string; instances: PublicInstance[];
+  online: boolean; autoStart: boolean; busy: boolean; message?: string; connectionError?: string; instances: PublicInstance[];
   candidates?: PublicInstance[]; maintenance?: boolean; activity?: DesktopActivity; checks: Check[]; snapshots: import("./remote").AgentSnapshot[];
   update: { status: string; version?: string; percent?: number; message?: string };
 };
