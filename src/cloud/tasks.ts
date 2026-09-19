@@ -8,6 +8,7 @@ import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation"
 import type { CommandStatus } from "@/shared/types";
 import { requireTarget, agentStore } from "./agents";
 import { transaction } from "./store";
+import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
 export type TaskRecord = Target & { id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number };
 type Queue = { records: TaskRecord[] };
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
@@ -31,9 +32,11 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     const previous = queue.records.find(r => r.id === id);
     if (previous) { if (previous.fingerprint !== hash) throw new AppError("REQUEST", "请求标识已用于其他操作。", 409); await store.write("tasks.json", queue); return previous; }
     await requireTarget(target.agentId, target.instanceId, true);
+    await assertAvailable(target.agentId);
     if (exclusive(payload.kind) && queue.records.some(r => r.instanceId === target.instanceId && exclusive(r.kind) && !terminal(r.status))) throw new AppError("BUSY", "该实例仍有未完成或待核对任务，请等待设备回报。", 409);
     queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000);
     const record: TaskRecord = { ...target, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
+    await trackActivity(target.agentId, payload.kind, target.instanceId, "uploadId" in payload ? payload.uploadId : undefined);
     queue.records.push(record); await store.write("tasks.json", queue); return record;
   }, "tasks.lock");
 }
@@ -72,7 +75,10 @@ export async function reportTasks(agentId: string, reports: TaskReport[]) {
       if (!terminal(record.status)) {
         if (!(record.status === "running" && report.status === "accepted")) record.status = report.status;
         record.updatedAt = Date.now(); record.message = report.error; record.httpStatus = report.httpStatus;
-        if (report.status === "succeeded") record.result = seal(resultFor(record, report.result));
+        if (report.status === "succeeded") {
+          record.result = seal(resultFor(record, report.result)); const p = unseal<TaskPayload>(record.payload);
+          await finishActivity(agentId, p.kind, record.instanceId, "uploadId" in p ? p.uploadId : undefined);
+        }
       }
       if (terminal(record.status)) acknowledged.push(report.id);
     }

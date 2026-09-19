@@ -61,6 +61,10 @@ Stop：确认频道 → complete 并确认 → StopStream 并确认 inactive。c
 
 ## 未来接口与范围
 
+Windows 安装版由 `electron/` 主进程、`desktop/app` 静态页面和内置 Node Agent 组成。Renderer 登录之后仍只可调用白名单 IPC，远程网页从系统浏览器打开；设备配置使用 Windows 用户加密保存。桌面和网页共享 CSS、字体和基础图标。
+
+桌面通过现有 Agent 认证协议连接云端，新增加邀请创建/续期、严格会话认证的 Google 应用配置 bootstrap、维护锁与实例追加。维护与任务入队共用事务锁，直播、未知状态及未完成活动阻止重启；桌面只追加实例与修改显示名，保留旧 ID/频道映射。旧 CLI Agent 协议继续兼容。安装及发布细节见[桌面安装与发布](桌面安装与发布.md)。
+
 `ObsRuntime` 保留 status、ensureReady、validate、setMedia、setStream、startStream、stopStream 控制契约；OBS 仍由 Agent 内的 `LocalObsRuntime` 控制；远程边界是完整直播任务，不把每个 OBS 方法变成远程 RPC。
 
 当前支持多电脑 Agent；云端只中转有界素材上传分片，不转发直播音视频流。尚未实现 Start All / Stop All、批量媒体分发、调度或 FFmpeg Worker。

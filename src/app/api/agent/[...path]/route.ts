@@ -10,6 +10,7 @@ import { authenticateAgent, pairAgent, openSession, heartbeatAgent } from "@/clo
 import { pollTasks, reportTasks } from "@/cloud/tasks";
 import { claimChannel } from "@/cloud/bindings";
 import { downloadSlot } from "@/cloud/relay";
+import { beginMaintenance, changeMaintenance } from "@/cloud/maintenance";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -43,9 +44,25 @@ export async function POST(request: Request, context: Context) {
       return Response.json(await pairAgent(value.agentId, value.code, value.token));
     }
     const agent = await authenticateAgent(request, route !== "session");
+    // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。
+    if (route === "maintenance-begin") { const value = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(raw); return Response.json(await beginMaintenance(agent.id, value.token)); }
+    if (route === "maintenance-end" || route === "instances") {
+      const value = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64).optional() }).strict().parse(raw);
+      if ((route === "instances") !== !!value.instances || (value.instances && new Set(value.instances.map(i => i.id)).size !== value.instances.length)) throw new AppError("INPUT", "实例清单无效。");
+      return Response.json(await changeMaintenance(agent.id, value.token, value.instances));
+    }
+    // 桌面初始化沿用现有认证条件，不增加任何免会话路由。
+    // 用户要求的 Google 应用配置仅交给已配对且持有有效会话的 Agent，禁止缓存。
+    if (route === "bootstrap") {
+      z.object({}).strict().parse(raw); const c = config();
+      if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "云端尚未配置 Google 应用，请联系管理员。", 503);
+      return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64) }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
+      // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
+      if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       return Response.json(await openSession(agent.id, value.bootId, value.instances));
     }
     if (route === "heartbeat") {

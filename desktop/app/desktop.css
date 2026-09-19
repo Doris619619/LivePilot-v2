@@ -1,0 +1,31 @@
+/* 文件用途：桌面流程布局，颜色、字体与控件直接继承现有网站。 */
+.desktop-nav { border: 0; justify-content: start; width: 100%; font-size: 16px; background: transparent; }
+.desktop-nav.is-active { color: var(--accent-primary); background: var(--accent-subtle, #e9eef9); }
+.setup-list { display: flex; flex-direction: column; }
+.setup-row { display: grid; grid-template-columns: 32px minmax(0,1fr); gap: 16px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
+.setup-row .step-number { margin-top: 2px; }
+.setup-row h2 { font-size: 18px; font-weight: 500; margin: 0; }
+.setup-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.setup-content { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; align-items: start; }
+.setup-content > .field-group { width: 100%; max-width: 620px; }
+.setup-content textarea { width: 100%; min-height: 88px; padding: 12px; border: 1px solid var(--border-default); border-radius: 6px; resize: vertical; font: inherit; }
+.setup-state { font-size: 14px; color: var(--text-muted); background: var(--bg-subtle); border-radius: 4px; padding: 3px 8px; white-space: nowrap; }
+.setup-state.ready { color: var(--success-green); background: var(--success-green-subtle); }
+.setup-state.error { color: var(--error-rose); background: var(--error-rose-subtle); }
+.check-list { width: 100%; display: flex; flex-direction: column; gap: 8px; }
+.check-row { display: flex; gap: 16px; align-items: baseline; justify-content: space-between; }
+.check-message { margin: 4px 0 12px; color: var(--error-rose); font-size: 15px; }
+.desktop-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.desktop-instance { padding: 24px 0; border-bottom: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 16px; }
+.desktop-instance h2 { font-size: 18px; }
+.desktop-path { color: var(--text-muted); font-size: 14px; overflow-wrap: anywhere; }
+.desktop-help { display: grid; grid-template-columns: 200px minmax(0,1fr); gap: 32px; }
+.desktop-help nav { display: flex; flex-direction: column; gap: 8px; }
+.desktop-help article { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.desktop-help img { width: 100%; height: auto; border: 1px solid var(--border-subtle); }
+.desktop-help ol { padding-left: 24px; margin: 0; }
+.desktop-help li { margin: 10px 0; }
+.desktop-form { max-width: 680px; display: flex; flex-direction: column; gap: 20px; }
+.desktop-status { margin-top: auto; padding: 28px 16px 0; color: var(--text-muted); font-size: 14px; }
+@media(max-width: 900px) { .workspace-shell { grid-template-columns: 180px minmax(0,1fr); } .main-wrapper { padding: 24px; } .desktop-help { grid-template-columns: 1fr; } .desktop-help nav { flex-direction: row; flex-wrap: wrap; } .brand-tag { display: none; } }
+@media(prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

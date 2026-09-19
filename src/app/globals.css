@@ -40,6 +40,9 @@
   --radius-pill: 999px;
 }
 * { box-sizing: border-box; }
+.device-pairing { margin-top: 24px; }
+.pairing-panel { display: flex; flex-direction: column; gap: 16px; padding: 20px 0; }
+.pairing-panel textarea { width: 100%; font: inherit; border: 1px solid var(--border-default); border-radius: 6px; padding: 10px; overflow-wrap: anywhere; }
 body, h1, h2, h3, p { margin: 0; }
 html { scroll-padding-top: 90px; }
 body { background: var(--bg-app); color: var(--text-primary); font: 16px/1.6 var(--font-sans); -webkit-font-smoothing: antialiased; }

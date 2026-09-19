@@ -41,6 +41,27 @@ export async function pairAgent(id: string, code: string, token: string) {
     await store.write("agents.json", registry); return { protocol: PROTOCOL };
   });
 }
+/** 仅续期尚未认领的邀请，不替换已配对设备的凭据。 */
+export async function renewPairing(id: string) {
+  agentStore(id); const store = cloudStore(); const code = randomBytes(32).toString("hex");
+  await transaction(store, async () => {
+    const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
+    if (!agent || agent.revoked || agent.tokenHash) throw new AppError("AGENT_BOUND", "只能重新生成尚未使用的配对信息。", 409);
+    agent.pairingHash = digest(code); agent.pairingExpires = Date.now() + 600_000;
+    await store.write("agents.json", registry);
+  });
+  return { agentId: id, code, expiresInSeconds: 600 };
+}
+/** 仅供持有维护锁的设备扩大清单；不删除已有实例或迁移频道绑定。 */
+export async function extendInstances(id: string, instances: InstanceDescriptor[]) {
+  const store = cloudStore();
+  return transaction(store, async () => {
+    const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
+    if (!agent || agent.revoked) throw new AppError("AGENT_AUTH", "设备不存在。", 401);
+    if (!instances.some(i => i.id === "main") || agent.instances.some(old => !instances.some(i => i.id === old.id))) throw new AppError("INSTANCE", "新清单必须保留 main 和所有已有实例。", 409);
+    agent.instances = instances; await store.write("agents.json", registry); return { ok: true };
+  });
+}
 /** 设备认证不接受浏览器 Cookie，且逐次检查撤销。 */
 export async function authenticateAgent(request: Request, sessionRequired = true) {
   const id = request.headers.get("x-livepilot-agent") || ""; agentStore(id);
@@ -76,7 +97,8 @@ export async function listAgents(): Promise<AgentDescriptor[]> {
   const registry = await cloudStore().read<Registry>("agents.json") || { agents: [] };
   return Promise.all(registry.agents.map(async a => {
     const beat = await agentStore(a.id).read<Heartbeat>("heartbeat.json"); const lastSeen = beat && beat.session === a.session ? beat.at : 0;
-    return { id: a.id, name: a.name, revoked: a.revoked, online: !a.revoked && lastSeen > Date.now() - OFFLINE_MS, lastSeen, instances: a.instances };
+    const maintenance = !!(await agentStore(a.id).read<{ token?: string }>("maintenance.json"))?.token;
+    return { id: a.id, name: a.name, revoked: a.revoked, online: !a.revoked && lastSeen > Date.now() - OFFLINE_MS, lastSeen, instances: a.instances, paired: !!a.tokenHash, maintenance };
   }));
 }
 /** 目标实例必须属于设备，在线检查只影响新任务，不中断已接收任务。 */

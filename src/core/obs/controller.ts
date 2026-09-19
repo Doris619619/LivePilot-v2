@@ -9,6 +9,8 @@ export class ObsController {
   private socket = new OBSWebSocket();
   private connected = false;
   private connecting?: Promise<void>;
+  /** 结束配置检查后关闭连接，不停止 OBS 或推流。 */
+  async disconnect() { await this.socket.disconnect().catch(() => {}); this.connected = false; }
   /** 绑定实例配置及连接失效事件；每个控制器持有自己的 Socket。 */
   constructor(private readConfig = config, readonly instance: ObsInstance = standard) {
     this.socket.on("ConnectionClosed", () => { this.connected = false; });
