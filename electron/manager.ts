@@ -84,6 +84,7 @@ export class Manager {
       else if (action === "start") await this.start();
       else if (action === "repair") await this.repair(input);
       else if (["prepare", "add", "attach", "rename"].includes(action)) await this.configure(action, input);
+      else if (action === "open-data") { if (await shell.openPath(this.settings.dataRoot)) throw new Error("无法打开数据目录，请检查文件夹是否存在及访问权限。"); }
       else if (action === "directory") {
         if (this.settings.instances.length || this.settings.identity) throw new Error("配置 OBS 后不能直接更换数据目录。");
         const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); if (!result.canceled) { this.settings.dataRoot = path.join(result.filePaths[0], "LiveNest"); await this.store.write(this.settings); }

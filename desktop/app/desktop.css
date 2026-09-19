@@ -34,3 +34,14 @@
 .setup-feedback p { margin: 0 0 8px; }
 .setup-feedback.failed { border-color: var(--error-rose); background: var(--error-rose-subtle); color: var(--error-rose); }
 .setup-elapsed { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.desktop-settings { width: 100%; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px 0; border-bottom: 1px solid var(--border-subtle); }
+.settings-value { min-width: 0; }
+.settings-value h2 { margin: 0; font-size: 18px; font-weight: 500; line-height: 1.5; }
+.settings-path { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.settings-version { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; color: var(--text-secondary); font-size: 14px; }
+.settings-version .setup-state { white-space: normal; }
+.settings-row > .switch-btn { flex-shrink: 0; }
+@media(max-width: 900px) { .settings-row { flex-wrap: wrap; gap: 16px; } .settings-row .settings-actions { margin-left: auto; } .settings-value { flex: 1 1 240px; } }

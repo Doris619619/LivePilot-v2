@@ -9,7 +9,7 @@ export type DesktopState = {
   activity?: DesktopActivity; checks: Check[]; snapshots: import("./remote").AgentSnapshot[];
   update: { status: string; version?: string; percent?: number; message?: string };
 };
-export type DesktopAction = "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "directory" | "autostart" | "web" | "update-check" | "update-download" | "update-install";
+export type DesktopAction = "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "directory" | "open-data" | "autostart" | "web" | "update-check" | "update-download" | "update-install";
 export type DesktopBridge = { session(): Promise<{ authenticated: boolean }>; login(username: string, password: string): Promise<{ ok: boolean; message?: string }>; logout(): Promise<void>; state(): Promise<DesktopState>; act(action: DesktopAction, input?: Record<string, unknown>): Promise<DesktopState> };
 
 /** 后台操作反馈不含输入或凭据，切换页面和重新登录后仍可恢复。 */

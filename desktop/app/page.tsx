@@ -5,6 +5,7 @@ import { activityStep, type DesktopActivity, type DesktopAction, type DesktopBri
 import { DeviceIcon, VideoIcon, RefreshIcon } from "../../src/app/components/icons";
 import Help from "./help";
 import Login from "./login";
+import SettingsPanel from "./settings-panel";
 import SetupFeedback from "./setup-feedback";
 import ManualConnection from "./manual-connection";
 declare global { interface Window { liveNest?: DesktopBridge } }
@@ -68,6 +69,6 @@ function Desktop({ logout }: { logout: () => Promise<void> }) {
     </div>}
     {state && page === "本机 OBS" && <>{activity?.step === 2 && feedback()}<div className="desktop-actions"><button className="btn-primary" disabled={busy} onClick={() => void act("add")}>增加 OBS</button><button disabled={busy} onClick={() => setAttach(!attach)}>接入已有 OBS</button></div>{attach && <div className="desktop-form"><label>端口<input value={port} onChange={e => setPort(e.target.value)} /></label><label>WebSocket 密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label><button disabled={busy || !password} onClick={() => void act("attach", { port: Number(port), password })}>选择 obs64.exe 并检查</button><button className="btn-ghost" onClick={() => setPage("帮助")}>查看 OBS 配置图解</button></div>}{instances.map(i => <section className="desktop-instance" key={i.id}><div className="setup-title"><h2>{i.name}</h2><span className={"setup-state " + (i.initialized ? "ready" : "")}>{i.initialized ? "已配置" : "待配置"}</span></div><p className="desktop-path">{i.exe}</p><div className="desktop-actions"><span>端口 {i.port}</span><button disabled={busy} onClick={() => void act("prepare", { id: i.id })}>启动并检查</button><input aria-label={i.name + "名称"} defaultValue={i.name} maxLength={80} onBlur={e => { if (e.target.value.trim() && e.target.value !== i.name) void act("rename", { id: i.id, name: e.target.value }); }} /></div></section>)}</>}
     {page === "帮助" && <Help />}
-    {state && page === "设置" && <div className="desktop-form"><label className="desktop-actions"><input type="checkbox" checked={state.autoStart} onChange={e => void act("autostart", { enabled: e.target.checked })} />登录 Windows 后启动</label><div><h2>数据位置</h2><p className="desktop-path">{state.dataRoot}</p><button disabled={busy || !!instances.length} onClick={() => void act("directory")}>选择文件夹</button></div><div><h2>软件更新</h2><p>LiveNest {state.version}</p><p role="status">{state.update.message || state.update.status}{state.update.percent !== undefined ? " " + Math.round(state.update.percent) + "%" : ""}</p><div className="desktop-actions"><button disabled={busy} onClick={() => void act("update-check")}>检查更新</button>{state.update.status === "available" && <button onClick={() => void act("update-download")}>下载更新</button>}{state.update.status === "downloaded" && <button disabled={busy} onClick={() => void act("update-install")}>重启更新</button>}</div></div></div>}
+    {state && page === "设置" && <SettingsPanel state={state} busy={!!busy} act={act} />}
     </main></div></>;
 }
