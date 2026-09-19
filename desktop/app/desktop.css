@@ -29,3 +29,34 @@
 .desktop-status { margin-top: auto; padding: 28px 16px 0; color: var(--text-muted); font-size: 14px; }
 @media(max-width: 900px) { .workspace-shell { grid-template-columns: 180px minmax(0,1fr); } .main-wrapper { padding: 24px; } .desktop-help { grid-template-columns: 1fr; } .desktop-help nav { flex-direction: row; flex-wrap: wrap; } .brand-tag { display: none; } }
 @media(prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.setup-feedback { width: 100%; margin: 8px 0 16px; padding: 14px 16px; border-left: 3px solid var(--accent-primary); background: var(--bg-subtle); overflow-wrap: anywhere; }
+.setup-feedback p { margin: 0 0 8px; }
+.setup-feedback.failed { border-color: var(--error-rose); background: var(--error-rose-subtle); color: var(--error-rose); }
+.setup-elapsed { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+.desktop-settings { width: 100%; }
+.settings-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px 0; border-bottom: 1px solid var(--border-subtle); }
+.settings-value { min-width: 0; }
+.settings-value h2 { margin: 0; font-size: 18px; font-weight: 500; line-height: 1.5; }
+.settings-path { margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-actions { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
+.settings-version { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; color: var(--text-secondary); font-size: 14px; }
+.settings-version .setup-state { white-space: normal; }
+.settings-row > .switch-btn { flex-shrink: 0; }
+@media(max-width: 900px) { .settings-row { flex-wrap: wrap; gap: 16px; } .settings-row .settings-actions { margin-left: auto; } .settings-value { flex: 1 1 240px; } }
+
+.desktop-update-entry { min-height: 28px; padding: 3px 8px; gap: 5px; border: 0; background: transparent; color: var(--accent-primary); font-size: 13px; white-space: nowrap; }
+.desktop-update-entry svg { width: 14px; height: 14px; }
+.desktop-update-panel { position: fixed; z-index: 100; width: min(280px, calc(100vw - 24px)); max-height: calc(100dvh - 96px); overflow: auto; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--border-subtle); border-radius: 8px; background: var(--surface-base, #fff); box-shadow: 0 8px 24px rgb(20 35 60 / 12%); }
+.desktop-update-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.desktop-update-heading strong { font-size: 16px; font-weight: 500; }
+.desktop-update-heading button { min-height: 32px; min-width: 32px; padding: 2px; font-size: 22px; }
+.desktop-update-panel p { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.desktop-update-panel progress { width: 100%; accent-color: var(--accent-primary); }
+
+/* 顶部文字使用同一行框，避免更新入口、操作按钮与账号混用尺寸。 */
+.desktop-header-actions { flex-wrap: nowrap; gap: 12px; font-size: 15px; font-weight: 500; line-height: 24px; }
+.desktop-header-actions > button, .desktop-header-actions > span { display: inline-flex; align-items: center; height: 44px; min-height: 44px; font: inherit; line-height: 24px; white-space: nowrap; }
+.desktop-header-actions > button { padding-block: 9px; }
+.desktop-header-actions .desktop-update-entry svg { width: 16px; height: 16px; }

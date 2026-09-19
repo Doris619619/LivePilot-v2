@@ -14,17 +14,17 @@ export class Updates {
     autoUpdater.on("update-not-available", () => { this.state = { status: "idle", message: "已是最新版本" }; });
     autoUpdater.on("download-progress", p => { this.state = { ...this.state, status: "downloading", percent: p.percent, message: "正在下载" }; });
     autoUpdater.on("update-downloaded", info => { this.state = { status: "downloaded", version: info.version, message: "下载完成，可以重启更新" }; });
-    autoUpdater.on("error", () => { this.state = { status: "error", message: "更新请求失败，当前版本仍可使用。" }; });
+    autoUpdater.on("error", () => { this.state = { ...this.state, status: "error", message: "更新请求失败，当前版本仍可使用。" }; });
   }
   /** 焦点和唤醒补查最少间隔一小时，已发现版本不会被覆盖。 */
   async check(automatic = false) {
     if (!this.installed) { this.state = { status: "preview", message: "目录预览版不支持更新，请使用安装版。" }; return; }
     if (this.checking || ["available", "downloading", "downloaded", "installing"].includes(this.state.status) || (automatic && Date.now() - this.lastCheck < 3_600_000)) return;
-    this.checking = true; this.lastCheck = Date.now(); this.state = { status: "checking", message: "正在检查更新…" };
-    try { await autoUpdater.checkForUpdates(); } catch { this.state = { status: "error", message: "无法读取更新源，请检查网络后重试。" }; } finally { this.checking = false; }
+    this.checking = true; this.lastCheck = Date.now(); this.state = { ...this.state, status: "checking", message: "正在检查更新…" };
+    try { await autoUpdater.checkForUpdates(); } catch { this.state = { ...this.state, status: "error", message: "无法读取更新源，请检查网络后重试。" }; } finally { this.checking = false; }
   }
   /** 用户点击才下载，普通退出仍不安装。 */
-  async download() { if (this.state.status !== "available") return; this.state = { ...this.state, status: "downloading", percent: 0 }; try { await autoUpdater.downloadUpdate(); } catch { this.state = { status: "error", message: "下载未完成，请重新检查更新。" }; } }
+  async download() { if (this.state.status !== "available") return; this.state = { ...this.state, status: "downloading", percent: 0 }; try { await autoUpdater.downloadUpdate(); } catch { this.state = { ...this.state, status: "error", message: "下载未完成，请重新检查更新。" }; } }
   /** 用户确认后先申请维护及排空任务，再调用更新器标准退出生命周期。 */
   async install(prepare: () => Promise<void>, quit: () => void) {
     if (this.state.status !== "downloaded") return;

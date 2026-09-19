@@ -5,25 +5,17 @@ import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config";
 import { AppError } from "../errors";
+import { obsProcessQuery } from "./process-query";
 const exec = promisify(execFile);
 export type ProcessStatus = { pid: number | null; portPid: number | null };
 
-/** 两侧均解析真实路径，兼容 MSIX 文件重定向和目录链接；多个匹配进程仍拒绝操作。 */
-export async function matchingObsPid(output: string, target: string, resolvePath: (filename: string) => Promise<string> = realpath): Promise<number | null> {
-  let candidates: { pid: number; exe: string }[];
+/** 原生查询只返回已按内核文件路径匹配的 PID。 */
+export function matchingObsPid(output: string): number | null {
   try {
-    const value = JSON.parse(output) as { processes?: unknown };
-    if (!Array.isArray(value.processes) || value.processes.some(p => !p || !Number.isSafeInteger(p.pid) || p.pid <= 0 || typeof p.exe !== "string" || !p.exe)) throw new Error();
-    candidates = value.processes;
+    const value = JSON.parse(output) as { pid?: unknown };
+    if (value.pid !== null && (!Number.isSafeInteger(value.pid) || Number(value.pid) <= 0)) throw new Error();
+    return value.pid as number | null;
   } catch { throw new AppError("OBS_PROCESS", "Windows 返回的 OBS 进程状态无效，已停止启动操作。"); }
-  const matched: number[] = [];
-  for (const candidate of candidates) {
-    // 无法读取其他用户的程序路径时不认领该进程；监听归属检查仍会阻止抢占端口。
-    const actual = await resolvePath(candidate.exe).catch(() => undefined);
-    if (actual?.toLowerCase() === target.toLowerCase()) matched.push(candidate.pid);
-  }
-  if (matched.length > 1) throw new AppError("OBS_PROCESS", "指定 OBS 存在多个进程，请关闭重复实例后重试。");
-  return matched[0] ?? null;
 }
 
 /** 解析 netstat 数字输出中的目标监听 PID；不接受远端端口或 ESTABLISHED 连接。 */
@@ -44,7 +36,7 @@ export function listenerPid(output: string, port: number): number | null {
 export class ObsProcessManager {
   /** 注入所属实例的配置，所有检查和启动只针对该 exe。 */
   constructor(private readConfig = config) {}
-  /** 进程查询只使用 Win32_Process；端口使用 netstat，避免 Get-NetTCPConnection 超时。 */
+  /** 进程使用内核文件身份；端口使用 netstat，避免逻辑路径别名误认领。 */
   async inspect(): Promise<ProcessStatus> {
     const c = this.readConfig();
     if (process.platform !== "win32") throw new AppError("OBS_PROCESS", "OBS 启动器仅支持 Windows。");
@@ -52,13 +44,10 @@ export class ObsProcessManager {
     let exe: string;
     try { exe = await realpath(c.obsExe); }
     catch { throw new AppError("OBS_PATH", "找不到指定的 obs64.exe，请检查该实例的 OBS_EXE 路径与文件权限。"); }
-    const script = `$ErrorActionPreference='Stop'
-$candidates=@(Get-CimInstance Win32_Process -Filter "Name = 'obs64.exe'" | Where-Object { $_.ExecutablePath } | ForEach-Object { @{pid=[int]$_.ProcessId;exe=$_.ExecutablePath} })
-@{processes=$candidates}|ConvertTo-Json -Compress`;
     let processOutput: string; let networkOutput: string;
     try {
       const [processResult, networkResult] = await Promise.all([
-        exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 15_000 }),
+        exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", obsProcessQuery], { windowsHide: true, timeout: 15_000, env: { ...process.env, LIVEPILOT_TARGET_EXE: exe } }),
         exec("netstat.exe", ["-ano", "-p", "tcp"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }),
       ]);
       processOutput = processResult.stdout; networkOutput = networkResult.stdout;
@@ -66,7 +55,7 @@ $candidates=@(Get-CimInstance Win32_Process -Filter "Name = 'obs64.exe'" | Where
       if ((error as { killed?: boolean }).killed) throw new AppError("OBS_INSPECT_TIMEOUT", "Windows 进程或端口查询超时，尚未执行 OBS 启动。请稍后重试并检查系统负载。");
       throw new AppError("OBS_PROCESS", "无法检查指定 OBS。请确认只有一个该实例，并允许读取进程与端口信息。");
     }
-    const pid = await matchingObsPid(processOutput.trim(), exe);
+    const pid = matchingObsPid(processOutput.trim());
     return { pid, portPid: listenerPid(networkOutput, c.wsPort) };
   }
   /** 已运行则复用，端口属于其他进程时拒绝启动；启动程序与开始推流是不同操作。 */
