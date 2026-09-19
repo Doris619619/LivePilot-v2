@@ -1,6 +1,6 @@
 /** Agent 故障回归：spawn 失败、IPC 断开、迟到 close 与并发重试不产生重复进程。 */
 import { EventEmitter } from "node:events";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { spawn } from "node:child_process";
 import { AgentHost } from "../electron/agent-host";
 import type { Settings } from "../electron/settings";
@@ -13,6 +13,7 @@ class Child extends EventEmitter {
 }
 const settings = { dataRoot: "fixture", paired: true, identity: { agentId: "test", token: "fixture", origin: "https://example.invalid" }, instances: [], encryptionKey: "a".repeat(64) } satisfies Settings;
 let child: Child;
+afterEach(() => { vi.unstubAllEnvs(); vi.useRealTimers(); });
 /** 仅模拟子进程事件，不启动用户 Agent 或接触身份配置。 */
 beforeEach(() => { vi.clearAllMocks(); child = new Child(); vi.mocked(spawn).mockImplementation(() => { queueMicrotask(() => child.emit("spawn")); return child as never; }); });
 it("clears a failed spawn even when Windows emits close without exit, then retries", async () => {
@@ -43,4 +44,27 @@ it("settles stop on close and handles synchronous spawn errors", async () => {
   const host = new AgentHost(); vi.mocked(spawn).mockImplementationOnce(() => { throw new Error("spawn"); });
   await expect(host.start(settings, "fixture", async () => {})).rejects.toThrow("启动失败");
   await host.start(settings, "fixture", async () => {}); const stopped = host.stop(); child.emit("close"); await stopped;
+});
+it("passes the resolved system proxy to the spawned Node process", async () => {
+  vi.stubEnv("HTTPS_PROXY", ""); vi.stubEnv("https_proxy", "");
+  const resolve = vi.fn().mockResolvedValue("PROXY 127.0.0.1:7890");
+  const host = new AgentHost(resolve); await host.start(settings, "fixture", async () => {});
+  expect(resolve).toHaveBeenCalledWith(settings.identity.origin);
+  const options = vi.mocked(spawn).mock.calls[0][2]; expect(options?.env?.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
+  expect(vi.mocked(spawn).mock.calls[0][1]).toContain("--use-env-proxy");
+});
+it("does not spawn when proxy resolution fails and permits corrected retry", async () => {
+  vi.stubEnv("HTTPS_PROXY", ""); vi.stubEnv("https_proxy", "");
+  const resolve = vi.fn().mockRejectedValueOnce(new Error("secret")).mockResolvedValue("DIRECT"); const host = new AgentHost(resolve);
+  await expect(host.start(settings, "fixture", async () => {})).rejects.toThrow("无法读取系统代理"); expect(spawn).not.toHaveBeenCalled();
+  await host.start(settings, "fixture", async () => {}); expect(spawn).toHaveBeenCalledTimes(1);
+});
+it("surfaces connection failure promptly, invalidates stale heartbeats, and recovers on the same process", async () => {
+  vi.useFakeTimers(); const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
+  const ready = expect(host.ready()).rejects.toThrow("无法连接");
+  child.emit("message", { type: "heartbeat", at: Date.now() });
+  child.emit("message", { type: "error", message: "暂时无法连接控制端。" });
+  await vi.advanceTimersByTimeAsync(500); await ready; expect(host.lastHeartbeat).toBe(0); expect(host.child).toBe(child);
+  await host.start(settings, "fixture", async () => {}); expect(spawn).toHaveBeenCalledTimes(1);
+  child.emit("message", { type: "heartbeat", at: Date.now() }); await host.ready(); expect(host.message).toBe("");
 });

@@ -20,7 +20,7 @@ export async function diagnose(settings: Settings, resources: string): Promise<C
     const exists = await access(instance.exe).then(() => true, () => false);
     checks.push({ id: "obs-file:" + instance.id, label: instance.name + " 程序文件", status: exists ? "ready" : "missing", ...(!exists ? { message: instance.managed ? "该实例的便携 OBS 程序缺失或不可读，请恢复原文件并检查安全软件拦截记录；原配置未删除。" : "手动指定的 OBS 路径不存在或不可读，请恢复该专用 OBS。新电脑可使用内置便携版，无需预装。" } : {}) });
   }
-  try { const response = await net.fetch((settings.identity?.origin || "https://livenest.duckdns.org") + "/api/health", { redirect: "error", signal: AbortSignal.timeout(10_000) }); if (!response.ok) throw new Error(); await response.body?.cancel(); checks.push({ id: "cloud", label: "网页服务", status: "ready" }); }
+  try { const response = await net.fetch((settings.identity?.origin || "https://livenest.duckdns.org") + "/api/health", { redirect: "error", signal: AbortSignal.timeout(10_000) }); if (!response.ok) throw new Error(); await response.body?.cancel(); checks.push({ id: "cloud", label: "网页服务", status: "ready", message: "网页登录网络正常；设备是否上线以“连接网页”的 Agent 心跳为准。" }); }
   catch { checks.push({ id: "cloud", label: "网页服务", status: "error", message: "无法连接网页服务，请检查网络；离线帮助仍可使用。" }); }
   checks.push(...await Promise.all(settings.instances.map(checkObsNetwork)));
   return checks;

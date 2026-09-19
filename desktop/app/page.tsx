@@ -34,7 +34,11 @@ function Desktop({ logout }: { logout: () => Promise<void> }) {
     catch (e) { setFailedStep(activityStep(action)); setError((e as Error).message.replace(/^Error invoking remote method '[^']+': Error: /, "")); }
     finally { setPending(false); setActiveAction(undefined); }
   }
-  const activity: DesktopActivity | undefined = failedStep && error ? { action: state?.activity?.action || "prepare", step: failedStep, status: "failed", stage: state?.activity?.stage || "操作未完成", startedAt: state?.activity?.startedAt || now, message: error } : state?.activity;
+  const reportedActivity: DesktopActivity | undefined = failedStep && error ? { action: state?.activity?.action || "prepare", step: failedStep, status: "failed", stage: state?.activity?.stage || "操作未完成", startedAt: state?.activity?.startedAt || now, message: error } : state?.activity;
+  // 自动重连的真实心跳可以结算连接失败；仍有维护待恢复时不能隐藏错误。
+  const connectionRecovered = !!state?.online && !state.maintenance && reportedActivity?.step === 3 && reportedActivity.status === "failed";
+  const activity = connectionRecovered ? undefined : reportedActivity;
+  const visibleError = connectionRecovered ? "" : error || state?.message;
   const inline = !!activity?.step && activity.status !== "complete" && (page === "设备配置" || (page === "本机 OBS" && activity.step === 2));
   const busy = pending || state?.busy; const instances = state?.instances || []; const candidates = state?.candidates || [];
   const fresh = state?.snapshots.filter(s => now - s.observedAt < 20_000) || [];
@@ -46,7 +50,7 @@ function Desktop({ logout }: { logout: () => Promise<void> }) {
   /** 每个配置区只有标题、状态和必要操作。 */
   function step(n: number, title: string, ready: boolean | undefined, content: React.ReactNode) {
     const checking = (pending && activityStep(activeAction) === n) || (activity?.step === n && activity.status === "running");
-    const failed = !checking && (failedStep === n || (activity?.step === n && activity.status === "failed") || (n === 1 && state?.checks.some(c => c.id !== "cloud" && ["error", "missing"].includes(c.status))));
+    const failed = !checking && ((!connectionRecovered && failedStep === n) || (activity?.step === n && activity.status === "failed") || (n === 1 && state?.checks.some(c => c.id !== "cloud" && ["error", "missing"].includes(c.status))));
     return <section className="setup-row"><span className="step-number">{n}</span><div><div className="setup-title"><h2>{title}</h2><span className={"setup-state " + (failed ? "error" : ready ? "ready" : "")}>{checking ? "检查中" : failed ? "需要处理" : ready ? "已完成" : "待完成"}</span></div><div className="setup-content">{content}{activity?.step === n && feedback()}</div></div></section>;
   }
   /** 错误重试复用现有实例；不再次创建 OBS，保留页面表单。 */
@@ -59,7 +63,7 @@ function Desktop({ logout }: { logout: () => Promise<void> }) {
     <main className="main-wrapper"><div className="workspace-heading"><h1>{page}</h1>{page === "设备配置" && <button disabled={busy} onClick={() => void act("check")}><RefreshIcon />重新检查</button>}</div>
     {state?.maintenance && <div className="banner" role="status">设备维护尚未确认结束，原配置已保留。<button disabled={busy} onClick={() => void act("start")}>重新连接并恢复</button></div>}
     {!!candidates.length && <section className="desktop-form"><h2>待配置 OBS</h2><p>验证成功后才加入设备；撤销保留本机文件和配置。</p>{candidates.map(i => <div key={i.id}><strong>{i.name}</strong><span>　端口 {i.port}　</span><button disabled={busy} onClick={() => void act("prepare", { id: i.id })}>重试配置</button>{i.managed && <button disabled={busy} onClick={() => void act("repair-managed", { id: i.id })}>修复连接（先关闭 OBS）</button>}<button disabled={busy} onClick={() => void act("discard", { id: i.id })}>撤销新增</button></div>)}{!!candidates.filter(i => !i.managed).length && <ManualConnection instances={candidates.filter(i => !i.managed)} disabled={!!busy} act={act} />}</section>}
-    {!inline && (error || state?.message) && <div className="banner error" role="alert">{error || state?.message}<button onClick={() => setPage("帮助")}>查看帮助</button></div>}
+    {!inline && visibleError && <div className="banner error" role="alert">{visibleError}<button onClick={() => setPage("帮助")}>查看帮助</button></div>}
     {!state && <p role="status">正在读取本机配置…</p>}
     {state && page === "设备配置" && <div className="setup-list">
       {step(1, "检查电脑", computer, <><div className="check-list">{state.checks.map(c => <div key={c.id}><div className="check-row"><span>{c.label}</span><span className={"setup-state " + c.status}>{c.status === "ready" ? "正常" : c.status === "pending" ? "待检查" : "需要处理"}</span></div>{c.message && <p className="check-message">{c.message}</p>}</div>)}</div><button disabled={busy} onClick={() => void act("check")}>检查电脑</button></>)}

@@ -5,9 +5,12 @@ import { readFile, unlink, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentSnapshot } from "../src/shared/remote";
 import { environment, type Settings } from "./settings";
+import { agentEnvironment, type ProxyResolver } from "./agent-network";
 export class AgentHost {
   child?: ChildProcess; snapshots: AgentSnapshot[] = []; lastHeartbeat = 0; message = "";
   private starting?: Promise<void>;
+  /** 生产环境由 Electron 提供系统代理解析器，测试无需启动桌面会话。 */
+  constructor(private readonly resolveProxy?: ProxyResolver) {}
   private replies = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   /** 只恢复本客户端数据根下已确认死亡进程的宿主锁。 */
   async recover(settings: Settings) {
@@ -45,7 +48,7 @@ export class AgentHost {
     if (!settings.paired || !settings.identity) throw new Error("请先完成设备配对。");
     await this.recover(settings); await mkdir(path.join(settings.dataRoot, "logs"), { recursive: true });
     this.lastHeartbeat = 0; this.message = "";
-    const env = { ...process.env }; for (const key of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_|NODE_OPTIONS|ELECTRON_)/.test(key)) delete env[key];
+    const env = await agentEnvironment(process.env, settings.identity.origin, this.resolveProxy);
     await new Promise<void>((resolve, reject) => {
       let child: ChildProcess;
       try { child = spawn(path.join(resources, "vendor", "node.exe"), ["--use-env-proxy", path.join(resources, "agent", "desktop-worker.cjs")], { cwd: settings.dataRoot, env, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"] }); }
@@ -56,7 +59,7 @@ export class AgentHost {
         const value = raw as { type: string; snapshots?: AgentSnapshot[]; at?: number; message?: string; google?: { clientId: string; clientSecret: string }; id?: string; error?: string; result?: unknown };
         if (value.type === "snapshots") this.snapshots = value.snapshots || [];
         if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; }
-        if (value.type === "error") this.message = value.message || "Agent 连接失败。";
+        if (value.type === "error") { this.lastHeartbeat = 0; this.message = (value.message || "Agent 连接失败。") + " 客户端仍会自动重试。网络故障请检查系统代理，无需重新配对。"; }
         if (value.type === "google" && value.google) try { await saveGoogle(value.google); } catch { this.message = "无法保存本机配置，请检查目录权限。"; }
         if (value.type === "reply" && value.id) { const reply = this.replies.get(value.id); if (reply) { clearTimeout(reply.timer); this.replies.delete(value.id); if (value.error) reply.reject(new Error(value.error)); else reply.resolve(value.result); } }
       });
@@ -85,10 +88,10 @@ export class AgentHost {
       void this.send(child, { type: "rpc", id, route, data }).catch(error => { clearTimeout(timer); this.replies.delete(id); reject(error); });
     });
   }
-  /** 等待首次心跳；配对成功不等于设备已经在线。 */
+  /** 等待首次心跳；已有明确错误立即交还重试入口，后台 Agent 保持自动重连。 */
   async ready() {
     const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (!this.child?.connected) throw new Error(this.message || "Agent 未运行。"); await new Promise(r => setTimeout(r, 500)); }
+    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (this.message) throw new Error(this.message); if (!this.child?.connected) throw new Error("Agent 未运行。"); await new Promise(r => setTimeout(r, 500)); }
     throw new Error(this.message || "等待云端连接超时，请检查网络后重试。");
   }
   /** 优雅停止等待 exit/close；超时保留存活进程，失败移除等待监听器。 */

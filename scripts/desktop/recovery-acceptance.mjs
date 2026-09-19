@@ -4,7 +4,7 @@ import { readFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-const root = path.resolve("desktop/out"); const output = path.resolve("docs/desktop/screenshots");
+const root = path.resolve("desktop/out"); const output = path.resolve(process.env.LIVENEST_TEST_SCREENSHOTS || "docs/desktop/screenshots");
 await mkdir(output, { recursive: true });
 /** 只托管桌面构建目录，禁止目录越界。 */
 const server = createServer(async (request, response) => {
@@ -29,6 +29,7 @@ try {
       window.recoveryFixture.calls.push({ action, input });
       if (action === "prepare") { state.busy = true; await new Promise(resolve => { finish = resolve; }); state.busy = false; throw new Error("OBS 连接未确认，待配置内容已保留。"); }
       if (action === "discard") state.candidates = [];
+      if (action === "start") { state.online = false; state.message = "网络连接失败，请检查系统代理。"; state.activity = { action, step: 3, status: "failed", stage: "正在连接网页", message: state.message, startedAt: Date.now() }; throw new Error(state.message); }
       return structuredClone(state);
     } };
   });
@@ -56,5 +57,14 @@ try {
   assert.equal(await page.getByLabel("恢复配对信息", { exact: true }).inputValue(), "");
   assert.deepEqual(await page.evaluate(() => window.recoveryFixture.calls.at(-1)), { action: "pair", input: { invitation: "LN1.synthetic-recovery" } });
   await page.screenshot({ path: path.join(output, "device-repairing.png") });
-  assert.deepEqual(errors, []); console.log("Recovery UI passed: pending, duplicate prevention, retry, archive, old instance and 800px layout (synthetic state).");
+  await page.getByRole("button", { name: "重新连接", exact: true }).click();
+  await page.getByRole("alert").filter({ hasText: "网络连接失败" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "重试", exact: true }).isEnabled(), true);
+  await page.evaluate(() => { window.recoveryFixture.state.online = true; window.recoveryFixture.state.maintenance = true; });
+  await page.getByText("设备维护尚未确认结束，原配置已保留。").waitFor();
+  assert.equal(await page.getByRole("alert").filter({ hasText: "网络连接失败" }).count(), 1);
+  await page.evaluate(() => { window.recoveryFixture.state.maintenance = false; });
+  await page.getByRole("alert").filter({ hasText: "网络连接失败" }).waitFor({ state: "hidden" });
+  await page.getByText("本机已连接网页工作台", { exact: true }).waitFor();
+  assert.deepEqual(errors, []); console.log("Recovery UI passed: pending, duplicate prevention, retry, archive, old instance, 800px layout and network failure/recovery with maintenance guard (synthetic state).");
 } finally { await browser?.close(); await new Promise(resolve => server.close(resolve)); }

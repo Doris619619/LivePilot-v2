@@ -1,5 +1,5 @@
 /** 桌面业务协调；配置和更新串行化，页面只取得公开状态。 */
-import { app, dialog, net, shell } from "electron";
+import { app, dialog, net, session, shell } from "electron";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
@@ -17,7 +17,7 @@ import { separateCandidates, acceptCandidate, archiveCandidate } from "./candida
 import { repairManagedObs } from "./obs-repair";
 const invitationSchema = z.object({ origin: z.literal(DESKTOP_ORIGIN), agentId: idSchema, code: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export class Manager {
-  settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(); readonly updates = new Updates();
+  settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
   readonly activity = new Activity();
   busy = false; message = ""; checks: DesktopState["checks"] = [];
   /** 用户数据与安装资源分离，更新不覆盖素材和 OBS 配置。 */
