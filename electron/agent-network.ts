@@ -16,6 +16,13 @@ function proxyUrl(value: string): string | undefined {
 export async function agentEnvironment(source: NodeJS.ProcessEnv, origin: string, resolveProxy?: ProxyResolver): Promise<NodeJS.ProcessEnv> {
   const env = { ...source };
   for (const key of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_|NODE_OPTIONS|ELECTRON_)/i.test(key)) delete env[key];
+  // Windows spawn 按大小写无关的名称去重，先统一值以保留 Node 小写优先语义。
+  for (const upper of ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"]) {
+    const lower = upper.toLowerCase();
+    const value = source[lower] || source[upper] || source[Object.keys(source).find(key => key.toUpperCase() === upper && source[key]) || ""];
+    for (const key of Object.keys(env)) if (key.toUpperCase() === upper) delete env[key];
+    if (value) { env[upper] = value; env[lower] = value; }
+  }
   const bypass = [env.no_proxy || env.NO_PROXY, "localhost", "127.0.0.1", "::1", "[::1]"].filter(Boolean).join(",");
   env.NO_PROXY = bypass; env.no_proxy = bypass;
   // Node 的小写变量优先；已有显式 HTTPS 配置保持原样。

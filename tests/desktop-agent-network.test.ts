@@ -15,7 +15,11 @@ it("inherits the system HTTP proxy before Node starts and preserves loopback byp
 it("preserves explicit proxies and Node lowercase precedence without resolving system settings", async () => {
   const resolve = vi.fn();
   const env = await agentEnvironment({ NODE_ENV: "test", HTTPS_PROXY: "http://upper.invalid:80", https_proxy: "http://lower.invalid:80", HTTP_PROXY: "http://http.invalid:80", NO_PROXY: "upper.invalid", no_proxy: "lower.invalid" }, "https://controller.invalid", resolve);
-  expect(resolve).not.toHaveBeenCalled(); expect(env.https_proxy).toBe("http://lower.invalid:80"); expect(env.HTTPS_PROXY).toBe("http://upper.invalid:80"); expect(env.HTTP_PROXY).toBe("http://http.invalid:80"); expect(env.no_proxy).toContain("lower.invalid,"); expect(env.no_proxy).not.toContain("upper.invalid");
+  expect(resolve).not.toHaveBeenCalled(); expect(env.https_proxy).toBe("http://lower.invalid:80"); expect(env.HTTPS_PROXY).toBe(env.https_proxy); expect(env.HTTP_PROXY).toBe("http://http.invalid:80"); expect(env.no_proxy).toContain("lower.invalid,"); expect(env.no_proxy).not.toContain("upper.invalid");
+});
+it("recognizes Windows mixed-case proxy variables without overriding them with the system proxy", async () => {
+  const resolve = vi.fn(); const env = await agentEnvironment({ NODE_ENV: "test", Https_Proxy: "http://explicit.invalid:19876", No_Proxy: "internal.invalid" }, "https://controller.invalid", resolve);
+  expect(resolve).not.toHaveBeenCalled(); expect(env.HTTPS_PROXY).toBe("http://explicit.invalid:19876"); expect(env.Https_Proxy).toBeUndefined(); expect(env.no_proxy).toContain("internal.invalid,");
 });
 it("supports HTTPS proxies and preserves DIRECT without inventing a local proxy", async () => {
   expect((await agentEnvironment({ NODE_ENV: "test" }, "https://controller.invalid", async () => "HTTPS proxy.invalid:443")).HTTPS_PROXY).toBe("https://proxy.invalid");
