@@ -106,6 +106,10 @@ try {
   assert.equal(await details.count(), 0); assert.equal(await page.evaluate(() => window.feedbackTest.settingsActions.filter(action => action === "update-install").length), installs);
   await page.setViewportSize({ width: 800, height: 750 }); await restart.click(); await details.waitFor();
   const bounds = await details.boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 800);
+  const header = await page.locator(".desktop-header-actions").evaluate(element => [...element.children].map(child => { const style = getComputedStyle(child); const box = child.getBoundingClientRect(); const text = [...child.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim()); const range = document.createRange(); if (text) range.selectNodeContents(text); return { size: style.fontSize, line: style.lineHeight, weight: style.fontWeight, center: box.y + box.height / 2, textTop: text ? range.getBoundingClientRect().y : null }; }));
+  assert.equal(new Set(header.map(item => item.size)).size, 1); assert.equal(new Set(header.map(item => item.line)).size, 1); assert.equal(new Set(header.map(item => item.weight)).size, 1);
+  assert.ok(Math.max(...header.map(item => item.center)) - Math.min(...header.map(item => item.center)) <= 0.5);
+  const textTops = header.map(item => item.textTop).filter(top => top !== null); assert.ok(Math.max(...textTops) - Math.min(...textTops) <= 1, JSON.stringify(header));
   await page.screenshot({ path: path.join(output, "update-details-narrow.png"), fullPage: false });
   await page.evaluate(() => { window.feedbackTest.state.update = { status: "error", version: "0.1.1", message: "下载未完成，请重新检查更新。" }; });
   await details.getByRole("button", { name: "检查更新", exact: true }).waitFor(); await trigger.waitFor();
