@@ -32,7 +32,7 @@ function formatDuration(ms: number): string {
 /**
  * 单个 OBS 直播实例的极简折叠与展开控制卡片。
  */
-export default function InstanceConsole({ instance, onChannelChange }: { instance: InstanceDescriptor; onChannelChange: (key: string, channel: string) => void }) {
+export default function InstanceConsole({ instance, onChannelChange, onUpload }: { instance: InstanceDescriptor; onChannelChange: (key: string, channel: string) => void; onUpload: (target: string, kind: "videos" | "music") => void }) {
   const { name } = instance;
   const id = instance.agentId ? `${instance.agentId}-${instance.id}` : instance.id;
   const model = useInstance(instance);
@@ -133,7 +133,7 @@ export default function InstanceConsole({ instance, onChannelChange }: { instanc
       </div>
 
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? `状态已过期：${error}；实际推流状态未知，已有直播可能仍在继续。` : error || data?.state.error}</span></div>}
+      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? (error?.includes("实际推流状态未知") ? error : `${error || "设备状态已过期"}；实际推流状态未知，已有直播可能仍在继续。`) : error || data?.state.error}</span></div>}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
@@ -166,6 +166,7 @@ export default function InstanceConsole({ instance, onChannelChange }: { instanc
               {selection.video && !data?.media.videos.includes(selection.video) && <option value={selection.video}>{selection.video}（缺失）</option>}
               {data?.media.videos.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
+            {data && !stale && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
           </div>
           <div className="field-group">
             <label htmlFor={`music-${id}`} className="field-label">背景音乐</label>
@@ -174,6 +175,7 @@ export default function InstanceConsole({ instance, onChannelChange }: { instanc
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
+            {data && !stale && !data.media.music.length && <div className="media-empty"><p>还没有音乐，可添加背景音乐。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
           </div>
         </div>
         <div className="media-options">

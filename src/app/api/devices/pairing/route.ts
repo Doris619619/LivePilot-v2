@@ -9,7 +9,7 @@ import { AppError } from "@/core/errors";
 import { createPairing, renewPairing } from "@/cloud/agents";
 import { idSchema } from "@/shared/remote";
 export const runtime = "nodejs";
-/** 新建设备使用随机标识，过期邀请可续期，已配对设备不能重新认领。 */
+/** 新建设备使用随机标识；已移除设备可发恢复邀请，仍须提供原电脑凭据。 */
 export async function POST(request: Request) {
   try {
     guard(request, true); await authenticate(request);

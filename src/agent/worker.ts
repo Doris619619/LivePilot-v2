@@ -54,6 +54,6 @@ export class Worker {
   }
   /** 云端确认终态后停止重复上报，仍保留本机去重记录。 */
   async acknowledge(ids: string[]) { for (const id of ids) { const entry = await this.read(id); if (entry && !["accepted", "running"].includes(entry.report.status)) { entry.acknowledged = true; await this.write(entry); } } }
-  /** 测试和优雅退出使用；不因控制端断线取消任务。 */
-  async drain() { await Promise.all(this.running.values()); }
+  /** 先等待正在落盘的接收事务，再排空执行；不因控制端断线取消任务或丢弃结果。 */
+  async drain() { await this.accepting; await Promise.all(this.running.values()); }
 }

@@ -3,16 +3,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
-import UploadPanel from "./upload-panel";
+import UploadPanel, { type UploadRequest } from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
 import DevicePairing from "./device-pairing";
+import DeviceRemove from "./device-remove";
 import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
 export default function Console() {
   const [channels, setChannels] = useState<Record<string, string>>({});
+  const [uploadRequest, setUploadRequest] = useState<UploadRequest>();
+  /** 从空素材入口带入目标 OBS 和素材类型，不替换上传面板已有任务。 */
+  const openUpload = useCallback((target: string, kind: "videos" | "music") => {
+    setUploadRequest(previous => ({ target, kind, sequence: (previous?.sequence || 0) + 1 }));
+  }, []);
   /** 以设备与实例的稳定组合键共享频道名；名称变化不改变上传或控制目标。 */
   const updateChannel = useCallback((key: string, channel: string) => {
     setChannels(previous => {
@@ -58,7 +64,8 @@ export default function Console() {
     return () => { clearInterval(timer); abort.abort(); };
   }, [refreshKey]);
 
-  const devices = agents?.filter(a => !a.revoked);
+  // 未完成的邀请留在配对入口，不冒充另一台已接入的电脑。
+  const devices = agents?.filter(a => !a.revoked && a.paired !== false);
 
   return (
     <div className="workspace-shell">
@@ -78,22 +85,22 @@ export default function Console() {
       </aside>
 
       <main className="main-wrapper" id="workspace" tabIndex={-1}>
-        {instances.length ? <UploadPanel instances={instances} channels={channels} heading={<h1>直播工作台</h1>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
+        {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<h1>直播工作台</h1>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
         {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
         {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
-        {loaded && !instances.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接你的第一台直播电脑</h2><p>在直播电脑上启动已配对的 Agent，<br />实例上线后会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
+        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接直播电脑</h2><p>点击“添加直播电脑”，复制配对码到 LiveNest。<br />连接后，直播实例会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
         {devices ? devices.map(agent => {
           const agentInstances = instances.filter(i => i.agentId === agent.id);
           return (
             <section className="device-section" id={"device-" + agent.id} key={agent.id} aria-label={agent.name}>
-              <div className="device-header"><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.maintenance ? "维护中" : agent.paired === false ? "等待配对" : agent.online ? "在线" : "离线"}</span></h2></div>
-              <div className="instance-grid">{agentInstances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} />)}</div>
+              <DeviceRemove agent={agent} changed={() => setRefreshKey(v => v + 1)}><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.maintenance ? "维护中" : agent.paired === false ? "等待配对" : agent.online ? "在线" : "离线"}</span></h2></DeviceRemove>
+              <div className="instance-grid">{agentInstances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} onUpload={openUpload} />)}</div>
               {!agentInstances.length && <p className="device-empty">设备尚未上报直播实例。</p>}
             </section>
           );
-        }) : <section className="device-section" id="device-local" aria-label="本机设备"><div className="instance-grid">{instances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} />)}</div></section>}
+        }) : <section className="device-section" id="device-local" aria-label="本机设备"><div className="instance-grid">{instances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} onUpload={openUpload} />)}</div></section>}
       </main>
     </div>
   );

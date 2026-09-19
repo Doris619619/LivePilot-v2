@@ -1,12 +1,16 @@
-/** 内置 Node Agent 子进程管理；白名单 IPC，优雅排空，不使用 Electron RunAsNode。 */
-import { spawn, type ChildProcess } from "node:child_process";
+/** 内置 Agent 生命周期：启动确认、进程退出与 IPC 失败各自结算，禁止重复进程。 */
+import { spawn, type ChildProcess, type Serializable } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFile, unlink, mkdir } from "node:fs/promises";
 import path from "node:path";
 import type { AgentSnapshot } from "../src/shared/remote";
 import { environment, type Settings } from "./settings";
+import { agentEnvironment, type ProxyResolver } from "./agent-network";
 export class AgentHost {
-  child?: ChildProcess; snapshots: AgentSnapshot[] = []; lastHeartbeat = 0; message = "";
+  child?: ChildProcess; snapshots: AgentSnapshot[] = []; lastHeartbeat = 0; message = ""; errorCode?: string;
+  private starting?: Promise<void>;
+  /** 生产环境由 Electron 提供系统代理解析器，测试无需启动桌面会话。 */
+  constructor(private readonly resolveProxy?: ProxyResolver) {}
   private replies = new Map<string, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
   /** 只恢复本客户端数据根下已确认死亡进程的宿主锁。 */
   async recover(settings: Settings) {
@@ -17,44 +21,93 @@ export class AgentHost {
     catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
     await unlink(filename);
   }
-  /** 凭据走匿名 IPC，不出现在命令行、环境文件和 Renderer。 */
+  /** error 不代表进程必然死亡；仅无 PID、确认退出或 close 时释放引用。 */
+  private finish(child: ChildProcess, message: string, closed = false) {
+    if (this.child !== child) return;
+    this.message = message; this.lastHeartbeat = 0; this.errorCode = undefined;
+    for (const r of this.replies.values()) { clearTimeout(r.timer); r.reject(new Error(message)); }
+    this.replies.clear();
+    if (closed || !child.pid || child.exitCode !== null || child.signalCode !== null) { this.child = undefined; this.snapshots = []; }
+  }
+  /** 并发启动复用同一个 Promise；存在存活或状态不明的进程时不再 spawn。 */
   async start(settings: Settings, resources: string, saveGoogle: (google: { clientId: string; clientSecret: string }) => Promise<void>) {
-    if (this.child) return;
+    if (this.starting) return this.starting;
+    if (this.child) {
+      if (this.child.exitCode !== null || this.child.signalCode !== null) this.finish(this.child, "Agent 已退出。", true);
+      else if (this.child.pid) {
+        try { process.kill(this.child.pid, 0); }
+        catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw new Error("无法确认 Agent 进程状态，未重复启动。"); this.finish(this.child, "Agent 已退出。", true); }
+        if (this.child) { if (!this.child.connected) throw new Error("Agent 进程仍存在但通信已断开，请等待其退出后重试。"); this.message = ""; this.errorCode = undefined; return; }
+      } else this.finish(this.child, "Agent 未成功启动。", true);
+    }
+    this.starting = this.launch(settings, resources, saveGoogle);
+    try { await this.starting; } finally { this.starting = undefined; }
+  }
+  /** spawn 成功后才发送凭据；发送失败不冒充启动成功。 */
+  private async launch(settings: Settings, resources: string, saveGoogle: (google: { clientId: string; clientSecret: string }) => Promise<void>) {
     if (!settings.paired || !settings.identity) throw new Error("请先完成设备配对。");
     await this.recover(settings); await mkdir(path.join(settings.dataRoot, "logs"), { recursive: true });
-    this.lastHeartbeat = 0; this.message = "";
-    const env = { ...process.env }; for (const key of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_|NODE_OPTIONS|ELECTRON_)/.test(key)) delete env[key];
-    const child = spawn(path.join(resources, "vendor", "node.exe"), ["--use-env-proxy", path.join(resources, "agent", "desktop-worker.cjs")], { cwd: settings.dataRoot, env, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"] });
-    this.child = child;
-    child.on("message", async raw => {
-      const value = raw as { type: string; snapshots?: AgentSnapshot[]; at?: number; message?: string; google?: { clientId: string; clientSecret: string }; id?: string; error?: string; result?: unknown };
-      if (value.type === "snapshots") this.snapshots = value.snapshots || [];
-      if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; }
-      if (value.type === "error") this.message = value.message || "Agent 连接失败。";
-      if (value.type === "google" && value.google) try { await saveGoogle(value.google); } catch { this.message = "无法保存本机配置，请检查目录权限。"; }
-      if (value.type === "reply" && value.id) { const reply = this.replies.get(value.id); if (reply) { clearTimeout(reply.timer); this.replies.delete(value.id); if (value.error) reply.reject(new Error(value.error)); else reply.resolve(value.result); } }
+    this.lastHeartbeat = 0; this.message = ""; this.errorCode = undefined;
+    const env = await agentEnvironment(process.env, settings.identity.origin, this.resolveProxy);
+    await new Promise<void>((resolve, reject) => {
+      let child: ChildProcess;
+      try { child = spawn(path.join(resources, "vendor", "node.exe"), ["--use-env-proxy", path.join(resources, "agent", "desktop-worker.cjs")], { cwd: settings.dataRoot, env, windowsHide: true, stdio: ["ignore", "ignore", "ignore", "ipc"] }); }
+      catch { this.message = "内置 Agent 启动失败，请检查安装文件后重试。"; reject(new Error(this.message)); return; }
+      this.child = child;
+      child.on("message", async raw => {
+        if (this.child !== child) return;
+        const value = raw as { type: string; snapshots?: AgentSnapshot[]; at?: number; message?: string; code?: string; google?: { clientId: string; clientSecret: string }; id?: string; error?: string; result?: unknown };
+        if (value.type === "snapshots") this.snapshots = value.snapshots || [];
+        if (value.type === "heartbeat") { this.lastHeartbeat = value.at || 0; this.message = ""; this.errorCode = undefined; }
+        if (value.type === "error") {
+          this.lastHeartbeat = 0; this.errorCode = value.code;
+          this.message = value.code === "AGENT_AUTH" ? "配对已失效。请在网页生成新配对码，粘贴后连接。原配置会保留。" : value.code === "CLOUD_NETWORK" ? "网络连接失败，正在自动重试。请检查网络或系统代理，无需重新配对。" : value.message || "连接失败，请重试。";
+        }
+        if (value.type === "google" && value.google) try { await saveGoogle(value.google); } catch { this.message = "无法保存本机配置，请检查目录权限。"; }
+        if (value.type === "reply" && value.id) { const reply = this.replies.get(value.id); if (reply) { clearTimeout(reply.timer); this.replies.delete(value.id); if (value.error) reply.reject(new Error(value.error)); else reply.resolve(value.result); } }
+      });
+      child.on("error", () => { const message = "内置 Agent 启动或通信失败，请检查安装文件后重试。"; this.finish(child, message); reject(new Error(message)); });
+      child.once("exit", () => { this.finish(child, "Agent 已退出，请重新连接后核对状态。", true); reject(new Error("Agent 在启动期间退出。")); });
+      child.once("close", () => { this.finish(child, "Agent 已关闭，请重新连接后核对状态。", true); reject(new Error("Agent 在启动期间关闭。")); });
+      child.once("disconnect", () => this.finish(child, "Agent 通信已断开，正在等待进程退出。"));
+      child.once("spawn", () => { void this.send(child, { type: "init", env: environment(settings), identity: settings.identity }).then(resolve, reject); });
     });
-    child.once("error", () => { this.message = "内置 Agent 启动失败，请检查安装文件或重新安装。"; });
-    child.once("exit", () => { if (this.child === child) this.child = undefined; this.lastHeartbeat = 0; for (const r of this.replies.values()) { clearTimeout(r.timer); r.reject(new Error("Agent 已退出，请重新连接后核对状态。")); } this.replies.clear(); });
-    child.send({ type: "init", env: environment(settings), identity: settings.identity });
   }
-  /** 受限维护 RPC 由拥有有效会话的 Agent 转发。 */
+  /** IPC 发送回调与同步异常均结算调用者；通道错误不强杀仍运行的 Agent。 */
+  private send(child: ChildProcess, value: Serializable): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const failed = () => { const message = "Agent 通信失败，请重新连接后核对状态。"; this.finish(child, message); reject(new Error(message)); };
+      if (!child.connected) { failed(); return; }
+      try { child.send(value, error => { if (error) failed(); else resolve(); }); } catch { failed(); }
+    });
+  }
+  /** 维护 RPC 发送失败立即清理等待项，迟到的旧进程消息不影响新会话。 */
   rpc<T>(route: "maintenance-begin" | "maintenance-end" | "instances", data: unknown): Promise<T> {
-    if (!this.child?.connected) return Promise.reject(new Error("设备未连接，不能确认维护状态。"));
+    const child = this.child;
+    if (!child?.connected) return Promise.reject(new Error("设备未连接，不能确认维护状态。"));
     const id = randomUUID(); return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.replies.delete(id); reject(new Error("维护响应超时，请重连后恢复；没有开始强制重启。")); }, 40_000);
-      this.replies.set(id, { resolve: value => resolve(value as T), reject, timer }); this.child!.send({ type: "rpc", id, route, data });
+      this.replies.set(id, { resolve: value => resolve(value as T), reject, timer });
+      void this.send(child, { type: "rpc", id, route, data }).catch(error => { clearTimeout(timer); this.replies.delete(id); reject(error); });
     });
   }
-  /** 等待首次心跳；配对成功不等于设备已经在线。 */
+  /** 等待首次心跳；已有明确错误立即交还重试入口，后台 Agent 保持自动重连。 */
   async ready() {
     const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (!this.child) throw new Error(this.message || "Agent 未运行。"); await new Promise(r => setTimeout(r, 500)); }
+    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (this.message) throw new Error(this.message); if (!this.child?.connected) throw new Error("Agent 未运行。"); await new Promise(r => setTimeout(r, 500)); }
     throw new Error(this.message || "等待云端连接超时，请检查网络后重试。");
   }
-  /** 优雅停止最多等待一分钟，超时保留运行进程而不是强杀。 */
+  /** 优雅停止等待 exit/close；超时保留存活进程，失败移除等待监听器。 */
   async stop() {
+    if (this.starting) await this.starting;
     const child = this.child; if (!child) return;
-    await new Promise<void>((resolve, reject) => { const timer = setTimeout(() => reject(new Error("Agent 仍在处理任务，已取消重启。")), 65_000); child.once("exit", () => { clearTimeout(timer); resolve(); }); child.send({ type: "stop" }); });
+    if (child.exitCode !== null || child.signalCode !== null) { this.finish(child, "Agent 已退出。", true); return; }
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); child.off("exit", done); child.off("close", done); };
+      const done = () => { cleanup(); resolve(); };
+      const timer = setTimeout(() => { cleanup(); reject(new Error("Agent 仍在处理任务，已取消重启。")); }, 65_000);
+      child.once("exit", done); child.once("close", done);
+      void this.send(child, { type: "stop" }).catch(error => { cleanup(); reject(error); });
+    });
   }
 }

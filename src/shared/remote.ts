@@ -32,6 +32,6 @@ export type DeliveryState = "queued" | "delivering" | "accepted" | "running" | "
 export const reportSchema = z.object({ id: uuidSchema, status: z.enum(["accepted", "running", "succeeded", "failed", "interrupted", "expired"]), result: z.unknown().optional(), error: z.string().max(500).optional(), httpStatus: z.number().int().min(400).max(599).optional() }).strict();
 export type TaskReport = z.infer<typeof reportSchema>;
 export type AgentSnapshot = { instance: InstanceDescriptor; dashboard: Dashboard; observedAt: number };
-export type AgentDescriptor = { id: string; name: string; online: boolean; lastSeen: number; revoked: boolean; instances: InstanceDescriptor[]; paired?: boolean; maintenance?: boolean };
+export type AgentDescriptor = { id: string; name: string; online: boolean; lastSeen: number; revoked: boolean; instances: InstanceDescriptor[]; paired?: boolean; maintenance?: boolean; pairedTo?: string };
 /** 设备和实例共同构成浏览器草稿、面板及请求的唯一身份。 */
 export function targetKey(target: { id: string; agentId?: string }) { return target.agentId ? `${target.agentId}:${target.id}` : target.id; }

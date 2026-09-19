@@ -17,7 +17,7 @@ process.on("message", async raw => {
     try {
       if (!transport || !["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new Error("设备尚未连接或操作无效。");
       send({ type: "reply", id: message.id, result: await transport.post("/api/agent/" + message.route, message.data) });
-    } catch { send({ type: "reply", id: message.id, error: "维护操作未被云端确认，请结束直播、上传及授权后重试。" }); }
+    } catch (error) { send({ type: "reply", id: message.id, error: safeError(error) }); }
     return;
   }
   if (started) return;
@@ -28,7 +28,7 @@ process.on("message", async raw => {
       stopped: () => stopped,
       snapshots: snapshots => send({ type: "snapshots", snapshots }),
       heartbeat: () => send({ type: "heartbeat", at: Date.now() }),
-      error: message => { send({ type: "error", message }); },
+      error: (message, code) => { send({ type: "error", message, code }); },
       connected: async active => {
         // 与已有 Agent API 相同：Bearer、设备 ID、有效会话全部必需。
         const google = await active.post<{ clientId: string; clientSecret: string }>("/api/agent/bootstrap", {});

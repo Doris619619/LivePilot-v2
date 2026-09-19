@@ -1,25 +1,38 @@
 /** 网页添加电脑：一次性邀请只保存在当前页面，不写本地缓存或 URL。 */
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import Link from "next/link";
 import { api } from "./client-request";
 import type { AgentDescriptor } from "@/shared/remote";
-/** 成员创建邀请并复制到桌面客户端，过期后可重发同一未绑定设备。 */
+/** 成员创建或恢复邀请；已移除电脑沿用原身份，不能被另一台电脑接管。 */
 export default function DevicePairing({ agents }: { agents: AgentDescriptor[] }) {
   const [open, setOpen] = useState(false); const [name, setName] = useState("");
   const [invitation, setInvitation] = useState(""); const [agentId, setAgentId] = useState<string>();
-  const [busy, setBusy] = useState(false); const [message, setMessage] = useState("");
-  const paired = !!agents.find(a => a.id === agentId)?.paired;
+  const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const submitting = useRef(false);
+  const invitationRecord = agents.find(a => a.id === agentId);
+  const selected = agents.find(a => a.id === (invitationRecord?.pairedTo || agentId)); const paired = !!selected?.paired && !selected.revoked;
+  const recoverable = agents.filter(a => !a.pairedTo && (a.revoked || !a.paired));
   /** 重试复用未使用邀请的设备 ID，已配对时服务器拒绝覆盖。 */
   async function create() {
-    setBusy(true); setMessage("");
-    try { const result = await api<{ agentId: string; invitation: string }>("/api/devices/pairing", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ name, agentId }) }); setAgentId(result.agentId); setInvitation(result.invitation); }
-    catch (e) { setMessage((e as Error).message); } finally { setBusy(false); }
+    if (submitting.current) return; submitting.current = true; setBusy(true); setMessage("");
+    try { const result = await api<{ agentId: string; invitation: string }>("/api/devices/pairing", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ name, agentId: invitationRecord?.pairedTo ? undefined : agentId }) }); setAgentId(result.agentId); setInvitation(result.invitation); }
+    catch (e) { setMessage((e as Error).message); } finally { submitting.current = false; setBusy(false); }
   }
-  return <div className="device-pairing"><button onClick={() => setOpen(!open)}>添加直播电脑</button>{open && <section className="pairing-panel" aria-label="添加直播电脑">
-    <label className="field-group">设备<select value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setInvitation(""); setMessage(""); }}><option value="">新电脑</option>{agents.filter(a => !a.revoked && (!a.paired || a.id === agentId)).map(a => <option key={a.id} value={a.id}>{a.name}{a.paired ? "（已配对）" : "（等待配对）"}</option>)}{agentId && !agents.some(a => a.id === agentId) && <option value={agentId}>{name}</option>}</select></label>
-    <label className="field-group">电脑名称<input value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="导师电脑" /></label>
-    <button className="btn-primary" disabled={busy || !name.trim() || paired} onClick={() => void create()}>{paired ? "已配对" : busy ? "正在生成…" : agentId ? "重新生成配对信息" : "生成配对信息"}</button>
-    {invitation && <><label className="field-group">配对信息（10 分钟内有效）<textarea readOnly value={invitation} rows={4} /></label><button onClick={() => void navigator.clipboard.writeText(invitation).then(() => setMessage("已复制，请粘贴到本机 LiveNest。"), () => setMessage("请选中配对信息，按 Ctrl+C 复制。"))}>复制配对信息</button></>}
-    {message && <p role="status">{message}</p>}<a href="https://github.com/Doris619619/LiveNest-Releases/releases/latest" target="_blank" rel="noreferrer">下载 Windows 安装版</a>
+  /** 完成上一台后才清空表单，失败或收起面板不另建电脑。 */
+  function toggle() { if (!open && paired) { setAgentId(undefined); setName(""); setInvitation(""); setMessage(""); } setOpen(!open); }
+  return <div className="device-pairing"><button onClick={toggle} aria-expanded={open}>添加直播电脑</button>{open && <section className="pairing-panel" aria-label="添加直播电脑">
+    {paired ? <><p role="status">{selected.online ? "连接成功" : "配对成功，等待电脑上线"}：{selected.name}</p><a href={"#device-" + selected.id} onClick={() => setOpen(false)}>查看电脑</a></> : <>
+      {!invitation && <>
+        <label className="field-group">电脑名称<input disabled={busy || !!agentId} value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="给这台电脑起个名字" /></label>
+        {!!recoverable.length && <details><summary>恢复或继续配对已有电脑</summary><label className="field-group">选择原电脑<select disabled={busy} value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setMessage(""); }}><option value="">添加新电脑</option>{recoverable.map(a => <option key={a.id} value={a.id}>{a.name} · {a.id.slice(-6)}{a.revoked ? "（已移除）" : "（待配对）"}</option>)}</select></label></details>}
+        {selected?.revoked && <p>在原电脑的 LiveNest 中粘贴配对码，原配置会保留。</p>}
+      </>}
+      {invitation ? <>
+        <p>将配对码粘贴到这台电脑的 LiveNest，点击“连接”。</p>
+        <button className="btn-primary" onClick={() => void navigator.clipboard.writeText(invitation).then(() => setMessage("已复制，请到 LiveNest 粘贴并连接。"), () => setMessage("复制失败，请展开下方配对码，选中后按 Ctrl+C。"))}>复制配对码</button>
+        <details><summary>查看配对码</summary><label className="field-group">配对码（10 分钟内有效）<textarea readOnly value={invitation} rows={3} /></label><button disabled={busy} onClick={() => void create()}>{busy ? "正在生成…" : "重新生成配对码"}</button></details>
+      </> : <button className="btn-primary" disabled={busy || !name.trim()} onClick={() => void create()}>{busy ? "正在生成…" : "生成配对码"}</button>}
+      {message && <p role="status">{message}</p>}<Link href="/download">下载 Windows 客户端</Link>
+    </>}
   </section>}</div>;
 }

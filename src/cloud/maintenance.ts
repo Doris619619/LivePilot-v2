@@ -3,6 +3,8 @@ import { AppError } from "@/core/errors";
 import { OFFLINE_MS, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
 import { agentStore, extendInstances, listAgents } from "./agents";
+import { reconcileUploads } from "./upload-activities";
+import type { TaskRecord } from "./tasks";
 import { transaction } from "./store";
 type Maintenance = { token?: string; activities: Record<string, number> };
 const finished = new Set(["succeeded", "failed", "interrupted", "expired"]);
@@ -21,7 +23,8 @@ export async function trackActivity(id: string, kind: string, instance: string, 
 export async function finishActivity(id: string, kind: string, instance: string, uploadId?: string) {
   const store = agentStore(id); const state = await store.read<Maintenance>("maintenance.json"); if (!state) return;
   if (kind === "oauth-finish") delete state.activities["oauth:" + instance];
-  if (kind === "upload-finish" || kind === "upload-cancel") delete state.activities["upload:" + uploadId];
+  // 上传只能在完整队列对账后清理，防止与并行创建、分片和校验竞态。
+  void uploadId;
   await store.write("maintenance.json", state);
 }
 /** 与任务队列原子检查：任何直播、未知状态、未完成任务或用户事务都会阻止维护。 */
@@ -29,17 +32,22 @@ export async function beginMaintenance(id: string, token: string) {
   if (!/^[a-f0-9]{64}$/.test(token)) throw new AppError("INPUT", "维护凭据无效。");
   const store = agentStore(id);
   return transaction(store, async () => {
+    const queue = await store.read<{ records: TaskRecord[] }>("tasks.json");
+    await reconcileUploads(id, queue?.records || []);
     const previous = await store.read<Maintenance>("maintenance.json") || { activities: {} };
     if (previous.token === token) return { token };
     if (previous.token) throw new AppError("MAINTENANCE", "设备已有维护操作，请从原客户端恢复。", 409);
     const agent = (await listAgents()).find(a => a.id === id); const beat = await store.read<{ snapshots: AgentSnapshot[] }>("heartbeat.json");
-    const queue = await store.read<{ records: { status: string; expiresAt: number }[] }>("tasks.json");
     const pending = queue?.records.some(r => !finished.has(r.status) && !(r.status === "queued" && r.expiresAt < Date.now()));
     const safe = agent?.online && agent.instances.every(i => {
       const s = beat?.snapshots.find(s => s.instance.id === i.id); const d = s?.dashboard;
       return s && s.observedAt > Date.now() - OFFLINE_MS && d && !d.busy && d.obs.streaming === false && ["idle", "stopped"].includes(d.state.phase) && !d.youtube.error && (!d.state.broadcastId || ["complete", "revoked", "missing"].includes(d.youtube.lifecycle || ""));
     });
-    if (!safe || pending || Object.values(previous.activities).some(t => t > Date.now())) throw new AppError("BUSY", "请结束所有直播、上传和授权，并等待状态确认后重试。", 409);
+    const uploads = Object.keys(previous.activities).filter(k => k.startsWith("upload:"));
+    if (uploads.length) throw new AppError("BUSY", "仍有 " + uploads.length + " 个上传未确认结束，请在网页素材上传中查询或取消（" + uploads.map(k => k.slice(7, 15)).join("、") + "）。", 409);
+    if (pending) throw new AppError("BUSY", "设备仍有执行中或结果待确认的任务，请等待 Agent 回报，不能强制结束。", 409);
+    if (Object.values(previous.activities).some(t => t > Date.now())) throw new AppError("BUSY", "频道授权尚未结束，请完成授权或等待授权失效后重试。", 409);
+    if (!safe) throw new AppError("BUSY", "直播、OBS 或频道状态尚未确认空闲，请检查设备连接及直播状态。", 409);
     await store.write("maintenance.json", { token, activities: {} }); return { token };
   }, "tasks.lock");
 }

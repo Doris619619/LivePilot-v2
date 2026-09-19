@@ -5,7 +5,7 @@ import path from "node:path";
 import { Store } from "../src/core/storage";
 import type { DesktopInstance } from "../src/shared/desktop";
 import { protectWindows } from "./windows-credentials";
-export type Settings = { dataRoot: string; instances: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; paired?: boolean };
+export type Settings = { dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
 /** 原子替换密文；解密失败保留原文件，不重置身份。 */
 export class SettingsStore {
   private store = new Store(app.getPath("userData"));

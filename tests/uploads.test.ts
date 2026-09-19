@@ -82,3 +82,15 @@ it("reserves remaining disk space across uploads and expires only temporary data
   await createUpload("main", "alice", input);
   await expect(readFile(metadata)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
+it("queries a missing upload with 404 and cancels missing or expired uploads idempotently", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  await expect(uploadStatus("main", "alice", id)).rejects.toMatchObject({ status: 404 });
+  await cancelUpload("main", "alice", id); await cancelUpload("main", "alice", id);
+  const record = await createUpload("main", "alice", { kind: "videos", filename: "fixture.mp4", size: 4, fingerprint: "a".repeat(64) });
+  const metadata = path.join(dir, ".uploads", record.id, "upload.json");
+  const raw = JSON.parse(await readFile(metadata, "utf8")); raw.expiresAt = 1; await writeFile(metadata, JSON.stringify(raw));
+  await expect(cancelUpload("main", "bob", record.id)).rejects.toMatchObject({ status: 404 });
+  await cancelUpload("main", "alice", record.id); await cancelUpload("main", "alice", record.id);
+  await expect(uploadStatus("main", "alice", record.id)).rejects.toMatchObject({ status: 404 });
+});

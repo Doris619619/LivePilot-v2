@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import Link from "next/link";
 import { api } from "./client-request";
 import { LiveNestLogo, UserIcon, LockIcon, LogOutIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
@@ -175,7 +176,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           </form>
           <p className="login-help"><LockIcon /> 仅限已授权成员访问</p>
         </section>
-        <footer className="login-footer"><span>LiveNest Studio</span><span>OBS × YouTube</span></footer>
+        <footer className="login-footer"><span>LiveNest Studio</span><Link href="/download">下载 Windows 客户端 ↗</Link></footer>
       </main>
     );
   }

@@ -1,5 +1,5 @@
 /** 初始化自有便携 OBS；重复操作保留已有场景和设置，绝不自动推流。 */
-import { mkdir, readFile, writeFile, access, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -36,24 +36,34 @@ export async function freePort(excluded: number[], start = 4455): Promise<number
 }
 /** 生成身份后先持久化，解压失败仍可用相同密码继续。 */
 export async function newInstance(settings: Settings): Promise<DesktopInstance> {
-  const id = settings.instances.length ? "obs_" + randomBytes(4).toString("hex") : "main";
+  const id = settings.instances.some(i => i.id === "main" && i.initialized) ? "obs_" + randomBytes(4).toString("hex") : "main";
   return { id, name: settings.instances.length ? "OBS " + (settings.instances.length + 1) : "主 OBS", managed: true, exe: path.join(settings.dataRoot, "obs", id, "bin", "64bit", "obs64.exe"), port: await freePort(settings.instances.map(i => i.port)), password: randomBytes(24).toString("hex"), initialized: false };
 }
 /** 仅生成缺失的默认文件，已有配置保持不变。 */
 async function seed(filename: string, value: string) { await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, value, { flag: "wx" }).catch(e => { if (e.code !== "EEXIST") throw e; }); }
+/** 区分安装包资源与手动 OBS 路径；提前报可操作错误，不等待 WebSocket 超时。 */
+export async function requireObsFile(filename: string, message: string) {
+  try { if (!(await stat(filename)).isFile()) throw new Error(); await access(filename); }
+  catch { throw new Error(message); }
+}
 /** 解压固定官方包，便携配置不影响用户其他 OBS。 */
 export async function prepareFiles(instance: DesktopInstance, resources: string, report: (stage: string) => void = () => {}) {
-  if (!instance.managed) return;
+  if (!instance.managed) { await requireObsFile(instance.exe, "找不到手动选择的 obs64.exe，或没有读取权限。请恢复该专用 OBS；电脑未安装 OBS 时可撤销此候选，再点击“自动准备 OBS”，无需预装。"); return; }
   report("正在准备独立 OBS 目录");
-  const root = path.resolve(instance.exe, "../../.."); await mkdir(root, { recursive: true });
+  const root = path.resolve(instance.exe, "../../..");
+  const extracted = await access(path.join(root, ".extracted")).then(() => true, () => false);
+  if (!extracted) await requireObsFile(path.join(resources, "vendor", "obs.zip"), "安装包内置 OBS 资源缺失或不可读，请重新安装完整 LiveNest 安装包后重试。无需另行安装 OBS，已有配置会保留。");
+  await mkdir(root, { recursive: true });
   const owner = path.join(root, ".livenest-owner");
   try { if (await readFile(owner, "utf8") !== instance.id) throw new Error("OBS 目录归属不匹配。"); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; if ((await readdir(root)).length) throw new Error("OBS 目录已有其他文件，拒绝自动接管，请选择独立数据目录。"); await writeFile(owner, instance.id, { flag: "wx" }); }
-  if (!await access(path.join(root, ".extracted")).then(() => true, () => false)) {
+  if (!extracted) {
     report("正在解压 OBS（首次准备可能需要几分钟）");
     await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:LN_OBS_ZIP -DestinationPath $env:LN_OBS_ROOT -Force"], { windowsHide: true, timeout: 180_000, env: { ...process.env, LN_OBS_ZIP: path.join(resources, "vendor", "obs.zip"), LN_OBS_ROOT: root } }).catch(e => { throw new Error(e.killed ? "OBS 解压超过 3 分钟，请检查磁盘空间、目录权限和系统负载后重试。" : "OBS 解压失败，请检查数据目录权限、磁盘空间及安装包是否完整后重试。"); });
+    await requireObsFile(instance.exe, "OBS 解压未完成，未找到 obs64.exe。请检查安装包完整性、磁盘空间和安全软件拦截记录后重试；候选配置已保留。");
     await writeFile(path.join(root, ".extracted"), "32.2.2");
   }
+  await requireObsFile(instance.exe, "已配置的便携 OBS 程序缺失或不可读，请恢复原目录中的 obs64.exe，并检查安全软件拦截记录。为保护原场景和授权，没有覆盖已有 OBS。");
   report("正在写入场景、音频和连接配置");
   await seed(path.join(root, "portable_mode.txt"), ""); const base = path.join(root, "config", "obs-studio");
   await seed(path.join(base, "global.ini"), "[General]\nFirstRun=false\nEnableAutoUpdates=false\n[Basic]\nProfile=LiveNest\nProfileDir=LiveNest\nSceneCollection=LiveNest\nSceneCollectionFile=LiveNest\n");

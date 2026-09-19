@@ -8,6 +8,9 @@ import { POST as agentPost, GET as agentGet } from "@/app/api/agent/[...path]/ro
 import { POST as controlPost } from "@/app/api/control/route";
 import { GET as statusGet } from "@/app/api/status/route";
 import { createPairing } from "@/cloud/agents";
+import { DELETE as removeDevice } from "@/app/api/devices/route";
+import { authenticate } from "@/server/access";
+import { AppError } from "@/core/errors";
 vi.mock("@/server/access", () => ({ authenticate: vi.fn(async () => ({ username: "alice" })) }));
 let dir: string;
 /** 创建隔离云端环境，不读取真实 .env.local。 */
@@ -34,4 +37,13 @@ it("does not accept browser-origin Agent requests or implicit cloud targets", as
   const bad = request("session", {}); bad.headers.set("origin", "https://cloud.example.com"); expect((await agentPost(bad, context("session"))).status).toBe(403);
   const response = await statusGet(new Request("https://cloud.example.com/api/status?instanceId=main", { headers: { host: "cloud.example.com" } })); expect(response.status).toBe(400);
   expect((await agentPost(request("session", {}), context("session"))).status).not.toBe(200);
+});
+/** 移除要求成员会话、同源写入标记和明确确认，失败不撤销设备。 */
+it("protects device removal with browser authentication, CSRF and explicit confirmation", async () => {
+  await createPairing("studio_a", "A");
+  const make = (body: unknown = { agentId: "studio_a", confirmed: true }) => new Request("https://cloud.example.com/api/devices", { method: "DELETE", headers: { host: "cloud.example.com", origin: "https://cloud.example.com", "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify(body) });
+  const foreign = make(); foreign.headers.set("origin", "https://foreign.example.com"); expect((await removeDevice(foreign)).status).toBe(403);
+  expect((await removeDevice(make({ agentId: "studio_a" }))).status).toBe(400);
+  vi.mocked(authenticate).mockRejectedValueOnce(new AppError("AUTH", "请先登录。", 401)); expect((await removeDevice(make())).status).toBe(401);
+  expect((await removeDevice(make())).status).toBe(200); expect((await removeDevice(make())).status).toBe(200);
 });
