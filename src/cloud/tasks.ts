@@ -11,7 +11,7 @@ import { requireTarget, agentStore, assertAgentActive } from "./agents";
 import { transaction } from "./store";
 import { reconcileUploads, uploadId, type MaintenanceState } from "./upload-activities";
 import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
-export type TaskRecord = Target & { customer?: string; id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number; uploadStable?: boolean };
+export type TaskRecord = Target & { customer?: string; id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; problem?: import("../shared/problems").Problem; httpStatus?: number; uploadStable?: boolean };
 type Queue = { records: TaskRecord[] };
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
 /** 控制和授权共享实例互斥，上传有独立任务并发。 */
@@ -87,7 +87,7 @@ export async function reportTasks(agentId: string, reports: TaskReport[]) {
       if (record.status === "queued") throw new AppError("TASK", "任务尚未派发。", 409);
       if (!terminal(record.status)) {
         if (!(record.status === "running" && report.status === "accepted")) record.status = report.status;
-        record.updatedAt = Date.now(); record.message = report.error; record.httpStatus = report.httpStatus;
+        record.updatedAt = Date.now(); record.message = report.error; record.httpStatus = report.httpStatus; record.problem = report.problem && {...report.problem,target:{agentId,instanceId:record.instanceId},attemptId:record.id};
         if (report.status === "succeeded") {
           record.result = seal(resultFor(record, report.result)); const p = unseal<TaskPayload>(record.payload);
           await finishActivity(agentId, p.kind, record.instanceId, "uploadId" in p ? p.uploadId : undefined);
@@ -120,14 +120,14 @@ export async function latestControl(target: Target): Promise<CommandStatus | und
   const record = records.at(-1); if (!record) return; expire(record); return operation(record);
 }
 /** 任务公开视图严格排除 payload/result。 */
-export function operation(record: TaskRecord): CommandStatus { return { id: record.id, actor: record.actor, action: record.action, status: record.status, updatedAt: new Date(record.updatedAt).toISOString(), message: record.message }; }
+export function operation(record: TaskRecord): CommandStatus { return { id: record.id, actor: record.actor, action: record.action, status: record.status, updatedAt: new Date(record.updatedAt).toISOString(), message: record.message, problem: record.problem }; }
 /** 短 RPC 等待落盘结果；超时保留任务供核对，绝不声称执行失败。 */
 export async function rpc<T>(target: Target, actor: string, payload: TaskPayload, id?: string): Promise<T> {
   const task = await enqueue(target, actor, payload, id); const deadline = Date.now() + 45_000;
   do {
     const record = await readTask(target.agentId, task.id);
     if (record?.status === "succeeded") return unseal<T>(record.result!);
-    if (record && terminal(record.status)) throw new AppError("AGENT_TASK", record.message || "设备未完成操作，请检查直播电脑。", record.httpStatus || 409);
+    if (record && terminal(record.status)) throw new AppError("AGENT_TASK", record.message || "设备未完成操作，请检查直播电脑。", record.httpStatus === 401 ? 409 : record.httpStatus || 409, record.problem);
     await sleep(200);
   } while (Date.now() < deadline);
   throw new AppError("AGENT_TIMEOUT", "设备结果尚未确认，请重新连接后查询；没有自动重复控制任务。", 504);

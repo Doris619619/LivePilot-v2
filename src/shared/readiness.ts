@@ -6,7 +6,11 @@ export function startBlocker(data: Dashboard | undefined, selection: Selection, 
   if (!data) return "正在读取这个实例的状态";
   if (busy) return "当前实例正在处理操作";
   if (live) return "这个实例正在直播";
+  if (data.problems?.length) return data.problems[0].message;
   if (data.configuration.missing.length) return "请先完成面板列出的本机配置";
+  if (data.obs.problem || data.obs.processKnown === false || (data.obs.running && !data.obs.ready)) return data.obs.message || "请先恢复此 OBS 的控制连接";
+  if (data.youtube.error) return data.youtube.error;
+  if (data.media.error) return "素材暂不可读取，请在此电脑检查目录后重新读取";
   if (!data.youtube.connected) return "请先连接这个实例的 YouTube 频道";
   if (!selection.video || !data.media.videos.includes(selection.video)) return "请选择一个可用的视频";
   if (!selection.music || !data.media.music.includes(selection.music)) return "请选择一段可用的音乐";

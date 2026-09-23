@@ -1,4 +1,5 @@
 /** 桌面账号统一在云端校验；客户会话仅驻留主进程，不保存密码。 */
+import { AppError } from "../src/core/errors";
 import { DESKTOP_ORIGIN } from "../src/shared/desktop";
 type Customer = { username: string; role: "customer" };
 type Requester = (url: string, init?: RequestInit) => Promise<Response>;
@@ -22,15 +23,20 @@ export class DesktopAuth {
  async logout() { const token=this.token;this.clear(); if(token) await this.request(DESKTOP_ORIGIN+"/api/desktop/session",{method:"DELETE",headers:{Authorization:"Bearer "+token},signal:AbortSignal.timeout(10000)}).catch(()=>{}); }
  /** 每次敏感操作重查角色及设备归属，状态轮询最多缓存 10 秒。 */
  async require(agentId?:string, fresh=true) {
-  if(!this.session().authenticated) throw new Error("登录已失效，请重新登录。已有直播继续运行。");
+  if(!this.session().authenticated) throw new AppError("DESKTOP", "登录已失效，请重新登录。已有直播继续运行。");
   if(!fresh && this.checkedAgent===agentId && Date.now()-this.checked<10000)return;
   let response:Response;
-  try { response=await this.request(DESKTOP_ORIGIN+"/api/desktop/session"+(agentId?"?agentId="+encodeURIComponent(agentId):""),{headers:{Authorization:"Bearer "+this.token},redirect:"error",signal:AbortSignal.timeout(10000)}); }catch{throw new Error("无法验证客户会话，请检查网络；已有直播继续运行。");}
-  if(!response.ok){this.clear();throw new Error(response.status===403?"这台电脑尚未分配给当前客户，请联系管理员。":"登录已失效，请重新登录。");}
+  try { response=await this.request(DESKTOP_ORIGIN+"/api/desktop/session"+(agentId?"?agentId="+encodeURIComponent(agentId):""),{headers:{Authorization:"Bearer "+this.token},redirect:"error",signal:AbortSignal.timeout(10000)}); }catch{throw new AppError("DESKTOP", "无法验证客户会话，请检查网络；已有直播继续运行。");}
+  if(!response.ok){
+   await response.body?.cancel();
+   if(response.status===401){this.clear();throw new AppError("AUTH","登录已失效，请重新登录。",401);}
+   if(response.status===403)throw new AppError("FORBIDDEN","这台电脑尚未分配给当前客户，请联系管理员。",403);
+   throw new AppError("CLOUD_UNAVAILABLE","客户会话暂时无法验证，原登录记录保留。请稍后重新验证；已有直播继续运行。",503);
+  }
   await response.body?.cancel();this.checked=Date.now();this.checkedAgent=agentId;
  }
  /** 配对请求携带客户会话，禁止 UI 接触原始令牌。 */
- headers() { if(!this.session().authenticated)throw new Error("请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
+ headers() { if(!this.session().authenticated)throw new AppError("DESKTOP", "请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
  /** 会话清理不触碰设备身份。 */
  private clear(){this.token="";this.user=undefined;this.expires=0;this.checked=0;this.checkedAgent=undefined;}
 }

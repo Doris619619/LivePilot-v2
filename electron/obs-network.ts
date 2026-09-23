@@ -50,5 +50,5 @@ export async function checkObsNetwork(item: DesktopInstance): Promise<Check> {
     const result = await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", firewallQuery], { windowsHide: true, timeout: 25_000, env: { ...process.env, LN_OBS_EXE: item.exe, LN_OBS_PORT: String(item.port) } });
     if (JSON.parse(result.stdout).isolated === true) return { ...base, status: "ready", message: "监听 " + addresses.join("、") + "；有效防火墙策略阻止入站。策略变化后需重新检查。" };
     return { ...base, status: "error", code: "firewall-unconfirmed", action: "firewall", message: "OBS 监听 " + addresses.join("、") + "，尚未证实防火墙隔离。请在 Windows 防火墙限制此 OBS 的入站访问，不要开放公网端口。" };
-  } catch { return { ...base, status: "pending", code: "inspection-unavailable", action: "retry", message: "未能确认：Windows 查询超时或权限不足。点击重新检查；仍失败可打开帮助中的网络检查步骤。" }; }
+  } catch (e) { return { ...base, status: "pending", code: isAppError(e) ? e.code : "inspection-unavailable", action: "retry", message: isAppError(e) ? safeError(e) : "暂时无法完成此项检查。请重新检查，仍失败时查看对应电脑的检查步骤。" }; }
 }

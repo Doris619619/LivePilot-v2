@@ -50,3 +50,6 @@ it("drains tasks whose initial acceptance write is still pending", async () => {
   await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce()); expect(drained).toBe(false);
   finish(); await draining; expect((await worker.reports())[0].status).toBe("succeeded");
 });
+
+/** 执行成功后磁盘失效：内存健康问题可达心跳，且原任务不重新执行。 */
+it("reports a failed final save without replaying a successful task",async()=>{const store=new Store(dir);const original=store.write.bind(store);let count=0;vi.spyOn(store,"write").mockImplementation(async(name,value)=>{if(++count>=3)throw Object.assign(new Error("PRIVATE PATH"),{code:"ENOSPC"});await original(name,value);});const execute=vi.fn(async()=>({ok:true}));const worker=new Worker(store,execute);const value=task();await worker.receive(value);await vi.waitFor(()=>expect(worker.problems.get(value.id)).toMatchObject({code:"RESULT_SAVE",target:{instanceId:"main"},attemptId:value.id}));await worker.receive(value);expect(execute).toHaveBeenCalledOnce();expect(JSON.stringify([...worker.problems.values()])).not.toContain("PRIVATE");});

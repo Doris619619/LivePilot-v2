@@ -9,7 +9,8 @@ import { idSchema, OFFLINE_MS, PROTOCOL, type AgentDescriptor, type AgentSnapsho
 import type { InstanceDescriptor } from "@/shared/types";
 type Agent = { owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
 type Registry = { agents: Agent[] };
-type Heartbeat = { at: number; session: string; snapshots: AgentSnapshot[] };
+import type { Problem } from "../shared/problems";
+type Heartbeat = { problems?: Problem[]; at: number; session: string; snapshots: AgentSnapshot[] };
 /** 摘要用于比较随机凭据；永不记录原始 Authorization。 */
 function digest(value: string) { return createHash("sha256").update(value).digest("hex"); }
 /** 对等长随机摘要使用固定时间比较。 */
@@ -33,18 +34,18 @@ export async function createPairing(id: string, name: string, owner?: string) {
 export async function pairAgent(id: string, code: string, token: string, currentAgentId?: string, customer?: string) {
   const store = cloudStore();
   agentStore(id); if (currentAgentId) agentStore(currentAgentId);
-  if (!/^[a-f0-9]{64}$/.test(code) || !/^[a-f0-9]{64}$/.test(token)) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
+  if (!/^[a-f0-9]{64}$/.test(code) || !/^[a-f0-9]{64}$/.test(token)) throw new AppError("PAIR_CODE", "设备配对失败。", 401);
   return transaction(store, async () => {
     const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
-    if (!agent) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
+    if (!agent) throw new AppError("PAIR_CODE", "设备配对失败。", 401);
     let current = currentAgentId ? registry!.agents.find(a => a.id === currentAgentId) : undefined;
     if (currentAgentId) {
       if (current?.pairedTo) current = registry!.agents.find(a => a.id === current!.pairedTo);
-      if (current?.tokenHash && !matches(token, current.tokenHash)) throw new AppError("AGENT_AUTH", "无法确认本机身份，原设备与授权已保留。", 401);
+      if (current?.tokenHash && !matches(token, current.tokenHash)) throw new AppError("PAIR_IDENTITY", "无法确认本机身份，原设备与授权已保留。", 401);
       if (!current?.tokenHash) {
         // 初次响应丢失时，本机临时 ID 可能尚未更新；凭据定位已成功登记的同一电脑。
         const known = registry!.agents.filter(a => !a.pairedTo && matches(token, a.tokenHash));
-        if (known.length > 1) throw new AppError("AGENT_AUTH", "本机身份记录不唯一，原配置已保留。", 401);
+        if (known.length > 1) throw new AppError("PAIR_IDENTITY", "本机身份记录不唯一，原配置已保留。", 401);
         current = known[0] || current;
       }
     }
@@ -54,10 +55,10 @@ export async function pairAgent(id: string, code: string, token: string, current
     if (agent.pairedTo) {
       const target = registry!.agents.find(a => a.id === agent.pairedTo);
       if (target && !target.revoked && current?.id === target.id && matches(token, target.tokenHash) && matches(code, agent.pairingReceiptHash)) return { protocol: PROTOCOL, agentId: target.id };
-      throw new AppError("AGENT_AUTH", "配对码已被使用，请生成新码。", 401);
+      throw new AppError("PAIR_CODE", "配对码已被使用，请生成新码。", 401);
     }
     if (currentAgentId && current?.id !== id) {
-      if (agent.tokenHash || agent.revoked || agent.instances.length || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("AGENT_AUTH", "请使用新生成且未使用的配对码。", 401);
+      if (agent.tokenHash || agent.revoked || agent.instances.length || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("PAIR_CODE", "请使用新生成且未使用的配对码。", 401);
       if (current?.tokenHash) {
         if (current.revoked) await releaseAgentChannels(store, current.id);
         current.revoked = false; delete current.pairingHash; delete current.pairingExpires;
@@ -66,16 +67,16 @@ export async function pairAgent(id: string, code: string, token: string, current
         await store.write("agents.json", registry); return { protocol: PROTOCOL, agentId: current.id };
       }
       // 从未认领成功的临时身份可以使用新邀请；不能将已有实例当作未配置设备。
-      if (current?.instances.length) throw new AppError("AGENT_AUTH", "无法确认原设备凭据，配置已保留。", 401);
+      if (current?.instances.length) throw new AppError("PAIR_IDENTITY", "无法确认原设备凭据，配置已保留。", 401);
     }
     if (agent.revoked) {
-      if (!matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now() || (agent.tokenHash && !matches(token, agent.tokenHash))) throw new AppError("AGENT_AUTH", "恢复配对需要新的邀请和原电脑身份，请在原 Windows 账户的 LiveNest 中重试。", 401);
+      if (!matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now() || (agent.tokenHash && !matches(token, agent.tokenHash))) throw new AppError("PAIR_IDENTITY", "恢复配对需要新的邀请和原电脑身份，请在原 Windows 账户的 LiveNest 中重试。", 401);
       await releaseAgentChannels(store, agent.id);
       agent.revoked = false; agent.tokenHash = digest(token); delete agent.pairingHash; delete agent.pairingExpires;
       await store.write("agents.json", registry); return { protocol: PROTOCOL, agentId: id };
     }
     if (matches(token, agent.tokenHash)) return { protocol: PROTOCOL, agentId: id };
-    if (agent.tokenHash || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("AGENT_AUTH", "配对码无效或已过期。", 401);
+    if (agent.tokenHash || !matches(code, agent.pairingHash) || (agent.pairingExpires || 0) < Date.now()) throw new AppError("PAIR_CODE", "配对码无效或已过期。", 401);
     agent.tokenHash = digest(token); delete agent.pairingHash; delete agent.pairingExpires;
     await store.write("agents.json", registry); return { protocol: PROTOCOL, agentId: id };
   });
@@ -125,11 +126,11 @@ export async function openSession(id: string, bootId: string, instances: Instanc
   });
 }
 /** 单独存储设备心跳，过期状态不会当作实时 OBS 状态。 */
-export async function heartbeatAgent(id: string, session: string, snapshots: AgentSnapshot[]) {
+export async function heartbeatAgent(id: string, session: string, snapshots: AgentSnapshot[], problems: Problem[] = []) {
   const registry = await cloudStore().read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
   if (!agent || agent.revoked || agent.session !== session) throw new AppError("AGENT_SESSION", "设备会话已失效。", 409);
   if (snapshots.some(s => !agent.instances.some(i => i.id === s.instance.id))) throw new AppError("INSTANCE", "设备不能汇报其他实例。", 403);
-  await agentStore(id).write("heartbeat.json", { at: Date.now(), session, snapshots } satisfies Heartbeat);
+  await agentStore(id).write("heartbeat.json", { at: Date.now(), session, snapshots, problems: problems.filter(p => !p.target.instanceId || agent.instances.some(i=>i.id===p.target.instanceId)).map(p=>({...p,target:{...p.target,agentId:id}})) } satisfies Heartbeat);
 }
 /** 仅输出设备名称和公开状态，离线时保留最近实例清单。 */
 export async function listAgents(): Promise<AgentDescriptor[]> {
@@ -174,3 +175,6 @@ export async function setAgentOwner(id: string, owner: string, onlyUnpaired = fa
   const store = cloudStore();
   await transaction(store, async () => { const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id && !a.pairedTo); if (!agent) throw new AppError("AGENT", "设备不存在。", 404); if (onlyUnpaired && agent.tokenHash) throw new AppError("BUSY", "电脑刚完成配对，请重新读取状态并在空闲时分配。", 409); agent.owner = owner; await store.write("agents.json", registry); });
 }
+
+/** 独立于快照的内存健康回报，按原实例过滤。 */
+export async function problemsFor(agentId: string, instanceId: string) { return ((await agentStore(agentId).read<Heartbeat>("heartbeat.json"))?.problems || []).filter(p=>!p.target.instanceId || p.target.instanceId===instanceId); }

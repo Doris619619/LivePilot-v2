@@ -75,7 +75,7 @@ export class Control {
       if (!state.broadcastId) {
         if (state.broadcastIntent) {
           const found = await this.youtube.findBroadcast(state.broadcastTitle!);
-          if (!found) throw new AppError("UNCERTAIN", "上次创建场次的结果不确定，当前尚未查到。请稍后重试；若持续未找到，请在 YouTube Studio 核实后使用高级区域的恢复清理。");
+          if (!found) throw new AppError("UNCERTAIN", "上次创建场次的结果不确定，当前尚未查到。请稍后重试；若持续未找到，请在 YouTube Studio 核实后使用“连接与诊断”中的“清理未确认状态”。");
           await this.save(state, { broadcastId: found.id, broadcastIntent: false });
         } else {
           const title = "LivePilot " + new Date().toISOString().replace(/[:.]/g, "-") + " " + randomBytes(4).toString("hex");

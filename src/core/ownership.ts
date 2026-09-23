@@ -8,7 +8,7 @@ const registry = globalThis as typeof globalThis & { livePilotHostLock?: string 
 export function claimHost() {
   const filename = path.join(dataRoot(), "host.lock"); if (registry.livePilotHostLock === filename) return;
   mkdirSync(dataRoot(), { recursive: true }); let handle: number;
-  try { handle = openSync(filename, "wx", 0o600); } catch { throw new AppError("HOST_BUSY", "本地服务或 Agent 已占用该配置；请停止旧进程，必要时核对 PID 后恢复 host 锁。", 409); }
+  try { handle = openSync(filename, "wx", 0o600); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; throw new AppError("HOST_BUSY", "原数据仍被另一个客户端使用，请先退出原客户端；无法确认时联系管理员核对，保留原配置。", 409); }
   writeFileSync(handle, String(process.pid)); closeSync(handle); registry.livePilotHostLock = filename;
   process.once("exit", () => { try { unlinkSync(filename); } catch { /* 保留无法清理的锁供显式恢复。 */ } });
 }

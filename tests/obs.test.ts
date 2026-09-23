@@ -17,7 +17,7 @@ it("uses WebSocket v5, loops both sources and applies the VIDEO audio toggle", a
 });
 it("sanitizes OBS errors containing passwords or stream keys", async () => {
   const controller = new ObsController(); fake.call.mockRejectedValue(new Error("private-password secret-key"));
-  await expect(controller.configureStream("rtmps://host/live", "secret-key")).rejects.toThrow("SetStreamServiceSettings");
+  await expect(controller.configureStream("rtmps://host/live", "secret-key")).rejects.toThrow("操作状态");
   try { await controller.configureStream("rtmps://host/live", "secret-key"); } catch (e) { expect(String(e)).not.toMatch(/private-password|secret-key/); }
 });
 it("rejects a missing LIVE scene", async () => {

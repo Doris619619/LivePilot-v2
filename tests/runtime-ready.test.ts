@@ -12,3 +12,7 @@ it("reports the final readiness diagnosis after timeout", async () => {
     await vi.advanceTimersByTimeAsync(65_000); await result;
   } finally { vi.useRealTimers(); }
 });
+
+/** 进程和控制端口是独立事实，查询失败不能宣称停播。 */
+it.each([{pid:null,portPid:null,code:undefined,streaming:false},{pid:10,portPid:null,code:"OBS_NOT_LISTENING",streaming:null},{pid:null,portPid:11,code:"OBS_PORT",streaming:null},{pid:10,portPid:11,code:"OBS_PORT",streaming:null}])("distinguishes OBS process $pid and listener $portPid",async({pid,portPid,code,streaming})=>{const process=new ObsProcessManager();vi.spyOn(process,"inspect").mockResolvedValue({pid,portPid});const result=await new LocalObsRuntime(undefined,process).status();expect(result).toMatchObject({processKnown:true,ready:false,streaming});expect(result.problem?.code).toBe(code);});
+it("marks process inspection failures unknown",async()=>{const process=new ObsProcessManager();vi.spyOn(process,"inspect").mockRejectedValue(new Error("SECRET"));const result=await new LocalObsRuntime(undefined,process).status();expect(result).toMatchObject({processKnown:false,streaming:null});expect(JSON.stringify(result)).not.toContain("SECRET");});

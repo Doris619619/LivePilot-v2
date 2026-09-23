@@ -22,7 +22,7 @@ export class ObsController {
     if (this.connecting) return this.connecting;
     this.connecting = (async () => {
       const c = this.readConfig();
-      if (!c.obsPassword) throw new AppError("CONFIG", "请在 .env.local 配置 OBS WebSocket 密码。");
+      if (!c.obsPassword) throw new AppError("CONFIG", "请在客户端对应 OBS 的连接设置中填写 WebSocket 密码。");
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([
@@ -50,14 +50,14 @@ export class ObsController {
       ]);
     } catch {
       // Never propagate OBS's raw error/request: it can include paths or stream credentials.
-      throw new AppError("OBS_REQUEST", "OBS " + name + " 未能确认成功。请检查 OBS 状态；可通过结束直播恢复。");
+      throw new AppError(name.startsWith("Get") ? "OBS_READ" : "OBS_REQUEST", name.startsWith("Get") ? "暂时无法读取 OBS，请检查控制连接后重新读取；不需要因此结束直播。" : "OBS 设置或控制请求未确认，请先核对实际设置和本次操作状态，避免重复开播。");
     } finally { clearTimeout(timer); }
   }
   /** 严格校验受控场景与音频边界，避免混入额外采集源。 */
   async validate() {
     const scenes = await this.call("GetSceneList");
     const inputs = await this.call("GetInputList");
-    if (!scenes.scenes.some(s => s.sceneName === this.instance.scene)) throw new AppError("OBS_SCENE", "OBS 缺少 LIVE 场景。请按 README 创建 LIVE 和两个媒体源 VIDEO / MUSIC。");
+    if (!scenes.scenes.some(s => s.sceneName === this.instance.scene)) throw new AppError("OBS_SCENE", "OBS 缺少 LIVE 场景。请在客户端帮助的 OBS 场景设置中查看 LIVE、VIDEO 和 MUSIC 的配置步骤。");
     const items = await this.call("GetSceneItemList", { sceneName: this.instance.scene });
     for (const name of [this.instance.video, this.instance.music]) {
       const input = inputs.inputs.find(i => i.inputName === name);

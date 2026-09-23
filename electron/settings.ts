@@ -1,4 +1,5 @@
 /** Windows 用户级加密配置；凭据只留在 Main，公开快照剔除密码。 */
+import { AppError } from "../src/core/errors";
 import { safeStorage, app } from "electron";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
@@ -22,14 +23,14 @@ export class SettingsStore {
       const value = JSON.parse(encrypted.startsWith("dpapi:") ? (await protectWindows(Buffer.from(encrypted.slice(6), "base64"), false)).toString("utf8") : safeStorage.decryptString(Buffer.from(encrypted, "base64"))) as Settings;
       if (!value.dataRoot || !Array.isArray(value.instances) || !/^[a-f0-9]{64}$/.test(value.encryptionKey)) throw new Error();
       return value;
-    } catch { throw new Error("无法解密本机配置，请使用原 Windows 账户打开；不要删除配置文件。"); }
+    } catch { throw new AppError("DATA", "无法解密本机配置，请使用原 Windows 账户打开；不要删除配置文件。"); }
   }
   /** 只有文件真正不存在才返回空；null、空串和 false 均不能触发新身份初始化。 */
   private async record<T>(store: Store, name: string): Promise<T | null> {
     const value = await store.read<T>(name);
     if (!value) {
       const exists = await access(path.join(store.dir, name)).then(() => true, error => { if(error.code === "ENOENT") return false; throw error; });
-      if (exists) throw new Error("本机配置内容为空或损坏，请保留原文件并恢复配置；没有创建新身份。");
+      if (exists) throw new AppError("DATA", "本机配置内容为空或损坏，请保留原文件并恢复配置；没有创建新身份。");
     }
     return value;
   }
@@ -37,17 +38,17 @@ export class SettingsStore {
   async read(): Promise<Settings> {
     const location = await this.record<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>(this.locator, "data-location.json");
     if (location) {
-      if (location.version !== 1 || !path.isAbsolute(location.dataRoot || "") || (!location.pending && !location.rootId)) throw new Error("数据位置记录损坏，请保留配置并恢复原数据位置。");
+      if (location.version !== 1 || !path.isAbsolute(location.dataRoot || "") || (!location.pending && !location.rootId)) throw new AppError("DATA", "数据位置记录损坏，请保留配置并恢复原数据位置。");
       if (location.pending) return this.select(location.dataRoot);
-      await access(location.dataRoot).catch(() => { throw new Error("LiveNest 数据盘不可用，请连接原数据盘后重新打开；没有创建新身份。"); });
+      await access(location.dataRoot).catch(() => { throw new AppError("DATA", "LiveNest 数据盘不可用，请连接原数据盘后重新打开；没有创建新身份。"); });
       await checkRootPath(location.dataRoot, this.installation());
       const marker = await readRoot(location.dataRoot);
-      if (marker.id !== location.rootId) throw new Error("LiveNest 数据目录归属已改变，未加载或覆盖配置。");
+      if (marker.id !== location.rootId) throw new AppError("DATA", "LiveNest 数据目录归属已改变，未加载或覆盖配置。");
       const store = await this.rootStore(location.dataRoot);
       const encrypted = await this.record<string>(store, "settings.json");
-      if (!encrypted) throw new Error("LiveNest 数据配置缺失，请恢复原配置；没有创建新身份。");
+      if (!encrypted) throw new AppError("DATA", "LiveNest 数据配置缺失，请恢复原配置；没有创建新身份。");
       const settings = await this.decode(encrypted);
-      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(location.dataRoot)).toLowerCase()) throw new Error("LiveNest 配置与数据位置不匹配，请恢复原目录。");
+      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(location.dataRoot)).toLowerCase()) throw new AppError("DATA", "LiveNest 配置与数据位置不匹配，请恢复原目录。");
       return settings;
     }
     const legacy = await this.record<string>(this.locator, "settings.json");
@@ -70,15 +71,15 @@ export class SettingsStore {
     const encrypted = await this.record<string>(store, "settings.json");
     if (encrypted) {
       const settings = await this.decode(encrypted);
-      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(target)).toLowerCase()) throw new Error("已有 LiveNest 配置与选择位置不匹配，没有覆盖文件。");
+      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(target)).toLowerCase()) throw new AppError("DATA", "已有 LiveNest 配置与选择位置不匹配，没有覆盖文件。");
       // 存活 Agent 的目录不能被第二个安装接管；失效锁由原有恢复机制处理。
       const lock = await import("node:fs/promises").then(fs => fs.readFile(path.join(target, "state", "host.lock"), "utf8")).catch(e => { if (e.code === "ENOENT") return ""; throw e; });
-      if (lock) { const pid = Number(lock); if (!Number.isInteger(pid) || pid <= 0) throw new Error("已有 Agent 锁损坏，请保留原目录。"); try { process.kill(pid, 0); throw new Error("原数据目录仍有 Agent 使用，请先退出原客户端。"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; } }
+      if (lock) { const pid = Number(lock); if (!Number.isInteger(pid) || pid <= 0) throw new AppError("DATA", "已有 Agent 锁损坏，请保留原目录。"); try { process.kill(pid, 0); throw new AppError("DATA", "原数据目录仍有 Agent 使用，请先退出原客户端。"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; } }
       await this.write(settings); return settings;
     }
     const settings = { ...this.fresh(target), rootId: marker.id };
     const { hasData } = await import("./data-root");
-    if (await hasData(settings)) throw new Error("数据目录已有业务文件但缺少桌面配置，未创建新身份。");
+    if (await hasData(settings)) throw new AppError("DATA", "数据目录已有业务文件但缺少桌面配置，未创建新身份。");
     await this.write(settings); return settings;
   }
   /** 校验 state 和 desktop 路径后使用现有原子存储。 */
@@ -89,12 +90,12 @@ export class SettingsStore {
     const snapshot = structuredClone(settings);
     const next = this.saving.catch(() => {}).then(async () => {
       const marker = await readRoot(snapshot.dataRoot);
-      if (snapshot.rootId !== marker.id) throw new Error("LiveNest 数据根目录归属不匹配，未保存配置。");
+      if (snapshot.rootId !== marker.id) throw new AppError("DATA", "LiveNest 数据根目录归属不匹配，未保存配置。");
       const store = await this.rootStore(snapshot.dataRoot);
       const encrypted = await protectWindows(Buffer.from(JSON.stringify(snapshot), "utf8"), true);
       await store.write("settings.json", "dpapi:" + encrypted.toString("base64"));
       const verified = await this.decode((await store.read<string>("settings.json"))!);
-      if (JSON.stringify(verified) !== JSON.stringify(snapshot)) throw new Error("本机配置写入校验失败，原数据位置保留。");
+      if (JSON.stringify(verified) !== JSON.stringify(snapshot)) throw new AppError("DATA", "本机配置写入校验失败，原数据位置保留。");
       await this.locator.write("data-location.json", { version: 1, dataRoot: snapshot.dataRoot, rootId: marker.id });
     }); this.saving = next; await next;
   }

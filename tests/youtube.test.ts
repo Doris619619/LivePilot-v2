@@ -1,3 +1,4 @@
+/** 使用隔离令牌和模拟 Google 响应验证频道授权及服务失败分类。 */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -77,3 +78,11 @@ it("never leaks upstream diagnostic text containing credentials", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(reply({ error: { message: "streamKey=secret-should-not-leak", errors: [{ reason: "quotaExceeded" }] } }, 403)));
   await expect(new YouTubeApi(auth).transition("b", "live")).rejects.toThrow("配额");
 });
+
+/** 只有服务明确撤销授权才要求重新授权，所有失败保留原令牌。 */
+it.each([[503,"invalid_grant","GOOGLE_UNAVAILABLE"],[429,"quota","YOUTUBE_QUOTA"],[400,"invalid_grant","GOOGLE_AUTH"],[401,"invalid_client","GOOGLE_CONFIG"]])("distinguishes refresh HTTP %s / %s",async(status,reason,code)=>{
+ const encrypted=seal({accessToken:"expired",refreshToken:"stable-refresh",expiresAt:0,channelId:"channel",channel:"Studio"});await storage.write("youtube.enc",encrypted);
+ vi.stubGlobal("fetch",vi.fn(async()=>reply({error:reason},status as number)));
+ await expect(new YouTubeAuth().access()).rejects.toMatchObject({code});expect(await storage.read("youtube.enc")).toBe(encrypted);
+});
+it("consumes a cancelled transaction without token exchange",async()=>{const auth=new YouTubeAuth();const tx=await auth.begin();const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);await auth.finish(tx.cookie,new URL(tx.url).searchParams.get("state")!,"",undefined,undefined,true);expect(fetcher).not.toHaveBeenCalled();await expect(auth.finish(tx.cookie,new URL(tx.url).searchParams.get("state")!,"",undefined,undefined,true)).rejects.toThrow("已过期");});

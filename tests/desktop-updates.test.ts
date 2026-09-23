@@ -29,3 +29,6 @@ it("requires confirmation and maintenance permission before restarting", async (
   prepare.mockResolvedValueOnce(undefined); await updates.install(prepare, quit);
   expect(quit).toHaveBeenCalledOnce(); expect(mock.install).toHaveBeenCalledWith(false, true);
 });
+
+/** 校验失败不能绕过，磁盘错误与网络错误分别给出恢复步骤。 */
+it.each([["ERR_CHECKSUM_MISMATCH","UPDATE_INTEGRITY"],["ENOSPC","STORAGE_SPACE"],["ECONNRESET","UPDATE_NETWORK"]])("classifies update %s safely",async(code,expected)=>{const updates=new Updates();mock.handlers.get("update-available")!({version:"0.1.2"});mock.download.mockRejectedValueOnce(Object.assign(new Error("private signed download URL"),{code}));await updates.download();expect(updates.state.problem?.code).toBe(expected);expect(updates.state.message).not.toContain("private");if(expected==="UPDATE_INTEGRITY"){await updates.download();expect(mock.download).toHaveBeenCalledOnce();}});

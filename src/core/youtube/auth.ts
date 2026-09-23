@@ -18,9 +18,15 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenReply> {
   try {
     response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams(body), cache: "no-store", signal: AbortSignal.timeout(20_000) });
   } catch { throw new AppError("GOOGLE_NETWORK", "无法连接 Google 授权服务。请检查本机服务的网络连接。"); }
-  if (!response.ok) throw new AppError("GOOGLE_AUTH", "Google 授权失效或 OAuth 配置不匹配，请重新连接 YouTube。", 401);
-  const data = await response.json() as TokenReply;
-  if (!data.access_token) throw new AppError("GOOGLE_AUTH", "Google 未返回有效授权。请重新连接 YouTube。", 401);
+  if (!response.ok) {
+    const reply = await response.json().catch(() => null) as { error?: string } | null;
+    if (response.status === 429) throw new AppError("YOUTUBE_QUOTA", "Google 请求次数暂时受限，请稍后重新查询。", 429);
+    if (response.status >= 500) throw new AppError("GOOGLE_UNAVAILABLE", "Google 授权服务暂不可用，原授权记录保留，请稍后查询。", 503);
+    if (reply?.error === "invalid_grant") throw new AppError("GOOGLE_AUTH", "Google 已确认原授权无效，请重新授权原频道。", 409);
+    throw new AppError("GOOGLE_CONFIG", "Google 未接受应用配置，请联系管理员核对；不要反复重新授权。", 409);
+  }
+  const data = await response.json().catch(()=>null) as TokenReply | null;
+  if (!data?.access_token) throw new AppError("GOOGLE_UNAVAILABLE", "Google 未返回有效响应，原授权保留，请稍后查询。", 503);
   return data;
 }
 export class YouTubeAuth {
@@ -42,7 +48,7 @@ export class YouTubeAuth {
   /** 保存绑定操作者与实例的一次性 PKCE 事务和浏览器 Cookie。 */
   async begin(actor?: string) {
     const c = config();
-    if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "请先配置 GOOGLE_CLIENT_ID 和 GOOGLE_CLIENT_SECRET。");
+    if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "请联系管理员配置 Google 频道连接应用。");
     const cookie = randomBytes(32).toString("hex");
     const state = this.instanceId + "." + randomBytes(32).toString("hex");
     const verifier = randomBytes(48).toString("base64url");
@@ -55,8 +61,8 @@ export class YouTubeAuth {
     }) };
   }
   /** 原子认领事务后验证操作者、Cookie/state/实例，确认频道再保存新授权。 */
-  async finish(cookie: string, state: string, code: string, expectedChannel?: string, actor?: string) {
-    if (!/^[a-f0-9]{64}$/.test(cookie) || !state || !code) throw new AppError("OAUTH_STATE", "授权回调无效，请从本页面重新连接。");
+  async finish(cookie: string, state: string, code: string, expectedChannel?: string, actor?: string, cancelled = false) {
+    if (!/^[a-f0-9]{64}$/.test(cookie) || !state || (!code && !cancelled)) throw new AppError("OAUTH_STATE", "授权回调无效，请从本页面重新连接。");
     const filename = path.join(this.storage.dir, "oauth-" + hash(cookie) + ".enc");
     const claimed = filename + ".claimed";
     try { await rename(filename, claimed); } catch { throw new AppError("OAUTH_STATE", "授权已过期或已被使用，请重新连接。"); }
@@ -64,6 +70,7 @@ export class YouTubeAuth {
     try { tx = unseal<Transaction>(JSON.parse(await readFile(claimed, "utf8"))); }
     finally { await unlink(claimed); }
     if (tx.actor !== actor || tx.instanceId !== this.instanceId || tx.expiresAt < Date.now() || !same(tx.state, state)) throw new AppError("OAUTH_STATE", "授权校验失败，请在发起授权的浏览器中重试。");
+    if(cancelled)return;
     const c = config();
     const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: c.redirectUri, grant_type: "authorization_code", code, code_verifier: tx.verifier });
     if (!reply.refresh_token) throw new AppError("GOOGLE_AUTH", "Google 没有返回离线授权。请在 Google 账号中撤销本应用授权后重新连接。");

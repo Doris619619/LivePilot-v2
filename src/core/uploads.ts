@@ -4,7 +4,7 @@ import { mkdir, realpath, lstat, readdir, statfs, open, unlink, link } from "nod
 import path from "node:path";
 import { config, requireInstance } from "./config";
 import { Store } from "./storage";
-import { AppError, safeError } from "./errors";
+import { AppError, safeError, problemFor } from "./errors";
 import { audit } from "./audit";
 import type { UploadStatus } from "@/shared/uploads";
 import type { MediaKind } from "./media";
@@ -42,8 +42,8 @@ async function recordStore(temp: string, id: string) {
 }
 /** 发布过的元数据不再用于预留磁盘，但保留到过期以处理丢失的完成响应。 */
 function dto(record: UploadRecord): UploadStatus {
-  const { id, instanceId, kind, filename, size, received, chunkSize, fingerprint, status, expiresAt, publishedName, error } = record;
-  return { id, instanceId, kind, filename, size, received, chunkSize, fingerprint, status, expiresAt, publishedName, error };
+  const { id, instanceId, kind, filename, size, received, chunkSize, fingerprint, status, expiresAt, publishedName, error, problem, verification } = record;
+  return { id, instanceId, kind, filename, size, received, chunkSize, fingerprint, status, expiresAt, publishedName, error, problem, verification };
 }
 /** 逐个移除自有文件，拒绝目录、链接和不认识的内容，避免递归删除。 */
 async function removeTemporary(dir: string, includeMetadata = true) {
@@ -92,7 +92,7 @@ export async function createUpload(instanceId: string, actor: string, input: Inp
     }
     const outstanding = await reserved(temp);
     const disk = await statfs(root);
-    if (disk.bavail * disk.bsize - outstanding < input.size + HEADROOM) throw new AppError("SPACE", "直播电脑磁盘空间不足，请先在 B 电脑整理空间。", 507);
+    if (disk.bavail * disk.bsize - outstanding < input.size + HEADROOM) throw new AppError("SPACE", "直播电脑磁盘空间不足，请在此上传对应的直播电脑整理空间。", 507);
     const id = requestedId || randomUUID();
     const dir = await childFolder(temp, id, true);
     const store = new Store(dir);
@@ -159,7 +159,7 @@ export async function prepareFinish(instanceId: string, actor: string, id: strin
     const { record } = await load(instanceId, actor, id);
     if (record.received !== record.size) throw new AppError("UPLOAD", "文件尚未传输完成。", 409);
     if (record.status !== "complete") {
-      record.status = "verifying"; record.error = undefined;
+      record.status = "verifying"; record.verification = "running"; record.error = undefined; record.problem = undefined;
       record.publishedName ||= path.parse(record.filename).name + "-" + record.id + path.extname(record.filename);
       await store.write("upload.json", record);
     }
@@ -195,7 +195,7 @@ export async function finishUpload(instanceId: string, actor: string, id: string
       const existing = await lstat(destination); const original = await lstat(part);
       if (!existing.isFile() || existing.ino !== original.ino || existing.dev !== original.dev) throw new AppError("MEDIA", "目标名称已被占用，未覆盖已有文件。", 409);
     }
-    record.status = "complete"; record.expiresAt = Date.now() + TTL;
+    record.status = "complete"; record.error = undefined; record.problem = undefined; record.verification = undefined; record.expiresAt = Date.now() + TTL;
     await store.write("upload.json", record);
     await removeTemporary(store.dir, false);
     await audit(actor, "upload", instanceId, "complete", id);
@@ -224,6 +224,6 @@ export async function uploadFailure(instanceId: string, actor: string, id: strin
   const { store } = await load(instanceId, actor, id);
   await store.exclusive(async () => {
     const { record } = await load(instanceId, actor, id);
-    if (record.status !== "complete") { record.error = safeError(error); await store.write("upload.json", record); }
+    if (record.status !== "complete") { record.error = safeError(error); record.verification = "failed"; record.problem = problemFor(error,{target:{instanceId,uploadId:id},domain:"media",stage:"校验并发布文件"}); await store.write("upload.json", record); }
   }, "upload.lock");
 }

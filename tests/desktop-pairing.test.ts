@@ -79,7 +79,7 @@ it("allows only one of two existing PCs to redeem the same fresh code", async ()
 });
 it("rejects expired codes and preserves local configuration", async () => {
   const local = await enrolled(); const before = structuredClone(local); const code = await invite("fresh"); vi.setSystemTime(Date.now() + 601_000);
-  await expect(pairDesktop(local, code, async () => {}, request)).rejects.toThrow("过期"); expect(local).toEqual(before);
+  await expect(pairDesktop(local, code, async () => {}, request)).rejects.toThrow("新生成且未使用"); expect(local).toEqual(before);
 });
 it("supports legacy same-device responses but refuses an unconfirmed cross-device response", async () => {
   const local = settings(); await pairDesktop(local, await invite("first"), async () => {}, async () => Response.json({ protocol: 1 }));

@@ -1,7 +1,7 @@
 /** 每实例持久化命令受理与去重；浏览器断线不取消任务，进程重启不盲目重放。 */
 import { createHash, randomUUID } from "node:crypto";
 import { Store } from "./storage";
-import { AppError, safeError } from "./errors";
+import { AppError, safeError, problemFor } from "./errors";
 import { audit } from "./audit";
 import type { Control } from "./control";
 import type { CommandStatus, Selection } from "@/shared/types";
@@ -24,8 +24,8 @@ export class Commands {
   }
   /** 公开状态不包含内部命令参数和进程标识。 */
   private public(record: Record): CommandStatus {
-    const { id, action, actor, status, updatedAt, message } = record;
-    return { id, action, actor, status, updatedAt, message };
+    const { id, action, actor, status, updatedAt, message, problem } = record;
+    return { id, action, actor, status, updatedAt, message, problem };
   }
   /** 按命令 ID 读取真实结果，供 Agent 重连后补报；不重放旧进程任务。 */
   async get(id: string) {
@@ -83,7 +83,7 @@ export class Commands {
       else if (input.action === "launch") await this.control.launch();
       else await this.control.clearUncertain();
       record.status = "succeeded"; record.message = "操作已完成";
-    } catch (error) { record.status = "failed"; record.message = safeError(error); }
+    } catch (error) { record.status = "failed"; record.message = safeError(error); record.problem = problemFor(error,{target:{instanceId:this.instanceId},attemptId:record.id,stage:record.action}); }
     finally {
       record.updatedAt = new Date().toISOString();
       await this.storage.write(id + ".json", record);

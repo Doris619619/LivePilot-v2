@@ -21,7 +21,7 @@ beforeEach(() => {
 });
 it("retains a failed candidate without publishing it and restores the old device", async () => {
   const old = structuredClone(manager.settings.instances);
-  await expect(manager.act("add")).rejects.toThrow("initialization failure");
+  await expect(manager.act("add")).rejects.toThrow("执行结果需要核对");
   expect(manager.settings.instances).toEqual(old); expect(manager.settings.candidates).toHaveLength(1);
   expect(manager.settings.maintenance).toBeUndefined(); expect(f.rpc.mock.calls.map(c => c[0])).toEqual(["maintenance-begin", "maintenance-end"]);
   expect(JSON.stringify(manager.state())).not.toContain("secret");
@@ -44,7 +44,7 @@ it("retains maintenance credentials when release is not acknowledged", async () 
 });
 it("keeps a validated candidate after an ambiguous cloud inventory commit", async () => {
   f.initialize.mockResolvedValue(undefined); f.rpc.mockImplementation(async route => { if (route === "instances") throw new Error("lost inventory reply"); return {}; });
-  await expect(manager.act("add")).rejects.toThrow("lost inventory");
+  await expect(manager.act("add")).rejects.toThrow("执行结果需要核对");
   expect(manager.settings.instances.map(i => i.id)).toEqual(["main", "candidate"]); expect(manager.settings.candidates).toEqual([]); expect(manager.settings.maintenance).toBeTruthy();
 });
 it("migrates old uninitialized entries without changing registered IDs", () => {

@@ -7,7 +7,7 @@ import { AppError } from "@/core/errors";
 import { targetSchema, type TaskPayload, type Target } from "@/shared/remote";
 import type { Dashboard } from "@/shared/types";
 import { initialState } from "@/core/control";
-import { listAgents, requireTarget, snapshotFor } from "@/cloud/agents";
+import { listAgents, requireTarget, snapshotFor, problemsFor } from "@/cloud/agents";
 import { enqueue, latestControl, operation, rpc } from "@/cloud/tasks";
 export { cloudMode, rpc };
 /** 云端没有 main 的隐式默认目标；避免两个设备的同名实例串台。 */
@@ -25,7 +25,7 @@ export async function remoteDashboard(destination: Target): Promise<Dashboard> {
   const fresh = agent.online && !!snapshot && snapshot.observedAt > Date.now() - 20_000 && snapshot.observedAt <= Date.now() + 5_000;
   const base: Dashboard = snapshot?.dashboard || { state: initialState(), busy: false, obs: { ready: false, running: false, streaming: null }, youtube: { connected: false }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "unlisted", madeForKids: false } };
   const waiting = !!current && ["queued", "delivering", "accepted", "running", "uncertain"].includes(current.status);
-  return { ...base, operation: current || base.operation, busy: waiting || base.busy, device: { agentId: agent.id, name: agent.name, online: fresh, lastSeen: agent.lastSeen, observedAt: snapshot?.observedAt }, obs: fresh ? base.obs : { ...base.obs, ready: false, streaming: null, message: agent.online ? "设备状态读取已过期，请检查直播电脑。" : "直播电脑离线；实际推流状态未知，已有直播可能仍在继续。" } };
+  return { ...base, problems: [...(base.problems || []), ...await problemsFor(destination.agentId,destination.instanceId)], operation: current || base.operation, busy: waiting || base.busy, device: { agentId: agent.id, name: agent.name, online: fresh, lastSeen: agent.lastSeen, observedAt: snapshot?.observedAt }, obs: fresh ? base.obs : { ...base.obs, ready: false, streaming: null, message: agent.online ? "设备状态读取已过期，请检查直播电脑。" : "直播电脑离线；实际推流状态未知，已有直播可能仍在继续。" } };
 }
 /** 控制接口只持久化完整任务，核心执行在 Agent，不使用 Next after 编排直播。 */
 export async function remoteControl(destination: Target, actor: string, payload: Extract<TaskPayload, { kind: "control" }>, requestId: string) {

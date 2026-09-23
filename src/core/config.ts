@@ -17,7 +17,7 @@ export function instanceIds(): string[] {
 
 /** 拒绝未知实例；任何写操作必须显式指定一个已配置的 ID。 */
 export function requireInstance(id: unknown): string {
-  if (typeof id !== "string" || !instanceIds().includes(id)) throw new AppError("INSTANCE", "实例不存在，请刷新页面检查 LIVEPILOT_INSTANCES。", 400);
+  if (typeof id !== "string" || !instanceIds().includes(id)) throw new AppError("INSTANCE", "实例不存在，请刷新设备列表；仍缺失时在原电脑的客户端检查 OBS 清单。", 400);
   return id;
 }
 

@@ -7,7 +7,7 @@ import { Control } from "./control";
 import { config, missingConfig, requireInstance, validateInstances } from "./config";
 import { Store } from "./storage";
 import { resolveMedia, scanMedia } from "./media";
-import { safeError } from "./errors";
+import { safeError, problemFor } from "./errors";
 import { LocalObsRuntime } from "./obs/runtime";
 import { YouTubeAuth } from "./youtube/auth";
 import { YouTubeApi } from "./youtube/api";
@@ -51,25 +51,26 @@ export class Service {
       this.obs.status(),
       scanMedia(c.mediaRoot).catch(e => ({ videos: [], music: [], error: safeError(e) })),
     ]);
-    let youtube: Dashboard["youtube"] = { connected: false };
+    if(obs.problem)obs.problem={...obs.problem,target:{...obs.problem.target,instanceId:this.id}};
+    let youtube: Dashboard["youtube"] = { connected: false, authorization: "missing" };
     try {
       const tokens = await this.auth.tokens();
       if (tokens) {
         const cacheKey = [tokens.channelId, state.broadcastId, state.streamId].join(":");
         if (this.ytCache?.key === cacheKey && Date.now() - this.ytCache.at < 30_000) youtube = this.ytCache.value;
         else {
-          youtube = { connected: true, channel: tokens.channel, channelId: tokens.channelId };
+          youtube = { connected: true, authorization: "present", query: "ready", channel: tokens.channel, channelId: tokens.channelId };
           try {
             const channel = await this.youtube.channel();
             youtube.channel = channel.title;
             if (state.broadcastId) youtube.lifecycle = (await this.youtube.broadcast(state.broadcastId))?.status.lifeCycleStatus || "missing";
             if (state.streamId) youtube.ingest = (await this.youtube.stream(state.streamId))?.status.streamStatus || "missing";
             youtube.checkedAt = new Date().toISOString();
-          } catch (e) { youtube = { connected: false, channel: tokens.channel, channelId: tokens.channelId, error: safeError(e) }; }
+          } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome:"rejected"}); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
           this.ytCache = { key: cacheKey, at: Date.now(), value: youtube };
         }
       }
-    } catch (e) { youtube.error = safeError(e); }
+    } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
     return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, configuration: { missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }

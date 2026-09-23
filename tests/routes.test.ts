@@ -9,6 +9,8 @@ import { authenticate } from "@/server/access";
 import { after } from "next/server";
 import { randomUUID } from "node:crypto";
 import { AppError } from "@/server/errors";
+import { saveOAuthResult } from "@/server/oauth-result";
+vi.mock("@/server/oauth-result",()=>({saveOAuthResult:vi.fn(async()=>"fixture-result")}));
 import { requireInstance } from "@/server/config";
 /** 只模拟路由所需的服务表面，保留独立调用记录。 */
 function mockApp(id: string) {
@@ -66,19 +68,17 @@ it("sets an instance-specific OAuth cookie", async () => {
 /** 同一个回调 URL 根据已验证 state 定位实例，仅读取该实例 Cookie。 */
 it("returns OAuth to its originating panel and reads only its cookie", async () => {
   const response = await callback(new NextRequest("http://127.0.0.1:3010/api/youtube/callback?state=obs_a." + "a".repeat(64) + "&code=fake-code", { headers: { host: "127.0.0.1:3010", cookie: "livepilot_oauth_main=wrong; livepilot_oauth_obs_a=correct" } }));
-  expect(response.headers.get("location")).toBe("http://127.0.0.1:3010/?oauth=connected#instance-obs_a");
-  expect(apps.get("obs_a")!.auth.finish).toHaveBeenCalledWith("correct", "obs_a." + "a".repeat(64), "fake-code", undefined, "alice");
+  expect(response.headers.get("location")).toBe("http://127.0.0.1:3010/workspace?oauthResult=fixture-result#instance-obs_a");
+  expect(apps.get("obs_a")!.auth.finish).toHaveBeenCalledWith("correct", "obs_a." + "a".repeat(64), "fake-code", undefined, "alice", false);
   expect(apps.get("main")!.auth.finish).not.toHaveBeenCalled();
 });
 
-/** 检查实际 Set-Cookie 字节，保证浏览器一次解码即可呈现中文错误。 */
+/** 授权失败保存原账号与实例的结果引用，不通过 Cookie 传递错误。 */
 it("encodes OAuth failure notices exactly once and preserves the target panel", async () => {
   const message = "当前有未结束场次，请重新授权原 Channel。";
   apps.get("obs_a")!.auth.finish.mockRejectedValueOnce(new AppError("CHANNEL", message));
   const response = await callback(new NextRequest("http://127.0.0.1:3010/api/youtube/callback?state=obs_a." + "a".repeat(64) + "&code=fake-code", { headers: { host: "127.0.0.1:3010", cookie: "livepilot_oauth_obs_a=correct" } }));
-  const value = /livepilot_notice=([^;]+)/.exec(response.headers.get("set-cookie") || "")?.[1];
-  expect(value).toBeDefined();
-  expect(decodeURIComponent(value!)).toBe(message);
-  expect(response.headers.get("location")).toBe("http://127.0.0.1:3010/?oauth=failed#instance-obs_a");
+  expect(saveOAuthResult).toHaveBeenLastCalledWith("alice",expect.objectContaining({target:{instanceId:"obs_a"},status:"failed",problem:expect.objectContaining({message})}));
+  expect(response.headers.get("location")).toBe("http://127.0.0.1:3010/workspace?oauthResult=fixture-result#instance-obs_a");
   expect(apps.get("obs_a")!.invalidate).not.toHaveBeenCalled();
 });
