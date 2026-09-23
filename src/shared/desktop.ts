@@ -14,7 +14,10 @@ export type ObsCandidate = { exe: string; version: string; running: boolean; pro
 export type ObsScan = { running: boolean; canceled: boolean; deep: boolean; results: ObsCandidate[]; drives: string[]; completedDrives: string[]; inaccessible: string[]; visited: number; current?: string; error?: string };
 export type DesktopAction = "restore-candidate" | "scan" | "scan-cancel" | "import-obs" | "firewall" | "diagnose-obs" | "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "repair-managed" | "discard" | "directory" | "open-data" | "autostart" | "web" | "update-check" | "update-download" | "update-install";
 export type DesktopResult = { ok: true; state: DesktopState; cancelled?: boolean } | { ok: false; problem: Problem; fields?: Record<string,string> };
-export type DesktopBridge = { session(): Promise<{ authenticated: boolean; username?: string }>; login(username: string, password: string): Promise<{ ok: boolean; message?: string }>; logout(): Promise<void>; state(): Promise<DesktopState>; act(action: DesktopAction, input?: Record<string, unknown>): Promise<DesktopResult> };
+export type LocalUpdateState = Pick<DesktopState, "version" | "busy" | "update">;
+export type UpdateCommand = "update-check" | "update-download" | "update-install";
+export type LocalUpdateResult = { ok: boolean; state: LocalUpdateState; cancelled?: boolean; problem?: Problem };
+export type DesktopBridge = { session(): Promise<{ authenticated: boolean; username?: string }>; login(username: string, password: string): Promise<{ ok: boolean; message?: string }>; logout(): Promise<void>; state(): Promise<DesktopState>; act(action: DesktopAction, input?: Record<string, unknown>): Promise<DesktopResult>; updateState(): Promise<LocalUpdateState>; update(action: UpdateCommand): Promise<LocalUpdateResult> };
 
 /** 后台操作反馈不含输入或凭据，切换页面和重新登录后仍可恢复。 */
 export type DesktopActivity = { problem?: Problem; attemptId?: string; instanceId?: string; action: DesktopAction; step: number; status: "running" | "failed" | "complete" | "cancelled"; stage: string; startedAt: number; message?: string };

@@ -88,6 +88,7 @@ export class AgentHost {
   /** 维护 RPC 发送失败立即清理等待项，迟到的旧进程消息不影响新会话。 */
   rpc<T>(route: "maintenance-begin" | "maintenance-end" | "instances", data: unknown): Promise<T> {
     const child = this.child;
+    if (this.errorCode === "AGENT_AUTH") return Promise.reject(new AppError("AGENT_AUTH", this.message || "设备配对已失效，请在原电脑恢复配对后重试。"));
     if (!child?.connected) return Promise.reject(new AppError("AGENT_CONNECTION", "设备未连接，不能确认维护状态。"));
     const id = randomUUID(); return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.replies.delete(id); reject(new AppError("AGENT_CONNECTION", "维护响应超时，请重连后恢复；没有开始强制重启。")); }, 40_000);
@@ -98,7 +99,7 @@ export class AgentHost {
   /** 等待首次心跳；已有明确错误立即交还重试入口，后台 Agent 保持自动重连。 */
   async ready() {
     const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (this.message) throw new AppError("AGENT_CONNECTION", this.message); if (!this.child?.connected) throw new AppError("DESKTOP", "Agent 未运行。"); await new Promise(r => setTimeout(r, 500)); }
+    while (Date.now() < deadline) { if (Date.now() - this.lastHeartbeat < 20_000) return; if (this.message) throw new AppError(this.errorCode || "AGENT_CONNECTION", this.message); if (!this.child?.connected) throw new AppError("AGENT_CONNECTION", "Agent 未运行，请重新连接。"); await new Promise(r => setTimeout(r, 500)); }
     throw new AppError("AGENT_CONNECTION", this.message || "等待云端连接超时，请检查网络后重试。");
   }
   /** 优雅停止等待 exit/close；超时保留存活进程，失败移除等待监听器。 */

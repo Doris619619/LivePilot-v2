@@ -13,6 +13,8 @@ export type Settings = { dataNotice?: string; rootId?: string; dataRoot: string;
 export class SettingsStore {
   private locator = new Store(app.getPath("userData"));
   private saving: Promise<void> = Promise.resolve();
+  /** Agent 排空后等待最后一次配置落盘；写入失败必须阻止安装。 */
+  async flush() { await this.saving; }
   /** 开发测试使用独立目录；生产绝不接受环境变量覆盖。 */
   private installation() { return app.isPackaged ? path.dirname(app.getPath("exe")) : undefined; }
   /** 无配置不代表可以重置损坏身份；只在明确的新空根下生成初始状态。 */

@@ -20,6 +20,7 @@ import { checkObsNetwork } from "./obs-network";
 import { diagnose } from "./diagnostics";
 import { assertLocalIdle, initializeObs, newInstance } from "./obs-setup";
 import { Updates } from "./updates";
+import { runLocalUpdate } from "./local-update";
 import { isAppError, safeError, problemFor } from "../src/core/errors";
 import { Activity } from "./activity";
 import { separateCandidates, acceptCandidate, archiveCandidate } from "./candidates";
@@ -101,7 +102,7 @@ export class Manager {
     if(action === "firewall"){await shell.openExternal("ms-settings:windowsdefender");return this.state();}
     if (this.busy) throw new AppError("DESKTOP", "上一步仍在处理，请稍候。"); this.busy = true; this.message = ""; this.activity.begin(action, typeof input.id === "string" ? input.id : undefined);
     try {
-      if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
+      if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download", "update-install"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
       if (action === "check") this.checks = await diagnose(this.settings, this.resources);
       else if (action === "diagnose-obs") { const item=[...this.settings.instances,...(this.settings.candidates||[])].find(i=>i.id===input.id);if(!item)throw new AppError("DESKTOP", "请选择 OBS。");configureCore(()=>environment({...this.settings,instances:[...this.settings.instances.filter(i=>i.id!==item.id),item]}));const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
@@ -124,7 +125,16 @@ export class Manager {
       } else if (action === "autostart") app.setLoginItemSettings({ openAtLogin: z.boolean().parse(input.enabled), path: app.getPath("exe"), args: ["--hidden"] });
       else if (action === "update-check") await this.updates.check();
       else if (action === "update-download") await this.updates.download();
-      else if (action === "update-install") {if(await this.updates.install(async () => { await this.maintenance(); await this.agent.stop(); }, this.allowQuit)===false)this.activity.cancel();}
+      else if (action === "update-install") {
+        const result = await runLocalUpdate({
+          wasRunning: !!this.agent.child,
+          checkIdle: () => assertLocalIdle({ ...this.settings, instances: [...this.settings.instances, ...(this.settings.candidates || []), ...(this.settings.archivedCandidates || [])] }),
+          stop: () => this.agent.stop(), flush: () => this.store.flush(),
+          reconnect: () => this.agent.start(this.settings, this.resources, async google => { this.settings.google = google; await this.store.write(this.settings); }),
+          install: prepare => this.updates.install(prepare, this.allowQuit),
+        });
+        if (!result) this.activity.cancel();
+      }
       else throw new AppError("DESKTOP", "操作不受支持。");
       if (["prepare","add","import-obs","repair-managed","repair","attach","directory","restore-candidate"].includes(action)) this.checks = await diagnose(this.settings, this.resources);
       this.activity.complete();
