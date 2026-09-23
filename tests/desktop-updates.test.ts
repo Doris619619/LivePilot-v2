@@ -16,21 +16,20 @@ it("retains version on download failure without automatic download or install", 
   mock.download.mockRejectedValueOnce(new Error("private URL")); await expect(updates.download()).rejects.toMatchObject({ code: "UPDATE_NETWORK" });
   expect(updates.state).toMatchObject({ status: "error", version: "0.1.4", stage: "download" });
 });
-it("cancel preserves download; preparation failure becomes a retryable install error", async () => {
+it("one click needs no confirmation and preparation failure retries the same installer", async () => {
   const updates = downloaded(); const prepare = vi.fn(); const quit = vi.fn();
-  mock.answer.mockResolvedValueOnce({ response: 0 }); expect(await updates.install(prepare, quit)).toBe(false); expect(prepare).not.toHaveBeenCalled();
   mock.answer.mockResolvedValue({ response: 1 }); prepare.mockRejectedValueOnce(new AppError("OBS_MAINTENANCE", "OBS 2 正在录制，请在完成后重试。"));
   await expect(updates.install(prepare, quit)).rejects.toMatchObject({ code: "OBS_MAINTENANCE" });
   expect(quit).not.toHaveBeenCalled(); expect(mock.install).not.toHaveBeenCalled(); expect(updates.state).toMatchObject({ status: "error", stage: "install", version: "0.1.4" });
   expect(updates.state.message).toContain("OBS 2"); expect(updates.state.message).not.toContain("下载完成");
   await updates.check(true); expect(mock.check).not.toHaveBeenCalled(); expect(updates.state.status).toBe("error");
-  await updates.install(prepare, quit); expect(quit).toHaveBeenCalledOnce(); expect(mock.install).toHaveBeenCalledWith(false, true);
+  await updates.install(prepare, quit); expect(quit).toHaveBeenCalledOnce(); expect(mock.install).toHaveBeenCalledWith(true, true); expect(mock.answer).not.toHaveBeenCalled();
 });
 it("shows preparing, rejects duplicate clicks, ignores late download notifications", async () => {
   const updates = downloaded(); mock.answer.mockResolvedValue({ response: 1 });
   let done!: () => void; const wait = new Promise<void>(resolve => { done = resolve; });
   const first = updates.install(() => wait, vi.fn()); await Promise.resolve(); expect(updates.state.status).toBe("preparing");
-  await expect(updates.install(vi.fn(), vi.fn())).rejects.toMatchObject({ code: "UPDATE_STATE" }); expect(mock.answer).toHaveBeenCalledOnce();
+  await expect(updates.install(vi.fn(), vi.fn())).rejects.toMatchObject({ code: "UPDATE_STATE" }); expect(mock.answer).not.toHaveBeenCalled();
   mock.handlers.get("update-downloaded")!({ version: "stale" }); expect(updates.state.version).toBe("0.1.4"); expect(updates.state.status).toBe("preparing");
   done(); await first;
 });

@@ -42,7 +42,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 780, height: 850 } }); const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(() => {
     let authenticated = false;
-    const state = { version: '0.1.3（模拟）', busy: false, update: { status: 'downloaded', version: '0.1.4', message: '下载完成，可以重启更新' } };
+    const state = { version: '0.1.3（模拟）', busy: false, update: { status: 'available', version: '0.1.4', message: '发现新版本 0.1.4' } };
     const calls = []; let finish;
     const fixture = window.updateFixture = { state, calls, fail() { const problem = { version: 1, source: 'desktop', code: 'OBS_MAINTENANCE', domain: 'update', target: {}, severity: 'error', stage: '准备安装更新', outcome: 'not-sent', observedAt: Date.now(), actions: ['help', 'support'], message: '更新尚未开始安装。模拟 OBS 2 正在录制，请在完成后重试。' }; state.busy = false; state.update = { ...state.update, status: 'error', stage: 'install', message: problem.message, problem }; finish({ ok: false, state: structuredClone(state), problem }); }, cancel() { state.busy = false; finish({ ok: true, state: structuredClone(state), cancelled: true }); } };
     window.liveNest = {
@@ -55,14 +55,14 @@ try {
     void fixture;
   });
   await page.goto('http://127.0.0.1:' + server.address().port);
-  await page.getByRole('button', { name: '重启更新', exact: true }).click();
+  await page.getByRole('button', { name: '更新并重启', exact: true }).click();
   await page.getByRole('button', { name: '正在准备重启…', exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: '正在准备重启…' }).isDisabled(), true);
   await page.evaluate(() => window.updateFixture.fail()); await page.getByRole('button', { name: '重试重启更新' }).waitFor();
   assert.equal(await page.getByText('下载完成，可以重启更新', { exact: true }).count(), 0);
   await capture(page, 'login-update-failure');
-  await page.getByRole('button', { name: '重试重启更新' }).click(); await page.evaluate(() => window.updateFixture.cancel());
+  await page.getByRole('button', { name: '重试重启更新' }).click(); await page.evaluate(() => window.updateFixture.fail());
   await page.waitForFunction(() => !document.querySelector('.login-update button')?.disabled);
-  assert.deepEqual(await page.evaluate(() => window.updateFixture.calls), ['update-install', 'update-install']);
+  assert.deepEqual(await page.evaluate(() => window.updateFixture.calls), ['update-apply', 'update-install']);
   await page.getByLabel('账号', { exact: true }).fill('模拟客户'); await page.getByLabel('密码', { exact: true }).fill('fixture-only'); await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '重试重启更新' }).waitFor();
   assert.equal(await page.getByText('旧配置快照不应覆盖更新错误', { exact: true }).count(), 0);
@@ -70,7 +70,7 @@ try {
   await page.getByRole('button', { name: '软件更新：更新需要处理' }).click(); await page.getByRole('region', { name: '软件更新详情' }).waitFor();
   await page.keyboard.press('Escape'); assert.equal(await page.getByRole('region', { name: '软件更新详情' }).count(), 0);
   assert.equal(await page.getByRole('button', { name: '软件更新：更新需要处理' }).evaluate(button => button === document.activeElement), true);
-  assert.deepEqual(errors, []); console.log('PASS simulated UI: login update, preparing, precise error, retry original action, cancellation, revoked pairing, stale full-state isolation, keyboard, 780px');
+  assert.deepEqual(errors, []); console.log('PASS simulated UI: login update, preparing, precise error, retry original action, revoked pairing, stale full-state isolation, keyboard, 780px');
 } finally { await browser.close(); server.close(); }
 /** 截图显式说明为模拟故障；同时断言窄屏不会横向溢出。 */
 async function capture(page, name) { await page.evaluate(() => { let label = document.getElementById('fixture-label'); if (!label) { label = document.createElement('div'); label.id = 'fixture-label'; label.textContent = '模拟故障 · 隔离验收 · 未操作真实直播'; label.style.cssText = 'padding:8px;background:#254131;color:white;font-size:14px'; document.body.prepend(label); } }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false); await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true }); }

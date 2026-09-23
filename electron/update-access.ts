@@ -3,7 +3,7 @@ import { z } from "zod";
 import { problemFor } from "../src/core/errors";
 import type { DesktopAction, DesktopState, LocalUpdateResult, LocalUpdateState } from "../src/shared/desktop";
 type Host = { busy: boolean; updates: { state: DesktopState["update"] }; act(action: DesktopAction): Promise<DesktopState> };
-const command = z.enum(["update-check", "update-download", "update-install"]);
+const command = z.enum(["update-check", "update-download", "update-install", "update-apply"]);
 export class UpdateAccess {
   /** 依赖仅限本机更新协调器；不会调用云端账号或设备权限接口。 */
   constructor(private host: Host, private version: () => string) {}

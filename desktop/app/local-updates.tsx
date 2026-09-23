@@ -22,7 +22,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   }, []);
   /** 失败保留原安装阶段；取消不是成功，也不构造故障提示。 */
   async function act(action: DesktopAction) {
-    if (running.current || !["update-check", "update-download", "update-install"].includes(action)) return false;
+    if (running.current || !["update-check", "update-download", "update-install", "update-apply"].includes(action)) return false;
     running.current = true; revision.current++; setPending(true); setError("");
     try {
       if (!window.liveNest?.update) throw new Error("bridge unavailable");
@@ -39,5 +39,5 @@ export function useLocalUpdates() { return useContext(Context); }
 /** 登录过期、配对撤销或云端离线时仍能检查、下载和安全安装。 */
 export function LoginUpdate() {
   const local = useLocalUpdates();
-  return <section aria-label="软件更新" className="login-update"><h2>软件更新</h2><p>更新客户端无需登录或重新配对。</p><p role={local.state?.update.status === "error" ? "alert" : "status"}>{local.state ? "LiveNest " + local.state.version + " · " + (local.state.update.message || "尚未检查更新") : "正在读取本机更新状态…"}</p>{local.error && <p role="alert">{local.error}</p>}<UpdateAction update={local.state?.update || { status: "idle" }} busy={local.pending || !!local.state?.busy} act={local.act} /></section>;
+  return <section aria-label="软件更新" className="login-update"><h2>软件更新</h2><p>点击更新后自动下载、安装并重新打开，无需登录或重新配对。</p><p role={local.state?.update.status === "error" ? "alert" : "status"}>{local.state ? "LiveNest " + local.state.version + " · " + (local.state.update.message || "尚未检查更新") : "正在读取本机更新状态…"}</p>{local.error && <p role="alert">{local.error}</p>}<UpdateAction update={local.state?.update || { status: "idle" }} busy={local.pending || !!local.state?.busy} act={local.act} /></section>;
 }

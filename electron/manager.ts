@@ -102,7 +102,7 @@ export class Manager {
     if(action === "firewall"){await shell.openExternal("ms-settings:windowsdefender");return this.state();}
     if (this.busy) throw new AppError("DESKTOP", "上一步仍在处理，请稍候。"); this.busy = true; this.message = ""; this.activity.begin(action, typeof input.id === "string" ? input.id : undefined);
     try {
-      if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download", "update-install"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
+      if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download", "update-install", "update-apply"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
       if (action === "check") this.checks = await diagnose(this.settings, this.resources);
       else if (action === "diagnose-obs") { const item=[...this.settings.instances,...(this.settings.candidates||[])].find(i=>i.id===input.id);if(!item)throw new AppError("DESKTOP", "请选择 OBS。");configureCore(()=>environment({...this.settings,instances:[...this.settings.instances.filter(i=>i.id!==item.id),item]}));const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
@@ -125,7 +125,8 @@ export class Manager {
       } else if (action === "autostart") app.setLoginItemSettings({ openAtLogin: z.boolean().parse(input.enabled), path: app.getPath("exe"), args: ["--hidden"] });
       else if (action === "update-check") await this.updates.check();
       else if (action === "update-download") await this.updates.download();
-      else if (action === "update-install") {
+      else if (action === "update-install" || action === "update-apply") {
+        if (action === "update-apply") await this.updates.download();
         const result = await runLocalUpdate({
           wasRunning: !!this.agent.child,
           checkIdle: () => assertLocalIdle({ ...this.settings, instances: [...this.settings.instances, ...(this.settings.candidates || []), ...(this.settings.archivedCandidates || [])] }),

@@ -1,5 +1,5 @@
 /** 手动下载与本机安全重启；云端登录和配对不参与更新授权。 */
-import { app, autoUpdater as lifecycle, dialog } from "electron";
+import { app, autoUpdater as lifecycle } from "electron";
 import { autoUpdater } from "electron-updater";
 import { existsSync } from "node:fs";
 import path from "node:path";
@@ -53,17 +53,15 @@ export class Updates {
       const accepted = () => { cleanup(); quit(); resolve(); };
       const timer = setTimeout(() => failed(new AppError("UPDATE_INSTALL", "安装程序未确认启动。客户端已保留，请重试重启更新；仍失败时从官方下载页手动安装。")), 10_000);
       this.rejectInstall = failed; lifecycle.once("before-quit-for-update", accepted);
-      try { autoUpdater.quitAndInstall(false, true); } catch (error) { this.fail(error); failed(new AppError(this.state.problem!.code, this.state.message!, 400, this.state.problem)); }
+      try { autoUpdater.quitAndInstall(true, true); } catch (error) { this.fail(error); failed(new AppError(this.state.problem!.code, this.state.message!, 400, this.state.problem)); }
     });
   }
-  /** 确认、检查、排空和启动安装串行执行；取消与失败有不同结果。 */
+  /** 点击明确的更新按钮即授权安装；检查、排空与静默重启串行执行，不重复弹窗。 */
   async install(prepare: () => Promise<void>, quit: () => void) {
     if (this.installing) throw new AppError("UPDATE_STATE", "更新仍在处理，请等待当前操作完成。");
     if (this.state.status !== "downloaded" && !(this.state.status === "error" && this.state.stage === "install" && this.state.problem?.code !== "UPDATE_INTEGRITY")) throw new AppError("UPDATE_STATE", "更新尚未下载完成，请先检查更新状态。");
     this.installing = true;
     try {
-      const answer = await dialog.showMessageBox({ type: "question", title: "重启更新", message: "确认重启 LiveNest 并安装更新？程序将核对 OBS 状态并等待已接收任务完成；不会主动结束直播或录制。", buttons: ["稍后", "重启更新"], defaultId: 0, cancelId: 0 });
-      if (answer.response !== 1) return false;
       this.state = { ...this.state, status: "preparing", stage: "install", automatic: false, problem: undefined, message: "正在核对 OBS 状态并等待 Agent 任务完成…" };
       await prepare();
       this.state = { ...this.state, status: "installing", message: "正在启动安装程序…" };

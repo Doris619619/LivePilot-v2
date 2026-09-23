@@ -61,7 +61,7 @@ async function launch() {
   ipcMain.handle("desktop:update-state", event => { trusted(event); return updates.state(); });
   ipcMain.handle("desktop:update", (event, name) => { trusted(event); return updates.act(name); });
   ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
-  const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
+  const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
     try { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined);
       const state=await manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(),z.unknown()).parse(input));
