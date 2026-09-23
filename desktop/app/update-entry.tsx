@@ -6,6 +6,8 @@ import UpdateAction, { type UpdateActionProps } from "./update-action";
 type Props = UpdateActionProps & { error?: string };
 /** 无新版或仅后台检查失败时不打扰；版本切换重新挂载，避免自动弹出详情。 */
 export default function UpdateEntry(props: Props) {
+  // 已知可更新时，标题栏按钮直接开始；不再要求先展开浮层再点一次。
+  if (["available", "downloaded"].includes(props.update.status)) return <UpdateAction {...props} />;
   if ((!props.update.version && !(props.update.status==="error"&&!props.update.automatic)) || !["available", "checking", "downloading", "downloaded", "preparing", "installing", "error"].includes(props.update.status)) return null;
   return <UpdateNotice key={props.update.version} {...props} />;
 }
