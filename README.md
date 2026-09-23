@@ -3,11 +3,11 @@
 
 在网页选择素材、授权频道并控制直播；Windows 客户端配置本机 OBS、运行 Agent 和检查故障。支持多台电脑，每台可使用多个独立 OBS。
 
-**[下载 Windows x64 安装版](https://livenest.duckdns.org/download)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
+**[下载 Windows x64 最新安装版](https://github.com/Doris619619/LiveNest-Releases/releases/latest)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要预装 OBS，也不需要另装 Node、Git 或 Docker；点击“准备第一个 OBS”即可。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
 
-开发分支补充 OBS 实例识别、步骤内进度与重试反馈，与网页一致的设置页布局，以及 Threadline 式顶部更新入口；尚未发布到 0.1.0，详见[本次验证记录](docs/desktop/OBS准备反馈修复.md)。
+0.1.3 汇总 OBS 实例识别、步骤内进度与重试、双目录安装、独立 OBS 和客户报错恢复。发布状态以[公开发行页](https://github.com/Doris619619/LiveNest-Releases/releases/latest)为准，版本范围及验证边界见 [0.1.3 发布记录](docs/desktop/0.1.3发布.md)。
 
 | 需要做什么 | 文档 |
 | --- | --- |
@@ -55,7 +55,7 @@ Windows App 只接受客户账号，通过云端验证。退出界面不停止�
 
 预览只监听本机，使用新建的 `.data/preview/session-*` 合成数据。演示账号 Liang / ULiang 的本地密码为 `preview123456`，与线上密码无关；开停播仅改变演示状态。App 的磁盘选择、扫描和配对使用浏览器模拟桥，不执行 OBS 或文件迁移。此预览不属于安装版或真实直播验收。按 Ctrl+C 停止。
 
-当前安装包发布已取消；后续发布必须等用户完成本地前端确认。
+原 0.1.2 发布已取消，原标签保留。用户已授权检查后发布 0.1.3；只从经过验证的 main 创建新标签，不复用旧标签或覆盖公开安装资产。
 
 管理员本地预览支持点击六项统计查看明细，再点已选卡片或“全部电脑”恢复完整列表；搜索可直接查找客户、电脑或 OBS 名称，与卡片范围互斥，避免隐藏筛选。列表按客户 → 电脑 → OBS 分组；设备时间改为“最近更新”，可在右上角选择显示时区并保存到当前浏览器。设备归属采用对齐的下拉框和分配按钮。
 
