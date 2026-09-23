@@ -16,6 +16,13 @@ export async function copyDataLocation(settings:Settings,target:string,progress:
  progress("正在复制 OBS、素材与授权，原目录保留");
  for(const name of await readdir(source)) await cp(path.join(source,name),path.join(destination,name),{recursive:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new Error("数据目录中存在链接，无法安全自动迁移；原数据保留。");return true;}});
  /** 只更新托管实例的内部程序路径，外部手动 OBS 保持原路径。 */
- const relocate=(items:Settings["instances"]|undefined)=>items?.map(i=>({...i,exe:i.managed?path.join(destination,path.relative(source,i.exe)):i.exe}));
- return {...settings,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:relocate(settings.instances)!,candidates:relocate(settings.candidates),archivedCandidates:relocate(settings.archivedCandidates)};
+ const relocate=async(items:Settings["instances"]|undefined)=>items&&Promise.all(items.map(async i=>{
+  if(!i.managed)return i;
+  // Windows 8.3 路径与联接可指向同一目录，不能混用真实根目录和未解析的 exe。
+  const original=await realpath(i.exe).catch(()=>path.join(source,path.relative(settings.dataRoot,i.exe)));
+  const relative=path.relative(source,original);
+  if(relative===".."||relative.startsWith(".."+path.sep)||path.isAbsolute(relative))throw new Error("托管 OBS 不在原数据目录内，原配置保留，请检查程序路径。");
+  return {...i,exe:path.join(destination,relative)};
+ }));
+ return {...settings,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:(await relocate(settings.instances))!,candidates:await relocate(settings.candidates),archivedCandidates:await relocate(settings.archivedCandidates)};
 }
