@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 /** 敏感字节只走匿名 stdin/stdout；固定脚本和命令行均不含凭据。 */
 export function protectWindows(value: Buffer, encrypt: boolean): Promise<Buffer> {
+  if (process.platform !== "win32") return Promise.reject(new Error("此版本需要 Windows 用户凭据保护。"));
   const method = encrypt ? "Protect" : "Unprotect";
   const script = "$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $bytes=[Convert]::FromBase64String([Console]::In.ReadToEnd()); $result=[System.Security.Cryptography.ProtectedData]::" + method + "($bytes,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($result))";
   return new Promise((resolve, reject) => {

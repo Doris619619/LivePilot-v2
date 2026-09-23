@@ -23,12 +23,12 @@ try {
   page.on("pageerror", e => errors.push(e.message));
   /** 桥接模拟长操作与失败恢复，不保存或访问真实设备身份。 */
   await page.addInitScript(() => {
-    const state = { version: "PR 示例", dataRoot: "C:/LiveNest", paired: false, agentRunning: false, online: false, autoStart: false, busy: false, instances: [{ id: "main", name: "主 OBS", initialized: false, managed: true, port: 4457, exe: "C:/LiveNest/obs/main/bin/64bit/obs64.exe" }], checks: ["Windows x64", "数据目录", "磁盘空间", "内置 Node 与 Agent", "Agent 程序", "内置 OBS", "网页服务"].map((label, id) => ({ id: String(id), label, status: "ready" })), snapshots: [], update: { status: "idle" } };
-    let finish; window.feedbackTest = { state, calls: 0, settingsActions: [], fail() { state.busy = false; state.activity.status = "failed"; state.activity.message = "OBS 连接检查超时。最后检查结果：端口不属于指定 OBS。请查看 OBS 窗口或配置图解，处理后重试。"; state.message = state.activity.message; finish?.(); }, complete() { state.busy = false; state.activity.status = "complete"; state.message = ""; state.instances[0].initialized = true; finish?.(); } };
+    const state = { version: "PR 示例", dataRoot: "C:/LiveNest", paired: false, agentRunning: false, online: false, autoStart: false, busy: false, instances: [], candidates: [{ id: "main", name: "主 OBS", initialized: false, managed: true, port: 4457, exe: "C:/LiveNest/obs/main/bin/64bit/obs64.exe" }], checks: ["Windows x64", "数据目录", "磁盘空间", "内置 Node 与 Agent", "Agent 程序", "内置 OBS", "网页服务"].map((label, id) => ({ id: String(id), label, status: "ready" })), snapshots: [], update: { status: "idle" } };
+    let finish; window.feedbackTest = { state, calls: 0, settingsActions: [], fail() { state.busy = false; state.activity.status = "failed"; state.activity.message = "OBS 连接检查超时。最后检查结果：端口不属于指定 OBS。请查看 OBS 窗口或配置图解，处理后重试。"; state.message = state.activity.message; finish?.(); }, complete() { state.busy = false; state.activity.status = "complete"; state.message = ""; state.candidates[0].initialized = true; state.instances = [state.candidates[0]]; state.candidates=[]; finish?.(); } };
     window.liveNest = { session: async () => ({ authenticated: true }), logout: async () => {}, login: async () => ({ ok: true }), state: async () => structuredClone(state), act: async (action, input) => {
       if (["autostart", "open-data", "update-download", "update-install"].includes(action)) { window.feedbackTest.settingsActions.push(action); if (action === "autostart") state.autoStart = input.enabled; if (action === "update-download") state.update = { ...state.update, status: "downloading", percent: 32, message: "正在下载" }; if (action === "update-install") state.update = { ...state.update, status: "installing", message: "正在安装更新" }; return structuredClone(state); }
       if (action === "web") return structuredClone(state);
-      window.feedbackTest.calls++; state.busy = true; state.message = ""; state.activity = { action, step: 2, status: "running", stage: "主 OBS · 正在启动 OBS 并检查端口 4457（连接检查最多约 60 秒）", startedAt: Date.now() - 65_000 };
+      window.feedbackTest.calls++; state.busy = true; state.message = ""; state.activity = { instanceId: "main", action, step: 2, status: "running", stage: "主 OBS · 正在启动 OBS 并检查端口 4457（连接检查最多约 60 秒）", startedAt: Date.now() - 65_000 };
       await new Promise(resolve => { finish = resolve; });
       if (state.activity.status === "failed") throw new Error(state.message);
       return structuredClone(state);
@@ -37,9 +37,9 @@ try {
   await page.goto("http://127.0.0.1:" + server.address().port);
   const obs = page.locator(".setup-row").filter({ has: page.getByRole("heading", { name: "准备 OBS", exact: true }) });
   await page.getByPlaceholder("粘贴网页复制的配对码").fill("保留用户尚未提交的内容");
-  await page.getByRole("button", { name: "自动准备 OBS", exact: true }).click();
+  await page.getByRole("button", { name: "继续准备第一个 OBS", exact: true }).click();
   await obs.getByText(/正在启动 OBS 并检查端口/).waitFor();
-  assert.equal(await obs.getByRole("button", { name: "正在准备 OBS…", exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "继续准备第一个 OBS", exact: true }).isDisabled(), true);
   assert.match(await obs.locator(".setup-elapsed").innerText(), /本次操作已用 (6[5-9]|[7-9]\d) 秒/);
   await obs.screenshot({ path: path.join(output, "setup-progress.png") });
   await page.getByRole("button", { name: "本机 OBS", exact: true }).click();

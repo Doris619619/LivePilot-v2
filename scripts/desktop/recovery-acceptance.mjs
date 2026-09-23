@@ -48,10 +48,11 @@ try {
   assert.equal(await page.getByRole("heading", { name: "待配置 OBS" }).count(), 0);
   await page.getByRole("button", { name: "本机 OBS", exact: true }).click();
   await page.getByRole("heading", { name: "原 OBS", exact: true }).waitFor();
+  await page.getByText("OBS 详情与修复", {exact:true}).click();
   assert.equal(await page.getByRole("button", { name: "修复连接（先关闭 OBS）", exact: true }).count(), 1);
   assert.deepEqual(await page.evaluate(() => window.recoveryFixture.calls.map(c => c.action)), ["prepare", "discard"]);
   await page.getByRole("button", { name: "设备配置", exact: true }).click();
-  await page.getByText(/无需预装 OBS/).waitFor();
+  await page.getByRole("button", { name: "管理 OBS", exact: true }).waitFor();
   assert.equal(await page.getByLabel("配对码", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "重新连接", exact: true }).count(), 0);
   await page.evaluate(() => { window.recoveryFixture.state.online = false; window.recoveryFixture.state.connectionError = "AGENT_AUTH"; });
