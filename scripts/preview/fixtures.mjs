@@ -7,7 +7,7 @@ export const agents = [
   { id: 'preview_liang', name: '演示 · Liang 的直播电脑', owner: 'Liang', instances: [{ id: 'main', name: '视频直播' }, { id: 'obs_2', name: '音乐直播' }] },
   { id: 'preview_other', name: '演示 · 第二位客户电脑', owner: 'Demo', instances: [{ id: 'main', name: '演示备用频道' }] },
   { id: 'preview_legacy', name: '演示 · 待分配旧电脑', instances: [{ id: 'main', name: '旧 OBS' }] },
-  { id: 'preview_offline', name: '演示 · 离线电脑', owner: 'Demo', instances: [{ id: 'main', name: '状态未知' }] },
+  { id: 'preview_offline', name: '演示 · Kai 的电脑', owner: 'Kai', instances: [{ id: 'main', name: '状态未知' }] },
 ];
 const live = new Set(['preview_liang:main']);
 /** 可视化用直播状态，所有频道、素材和时间均为示例，不执行 OBS。 */
@@ -24,7 +24,7 @@ async function json(filename, value) { await mkdir(path.dirname(filename), { rec
 /** 初始化仅用于本地的账号；这些合成密码与线上账号无关。 */
 export async function seed(root) {
   const salt = randomBytes(16).toString('hex'); const hash = scryptSync(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex');
-  await json(path.join(root, 'access/access.json'), { users: [['Do', 'admin'], ['ULiang', 'admin'], ['UDo', 'admin'], ['Liang', 'customer'], ['Demo', 'customer']].map(([username, role]) => ({ username, role, salt, hash, revision: 'local-preview', disabled: false })), sessions: {}, attempts: {} });
+  await json(path.join(root, 'access/access.json'), { users: [['Do', 'admin'], ['ULiang', 'admin'], ['UDo', 'admin'], ['Liang', 'customer'], ['Demo', 'customer'], ['Kai', 'customer']].map(([username, role]) => ({ username, role, salt, hash, revision: 'local-preview', disabled: false })), sessions: {}, attempts: {} });
   await json(path.join(root, 'cloud/agents.json'), { agents: agents.map(a => ({ ...a, revoked: false, session: 'preview', tokenHash: randomBytes(32).toString('hex') })) });
   await refresh(root);
 }
