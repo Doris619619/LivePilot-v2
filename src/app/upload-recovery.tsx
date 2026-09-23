@@ -21,7 +21,7 @@ export default function UploadRecovery({ agentId, instanceId, restore, cancelled
         else { const status = await api<UploadStatus>(uploadUrl(item)); if (mounted.current) restore(status); }
       }
     } catch (e) { if (mounted.current) setError((e as Error).message); }
-    finally { try { const items = await api<Recovery[]>(url); if (mounted.current) setItems(items); } catch { if (mounted.current) setError("结果仍待确认，请重新查询。"); } if (mounted.current) setBusy(false); }
+    finally { try { const items = await api<Recovery[]>(url); if (mounted.current) setItems(items); } catch { if (mounted.current) setError(previous => previous ? previous + " 另：恢复列表暂未刷新，请稍后重新查询。" : "操作已返回，但恢复列表暂未刷新，请重新查询。"); } if (mounted.current) setBusy(false); }
   }
   if (!agentId) return null;
   const remaining = items.filter(item => item.id !== currentId);

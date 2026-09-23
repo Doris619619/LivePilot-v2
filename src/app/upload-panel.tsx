@@ -6,6 +6,8 @@ import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "rea
 import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
 import { targetKey } from "@/shared/remote";
+import ProblemCard from "./components/problem-card";
+import { makeProblem } from "../shared/problems";
 import { api } from "./client-request";
 import UploadRecovery from "./upload-recovery";
 import { identify, transfer, uploadUrl } from "./upload-client";
@@ -14,7 +16,6 @@ import {
   VideoIcon,
   MusicIcon,
   CheckCircleIcon,
-  AlertCircleIcon,
   RefreshIcon,
   DeviceIcon,
 } from "./components/icons";
@@ -35,7 +36,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   const [file, setFile] = useState<File>();
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(""); const [paused,setPaused]=useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [requestNotice, setRequestNotice] = useState("");
   const [lastRequest, setLastRequest] = useState(0);
@@ -57,8 +58,8 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   }, [lastRequest]);
 
   function remember(next: UploadStatus) {
-    setRecord(next);
-    if (next.status === "complete") {
+    setRecord(next); if(next.error)setError(next.error);
+    if (next.status === "complete") { setError("");
       window.dispatchEvent(new Event("livepilot-media-updated"));
     }
     try {
@@ -79,7 +80,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
         if (saved?.id && saved.instanceId) {
           const next = await api<UploadStatus>(uploadUrl(saved));
           if (active) {
-            setRecord(next);
+            setRecord(next);setError(next.error || "");
             setInstanceId(targetKey({ id: next.instanceId, agentId: next.agentId }));
             setKind(next.kind);
             setIsOpen(true);
@@ -100,24 +101,24 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   useEffect(() => {
     if (record?.status !== "verifying") return;
     const current = record;
-    let reading = false;
+    let reading = false; let active=true;
 
     async function poll() {
       if (reading) return;
       reading = true;
       try {
         const next = await api<UploadStatus>(uploadUrl(current));
-        remember(next);
-        if (next.error) setError(next.error);
+        if(!active)return;remember(next);
+        setError(next.error || "");
       } catch (e) {
-        setError((e as Error).message);
+        if(active)setError((e as Error).message);
       } finally {
         reading = false;
       }
     }
 
     const timer = setInterval(() => void poll(), 3000);
-    return () => clearInterval(timer);
+    return () => {active=false;clearInterval(timer);};
   }, [record]);
 
   async function submit(event: FormEvent) {
@@ -126,7 +127,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
 
     const controller = new AbortController();
     abort.current = controller;
-    setBusy(true);
+    setBusy(true);setPaused(false);
     setError("");
     setStage("正在检查文件…");
 
@@ -230,7 +231,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
 
   const destination = instances.find(i => targetKey(i) === instanceId);
   const destinationLabel = destination ? `${channels[instanceId] || destination.name} · ${destination.agentName || "本机"} / ${destination.name}` : "原上传目标暂不可用";
-  const progressLabel = record?.status === "complete" ? "上传完成" : record?.status === "verifying" ? "正在校验文件…" : busy ? stage : "等待继续上传";
+  const progressLabel = record?.status === "complete" ? "上传完成" : record?.status === "verifying" ? record.verification === "failed" ? "校验未完成，需要处理" : "正在校验文件…" : busy ? stage : "等待继续上传";
   return (
     <section className="media-dock" aria-label="素材上传">
       <div className="dock-header">
@@ -239,6 +240,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
           <UploadIcon />{isOpen ? "收起上传" : "上传素材"}
         </button>
       </div>
+      {!isOpen && (error || (record && record.status !== "complete")) && <div className="instance-feedback" role="status">{record?.filename || "素材上传"} · {error ? "需要处理" : busy ? "传输中" : record?.verification === "failed" ? "校验未完成" : record?.status === "verifying" ? "正在校验" : "已暂停"}<button onClick={()=>setIsOpen(true)}>查看进度与处理步骤</button></div>}
       {isOpen && <div className="dock-content" id="upload-content" tabIndex={-1}>
         {requestNotice && <p className="upload-hint" role="status">{requestNotice}</p>}
         <form onSubmit={submit}>
@@ -265,16 +267,16 @@ export default function UploadPanel({ instances, channels, heading, request }: {
             <div className="upload-progress-title"><strong>{record.filename}</strong><span role="status">{progressLabel}</span></div>
             <progress aria-label="素材上传进度" max={record.size} value={record.received} />
             <div className="upload-progress-meta"><span>{bytes(record.received)} / {bytes(record.size)}</span><span>{Math.floor(record.received / Math.max(1, record.size) * 100)}%</span></div>
-            {record.status === "complete" ? <p className="upload-success"><CheckCircleIcon />已添加到素材库，可回到下方选择使用。</p> : <p className="upload-hint">{record.status === "verifying" ? "文件已传完，正在确认完整性。" : "支持暂停，稍后可继续上传。"}</p>}
+            {record.status === "complete" ? <p className="upload-success"><CheckCircleIcon />已添加到素材库，可回到下方选择使用。</p> : <p className="upload-hint">{record.status === "verifying" ? record.verification === "failed" ? "文件已传完，但尚未发布。请查看原因后重新提交校验；文件损坏时取消此上传并重传。" : "文件已传完，正在确认完整性。" : "支持暂停，稍后可继续上传。"}</p>}
           </div> : busy && <p className="upload-hint" role="status">{stage}</p>}
-          <div className="upload-actions">
+          <div className="upload-actions">{!busy && record?.status==="verifying" && <button type="button" onClick={()=>void api<UploadStatus>(uploadUrl(record)).then(remember,e=>setError(e.message))}>查询校验状态</button>}
             {!busy && (!record || record.status === "uploading") && <button type="submit" className="btn-primary" disabled={!file}><UploadIcon />{record ? "继续上传" : "开始上传"}</button>}
-            {busy && <button type="button" className="btn-secondary" onClick={() => abort.current?.abort()}>暂停上传</button>}
-            {!busy && record?.status === "verifying" && <button type="button" className="btn-secondary" onClick={() => void retryFinish()}><RefreshIcon />重新检查</button>}
+            {busy && <button type="button" className="btn-secondary" onClick={() => {setPaused(true);abort.current?.abort();}}>暂停上传</button>}
+            {!busy && record?.status === "verifying" && (record.verification==="failed" || !!record.error) && <button type="button" className="btn-secondary" onClick={() => void retryFinish()}><RefreshIcon />重新提交校验</button>}
             {!busy && (record || file || hasIntent) && <button type="button" className={record?.status === "complete" ? "btn-primary" : "btn-ghost"} onClick={() => void clear()}>{record?.status === "complete" ? "上传下一个" : record || hasIntent ? "取消上传" : "清除选择"}</button>}
           </div>
         </form>
-        {error && <div className="banner error upload-error" role="alert"><AlertCircleIcon /><span>{error}</span></div>}
+        {error && <ProblemCard objectName={destinationLabel} problem={record?.problem || makeProblem(paused?"CANCELLED":"UPLOAD",error,{domain:"media",target:{agentId:record?.agentId,instanceId:record?.instanceId,uploadId:record?.id},stage:"上传素材"})} onRefresh={record ? ()=>void api<UploadStatus>(uploadUrl(record)).then(remember,e=>setError(e.message)) : undefined} />}
         <UploadRecovery key={instanceId} agentId={destination?.agentId} instanceId={destination?.id || "main"} currentId={record?.id} disabled={busy} restore={remember} cancelled={cancelled} />
       </div>}
     </section>

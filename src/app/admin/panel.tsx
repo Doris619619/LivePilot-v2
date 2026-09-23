@@ -21,7 +21,7 @@ export default function Admin() {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<Scope>("all");
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(""); const [noticeTarget,setNoticeTarget]=useState("");const [noticeFailed,setNoticeFailed]=useState(false);
   const [timeZone, setTimeZone] = useState("UTC");
   const [zones, setZones] = useState(Object.keys(zoneLabels));
   useEffect(() => {
@@ -43,9 +43,9 @@ export default function Admin() {
   function chooseZone(next: string) { setTimeZone(next); try { localStorage.setItem(zoneKey, next); } catch { /* 存储不可用时保留当前页面选择。 */ } }
   /** 分配后重新读取归属；空闲状态与权限仍由服务端检查。 */
   async function assign(agentId: string, owner: string) {
-    setBusy(true); setNotice("");
-    try { await api("/api/admin/assign", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ agentId, owner }) }); setData(await api<Overview>("/api/admin/overview")); setNotice("设备已分配，原配置和频道已保留。"); }
-    catch (e) { setNotice((e as Error).message); } finally { setBusy(false); }
+    setBusy(true); setNotice("");setNoticeTarget(agentId);setNoticeFailed(false);
+    try { await api("/api/admin/assign", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ agentId, owner }) }); setNotice("设备已分配，原配置和频道已保留。");try{setData(await api<Overview>("/api/admin/overview"));}catch{setError("分配已完成，但列表刷新失败；请等待重新读取。");setNotice("设备已分配，列表暂未刷新，请勿重复分配。");} }
+    catch (e) { setNoticeFailed(true);setNotice((e as Error).message); } finally { setBusy(false); }
   }
   const groups = data ? (query.trim() ? searchOverview(data, query) : groupOverview(data, scope)) : [];
   const metrics: { scope: Scope; label: string; value?: number }[] = [
@@ -60,7 +60,7 @@ export default function Admin() {
       <div className="admin-metrics">{metrics.map(metric => <button key={metric.scope} className="admin-metric" aria-pressed={scope === metric.scope} aria-controls="admin-results" disabled={!!error} title={scope === metric.scope ? "再次点击查看全部电脑" : undefined} onClick={() => chooseScope(metric.scope)}><span>{metric.label}</span><strong>{error ? "—" : metric.value}</strong></button>)}</div>
       <div className="admin-browse"><button className="admin-all" aria-pressed={scope === "all" && !query.trim()} aria-controls="admin-results" onClick={() => chooseScope("all")}>全部电脑</button><label className="admin-search">查找<input type="search" value={query} placeholder="客户、电脑或 OBS 名称" onChange={e => { setQuery(e.target.value); setScope("all"); }} /></label>{query && <button onClick={() => setQuery("")}>清除搜索</button>}</div>
       <section id="admin-results" aria-label="客户与 OBS 明细"><div className="admin-section-heading"><h2>{query.trim() ? "搜索结果" : scope === "all" ? "全部电脑" : scopes[scope]}</h2><span className="admin-result-count" role="status">{groups.reduce((count, group) => count + group.devices.length, 0)} 台电脑 · {groups.reduce((count, group) => count + group.devices.reduce((sum, device) => sum + device.rows.length, 0), 0)} 个 OBS</span></div><GroupedList groups={groups} timeZone={timeZone} stale={!!error} /></section>
-      <Assignment data={data} busy={busy} notice={notice} assign={assign} />
+      <Assignment data={data} busy={busy} notice={notice} noticeTarget={noticeTarget} noticeFailed={noticeFailed} assign={assign} />
     </>}
   </main>;
 }

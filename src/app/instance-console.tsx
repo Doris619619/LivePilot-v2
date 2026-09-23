@@ -3,6 +3,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import OAuthFeedback from "./oauth-feedback";
+import ProblemCard from "./components/problem-card";
+import { makeProblem, configurationLabel, type Problem } from "../shared/problems";
 import { useInstance } from "./use-instance";
 import { targetKey } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
@@ -14,7 +17,6 @@ import {
   StopIcon,
   RefreshIcon,
   ExternalLinkIcon,
-  AlertCircleIcon,
   ChevronDownIcon,
 } from "./components/icons";
 
@@ -102,6 +104,9 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
     public: "公开",
   }[data?.configuration.privacy || "unlisted"];
 
+  const issues: Problem[] = [model.problem, data?.obs.problem, data?.youtube.problem, ...(data?.media.problems || []), ...(data?.problems || [])].filter((p): p is NonNullable<typeof p>=>!!p).map(p=>({...p,target:{...p.target,agentId:instance.agentId,instanceId:instance.id}}));
+  if (!issues.length && (error || data?.state.error)) issues.push(makeProblem("CONTROL",error || data!.state.error!,{target:{agentId:instance.agentId,instanceId:instance.id},attemptId:data?.operation?.id,stage:"直播操作"}));
+  if(data?.configuration.missing.length)issues.push(makeProblem("CONFIG",[...new Set(data.configuration.missing.map(configurationLabel))].join("；"),{target:{agentId:instance.agentId,instanceId:instance.id},outcome:"rejected",stage:"检查开播配置"}));
   const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
 
   const broadcastControls = <>
@@ -132,24 +137,24 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
         </div>
       </div>
 
+      <OAuthFeedback instance={instance} />
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {(error || data?.state.error || stale) && <div className="banner error instance-feedback" role="alert"><AlertCircleIcon /><span>{stale ? (error?.includes("实际推流状态未知") ? error : `${error || "设备状态已过期"}；实际推流状态未知，已有直播可能仍在继续。`) : error || data?.state.error}</span></div>}
+      {issues.map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
       {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
-        {data?.media.error && <div className="banner error" role="alert">{data.media.error}</div>}
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
         <div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
             <h3 id={`step-1-${id}`}><span className="step-number">1</span>设备与频道</h3>
             <div className="connections-grid">
               <div className="conn-box">
-                <div className="conn-info"><ObsIcon /><span>{name}</span><span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.obs.ready ? "已连接" : "未启动"}</span></div>
-                <button type="button" className="btn-ghost" disabled={busy || !data || stale || data.obs.ready} onClick={() => void act("launch")}>{working === "launch" ? "启动中…" : "启动 OBS"}</button>
+                <div className="conn-info"><ObsIcon /><span>{name}</span><span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.obs.ready ? "已连接" : data?.obs.processKnown === false ? "状态未知" : data?.obs.running ? "控制未连接" : "未启动"}</span></div>
+                <button type="button" className="btn-ghost" disabled={busy || !data || stale || data.obs.ready || data.obs.running || data.obs.processKnown === false} onClick={() => void act("launch")}>{working === "launch" ? "启动中…" : "启动 OBS"}</button>
               </div>
               <div className="conn-box">
-                <div className="conn-info"><YouTubeIcon /><span>{channel || "YouTube 频道"}</span><span className={`conn-status ${data?.youtube.connected && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.youtube.connected ? "已授权" : channel ? "授权异常" : "未连接"}</span></div>
+                <div className="conn-info"><YouTubeIcon /><span>{channel || "YouTube 频道"}</span><span className={`conn-status ${data?.youtube.connected && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.youtube.query === "failed" ? "查询受阻" : data?.youtube.connected ? "已授权" : channel ? "授权失效" : "未连接"}</span></div>
                 <button type="button" className="btn-ghost" disabled={busy || !data || stale} onClick={() => void act("connect")}>{data?.youtube.connected ? "重新授权" : "连接频道"}</button>
               </div>
             </div>
@@ -166,7 +171,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
               {selection.video && !data?.media.videos.includes(selection.video) && <option value={selection.video}>{selection.video}（缺失）</option>}
               {data?.media.videos.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
-            {data && !stale && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
+            {data && !stale && !data.media.error && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
           </div>
           <div className="field-group">
             <label htmlFor={`music-${id}`} className="field-label">背景音乐</label>
@@ -175,7 +180,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
-            {data && !stale && !data.media.music.length && <div className="media-empty"><p>还没有音乐，可添加背景音乐。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
+            {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>还没有音乐，可添加背景音乐。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
           </div>
         </div>
         <div className="media-options">
@@ -207,7 +212,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
         <details className="instance-diagnostics">
           <summary>连接与诊断</summary>
           <div className="diagnostics-content">
-            {!!data?.configuration.missing.length && <div className="banner error"><span>请在直播电脑补齐：{data.configuration.missing.join("、")}</span></div>}
+            {!!data?.configuration.missing.length && <div className="banner error"><span>请在直播电脑补齐：{[...new Set(data.configuration.missing.map(configurationLabel))].join("、")}</span></div>}
             {data?.obs.message && <p className="readiness-text">{data.obs.message}</p>}
             {data?.youtube.error && <p className="readiness-text">{data.youtube.error}</p>}
             <dl className="diagnostic-values">

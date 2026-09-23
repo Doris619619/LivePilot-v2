@@ -236,3 +236,14 @@ progress { accent-color: var(--accent-primary); }
   .banner { flex-wrap: wrap; } .banner button { margin-left: 26px; } .instance-feedback { margin-left: 16px; margin-right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* 就地问题卡共享给桌面与网页；步骤和操作不依赖颜色或悬停。 */
+.problem-card { margin: 12px 0; padding: 16px; border: 1px solid #a15a2a; border-left-width: 4px; border-radius: 8px; background: #fff9f2; color: #452b19; min-width: 0; overflow-wrap: anywhere; }
+.problem-card.info { border-color: #637080; background: #f5f7fa; color: #25313f; }
+.problem-card p { margin: 8px 0; }
+.problem-card ol { padding-left: 24px; margin: 8px 0; }
+.problem-card li { margin: 4px 0; }
+.problem-stage { font-size: .875rem; }
+.problem-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.problem-actions button { min-height: 44px; white-space: normal; }
+.problem-card details code { display: block; white-space: pre-wrap; font-size: .8rem; }
