@@ -11,7 +11,7 @@ import { createPairing } from "@/cloud/agents";
 import { DELETE as removeDevice } from "@/app/api/devices/route";
 import { authenticate } from "@/server/access";
 import { AppError } from "@/core/errors";
-vi.mock("@/server/access", () => ({ authenticate: vi.fn(async () => ({ username: "alice" })) }));
+vi.mock("@/server/access", () => ({ authenticate: vi.fn(async () => ({ username: "alice", role: "customer" })), members: async () => [{username:"alice",role:"customer"}] }));
 let dir: string;
 /** 创建隔离云端环境，不读取真实 .env.local。 */
 beforeEach(async () => { dir = await mkdtemp(path.join(os.tmpdir(), "livepilot-api-")); vi.stubEnv("LIVEPILOT_MODE", "cloud"); vi.stubEnv("LIVEPILOT_ORIGIN", "https://cloud.example.com"); vi.stubEnv("LIVEPILOT_DATA_ROOT", dir); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); });
@@ -22,7 +22,7 @@ function context(route: string) { return { params: Promise.resolve({ path: route
 /** 模拟 Agent 使用专用 header，而不是浏览器 Cookie。 */
 function request(route: string, data: unknown, token?: string, session?: string) { return new Request("https://cloud.example.com/api/agent/" + route, { method: "POST", headers: { host: "cloud.example.com", "content-type": "application/json", ...(token ? { authorization: "Bearer " + token, "x-livepilot-agent": "studio_a" } : {}), ...(session ? { "x-livepilot-session": session } : {}) }, body: JSON.stringify(data) }); }
 it("pairs, opens a session, accepts a command and returns only that device's task", async () => {
-  const pairing = await createPairing("studio_a", "Studio A"); const token = "b".repeat(64);
+  const pairing = await createPairing("studio_a", "Studio A", "alice"); const token = "b".repeat(64);
   expect((await agentPost(request("pair", { protocol: 1, agentId: "studio_a", code: pairing.code, token }), context("pair"))).status).toBe(200);
   const connected = await agentPost(request("session", { protocol: 1, bootId: randomUUID(), instances: [{ id: "main", name: "Main" }] }, token), context("session"));
   const { session } = await connected.json();
@@ -40,7 +40,7 @@ it("does not accept browser-origin Agent requests or implicit cloud targets", as
 });
 /** 移除要求成员会话、同源写入标记和明确确认，失败不撤销设备。 */
 it("protects device removal with browser authentication, CSRF and explicit confirmation", async () => {
-  await createPairing("studio_a", "A");
+  await createPairing("studio_a", "A", "alice");
   const make = (body: unknown = { agentId: "studio_a", confirmed: true }) => new Request("https://cloud.example.com/api/devices", { method: "DELETE", headers: { host: "cloud.example.com", origin: "https://cloud.example.com", "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify(body) });
   const foreign = make(); foreign.headers.set("origin", "https://foreign.example.com"); expect((await removeDevice(foreign)).status).toBe(403);
   expect((await removeDevice(make({ agentId: "studio_a" }))).status).toBe(400);

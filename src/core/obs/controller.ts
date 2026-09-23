@@ -27,11 +27,13 @@ export class ObsController {
       try {
         await Promise.race([
           this.socket.connect(c.wsUrl, c.obsPassword, { rpcVersion: 1, eventSubscriptions: 0 }),
-          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error()), 5000); }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error(), { code: "TIMEOUT" })), 5000); }),
         ]);
         this.connected = true;
-      } catch {
+      } catch (error) {
         await this.socket.disconnect().catch(() => {});
+        if ((error as {code?: unknown})?.code === 4009) throw new AppError("OBS_AUTH", "OBS WebSocket 密码不匹配。");
+        if ((error as {code?: unknown})?.code === "TIMEOUT") throw new AppError("OBS_TIMEOUT", "OBS WebSocket 在 5 秒内没有响应。");
         throw new AppError("OBS_CONNECT", "无法连接 OBS WebSocket。请检查 OBS、WebSocket v5 端口及密码。");
       } finally { clearTimeout(timer); }
     })();

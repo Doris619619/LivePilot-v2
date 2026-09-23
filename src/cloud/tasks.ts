@@ -1,4 +1,5 @@
 /** 持久化设备投递记录；超时不是执行失败，重连不生成新任务。 */
+import { members } from "@/server/access";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { seal, unseal } from "@/core/storage";
@@ -10,7 +11,7 @@ import { requireTarget, agentStore, assertAgentActive } from "./agents";
 import { transaction } from "./store";
 import { reconcileUploads, uploadId, type MaintenanceState } from "./upload-activities";
 import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
-export type TaskRecord = Target & { id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number; uploadStable?: boolean };
+export type TaskRecord = Target & { customer?: string; id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; httpStatus?: number; uploadStable?: boolean };
 type Queue = { records: TaskRecord[] };
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
 /** 控制和授权共享实例互斥，上传有独立任务并发。 */
@@ -30,6 +31,8 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
   return transaction(store, async () => {
     const queue = await store.read<Queue>("tasks.json") || { records: [] };
     queue.records.forEach(expire);
+    const destination = await requireTarget(target.agentId, target.instanceId);
+    if(destination.owner){const member=(await members()).find(m=>m.username===actor);if(!member || (member.role!=="admin"&&member.username!==destination.owner))throw new AppError("FORBIDDEN","设备归属已变更，请重新读取工作台。",403);}
     const previous = queue.records.find(r => r.id === id);
     if (previous) { if (previous.fingerprint !== hash) throw new AppError("REQUEST", "请求标识已用于其他操作。", 409); await store.write("tasks.json", queue); return previous; }
     await requireTarget(target.agentId, target.instanceId, true);
@@ -43,7 +46,7 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     if (exclusive(payload.kind) && queue.records.some(r => r.instanceId === target.instanceId && exclusive(r.kind) && !terminal(r.status))) throw new AppError("BUSY", "该实例仍有未完成或待核对任务，请等待设备回报。", 409);
     const activities = (await store.read<MaintenanceState>("maintenance.json"))?.activities || {};
     queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000 || !!activities["upload:" + uploadId(r)]);
-    const record: TaskRecord = { ...target, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
+    const record: TaskRecord = { ...target, customer: destination.owner, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
     if (payload.kind === "upload-status") record.uploadStable = !queue.records.some(r => uploadId(r) === payload.uploadId && r.kind !== "upload-status" && !terminal(r.status));
     await trackActivity(target.agentId, payload.kind, target.instanceId, "uploadId" in payload ? payload.uploadId : undefined);
     queue.records.push(record); await store.write("tasks.json", queue); return record;

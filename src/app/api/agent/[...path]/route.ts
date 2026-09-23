@@ -1,4 +1,5 @@
 /** 专用设备接口：独立 Bearer 认证，不接受浏览器会话或任意业务调用。 */
+import { authenticate } from "@/server/access";
 import { z } from "zod";
 import { PROTOCOL, idSchema, uuidSchema, reportSchema } from "@/shared/remote";
 import { snapshotSchema } from "@/shared/remote-validation";
@@ -41,7 +42,8 @@ export async function POST(request: Request, context: Context) {
     guardAgent(request); const route = (await context.params).path.join("/"); const raw = await readJson(request, 2 * 1024 * 1024);
     if (route === "pair") {
       const value = z.object({ protocol: z.literal(PROTOCOL), agentId: idSchema, code: z.string().length(64), token: z.string().length(64), currentAgentId: idSchema.optional() }).strict().parse(raw);
-      return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId));
+      const customer = await authenticate(request, true);
+      return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId, customer.username));
     }
     const agent = await authenticateAgent(request, route !== "session");
     // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。

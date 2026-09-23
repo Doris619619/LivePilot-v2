@@ -7,7 +7,7 @@ import { cloudStore, transaction } from "./store";
 import { releaseAgentChannels } from "./bindings";
 import { idSchema, OFFLINE_MS, PROTOCOL, type AgentDescriptor, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
-type Agent = { id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
+type Agent = { owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
 type Registry = { agents: Agent[] };
 type Heartbeat = { at: number; session: string; snapshots: AgentSnapshot[] };
 /** 摘要用于比较随机凭据；永不记录原始 Authorization。 */
@@ -17,20 +17,20 @@ function matches(value: string, hash?: string) { return !!hash && timingSafeEqua
 /** 路径只来自通过验证的稳定设备 ID。 */
 export function agentStore(id: string) { if (!idSchema.safeParse(id).success) throw new AppError("AGENT", "设备不存在。", 404); return new Store(path.join(cloudStore().dir, "agents", id)); }
 /** 管理员创建十分钟一次性配对码；已有设备不能被悄悄替换。 */
-export async function createPairing(id: string, name: string) {
+export async function createPairing(id: string, name: string, owner?: string) {
   agentStore(id);
   if (!name || name.length > 80) throw new AppError("INPUT", "设备名称必须为 1–80 字。");
   const store = cloudStore(); const code = randomBytes(32).toString("hex");
   await transaction(store, async () => {
     const registry = await store.read<Registry>("agents.json") || { agents: [] };
     if (registry.agents.some(a => a.id === id)) throw new AppError("AGENT_EXISTS", "设备 ID 已存在；请使用新 ID，避免替换已有直播电脑。", 409);
-    registry.agents.push({ id, name, instances: [], revoked: false, pairingHash: digest(code), pairingExpires: Date.now() + 600_000 });
+    registry.agents.push({ id, name, owner, instances: [], revoked: false, pairingHash: digest(code), pairingExpires: Date.now() + 600_000 });
     await store.write("agents.json", registry);
   });
   return { agentId: id, code, expiresInSeconds: 600 };
 }
 /** Agent 先保存凭据；响应丢失可重试，已撤销身份必须同时验证新邀请与旧凭据。 */
-export async function pairAgent(id: string, code: string, token: string, currentAgentId?: string) {
+export async function pairAgent(id: string, code: string, token: string, currentAgentId?: string, customer?: string) {
   const store = cloudStore();
   agentStore(id); if (currentAgentId) agentStore(currentAgentId);
   if (!/^[a-f0-9]{64}$/.test(code) || !/^[a-f0-9]{64}$/.test(token)) throw new AppError("AGENT_AUTH", "设备配对失败。", 401);
@@ -48,6 +48,8 @@ export async function pairAgent(id: string, code: string, token: string, current
         current = known[0] || current;
       }
     }
+    // 配对 HTTP 入口必传客户；旧内部工具不授予客户归属。恢复也不得跨客户迁移。
+    if (customer && (agent.owner !== customer || (current?.tokenHash && current.owner !== customer))) throw new AppError("FORBIDDEN", "配对码和原电脑必须属于当前客户；旧电脑请先由管理员分配。", 403);
     // 新邀请只授权这次连接；持有旧凭据的客户端继续使用原设备，单次写入完成消费与恢复。
     if (agent.pairedTo) {
       const target = registry!.agents.find(a => a.id === agent.pairedTo);
@@ -135,7 +137,7 @@ export async function listAgents(): Promise<AgentDescriptor[]> {
   return Promise.all(registry.agents.map(async a => {
     const beat = await agentStore(a.id).read<Heartbeat>("heartbeat.json"); const lastSeen = beat && beat.session === a.session ? beat.at : 0;
     const maintenance = !!(await agentStore(a.id).read<{ token?: string }>("maintenance.json"))?.token;
-    return { id: a.id, name: a.name, revoked: a.revoked, online: !a.revoked && lastSeen > Date.now() - OFFLINE_MS, lastSeen, instances: a.instances, paired: !!a.tokenHash, maintenance, ...(a.pairedTo ? { pairedTo: a.pairedTo } : {}) };
+    return { id: a.id, name: a.name, owner: a.owner, revoked: a.revoked, online: !a.revoked && lastSeen > Date.now() - OFFLINE_MS, lastSeen, instances: a.instances, paired: !!a.tokenHash, maintenance, ...(a.pairedTo ? { pairedTo: a.pairedTo } : {}) };
   }));
 }
 /** 目标实例必须属于设备，在线检查只影响新任务，不中断已接收任务。 */
@@ -165,4 +167,10 @@ export async function revokeAgent(id: string) {
     const queue = await local.read<{ records: import("./tasks").TaskRecord[] }>("tasks.json");
     if (queue) { for (const task of queue.records) if (task.status === "queued") { task.status = "expired"; task.updatedAt = Date.now(); task.message = "设备已移除，此任务尚未派发。"; } await local.write("tasks.json", queue); }
   }, "tasks.lock");
+}
+
+/** 在已取得设备维护锁时分配归属；只改元数据，保留身份、频道和文件。 */
+export async function setAgentOwner(id: string, owner: string) {
+  const store = cloudStore();
+  await transaction(store, async () => { const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id && !a.pairedTo); if (!agent) throw new AppError("AGENT", "设备不存在。", 404); agent.owner = owner; await store.write("agents.json", registry); });
 }

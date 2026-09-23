@@ -8,8 +8,11 @@ import { pairDesktop } from "../electron/pairing";
 import type { Settings } from "../electron/settings";
 import { DESKTOP_ORIGIN } from "@/shared/desktop";
 import { POST } from "@/app/api/agent/[...path]/route";
-import { createPairing, pairAgent, revokeAgent, openSession, listAgents, agentStore, renewPairing } from "@/cloud/agents";
+import { createPairing as rawCreatePairing, pairAgent, revokeAgent, openSession, listAgents, agentStore, renewPairing } from "@/cloud/agents";
 import { claimChannel } from "@/cloud/bindings";
+vi.mock("@/server/access", () => ({ authenticate: vi.fn(async () => ({ username: "testcustomer", role: "customer" })) }));
+/** 原配对恢复用同客户设备，跨客户隔离另有真实账号测试。 */
+const createPairing=(id:string,name:string)=>rawCreatePairing(id,name,"testcustomer");
 let root: string;
 /** 所有身份、频道和落盘数据均是本测试临时夹具。 */
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "ln-pairing-")); vi.stubEnv("LIVEPILOT_MODE", "cloud"); vi.stubEnv("LIVEPILOT_ORIGIN", DESKTOP_ORIGIN); vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); });

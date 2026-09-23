@@ -1,5 +1,6 @@
 /** 浏览器到云端的适配边界，目标设备必须显式给出。 */
 import "server-only";
+import type { Member } from "./access";
 import { randomUUID } from "node:crypto";
 import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
@@ -14,14 +15,14 @@ export function target(value: unknown): Target { const result = targetSchema.saf
 /** Query 和 JSON 使用相同目标校验。 */
 export function queryTarget(request: Request) { const url = new URL(request.url); return target({ agentId: url.searchParams.get("agentId"), instanceId: url.searchParams.get("instanceId") }); }
 /** 云端只公开实例、设备名称及在线状态，不接触 Windows 配置。 */
-export async function remoteInstances() {
-  const agents = await listAgents(); return { agents, instances: agents.filter(a => !a.revoked).flatMap(a => a.instances.map(i => ({ ...i, agentId: a.id, agentName: a.name }))) };
+export async function remoteInstances(user?: Member) {
+  const agents = (await listAgents()).filter(a => !user || user.role === "admin" || a.owner === user.username); return { agents, instances: agents.filter(a => !a.revoked).flatMap(a => a.instances.map(i => ({ ...i, agentId: a.id, agentName: a.name }))) };
 }
 /** 过期状态不表示停止推流；保留场次信息但禁用基于旧状态的操作。 */
 export async function remoteDashboard(destination: Target): Promise<Dashboard> {
   const agent = await requireTarget(destination.agentId, destination.instanceId);
   const snapshot = await snapshotFor(destination.agentId, destination.instanceId); const current = await latestControl(destination);
-  const fresh = agent.online && !!snapshot && snapshot.observedAt > Date.now() - 20_000;
+  const fresh = agent.online && !!snapshot && snapshot.observedAt > Date.now() - 20_000 && snapshot.observedAt <= Date.now() + 5_000;
   const base: Dashboard = snapshot?.dashboard || { state: initialState(), busy: false, obs: { ready: false, running: false, streaming: null }, youtube: { connected: false }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "unlisted", madeForKids: false } };
   const waiting = !!current && ["queued", "delivering", "accepted", "running", "uncertain"].includes(current.status);
   return { ...base, operation: current || base.operation, busy: waiting || base.busy, device: { agentId: agent.id, name: agent.name, online: fresh, lastSeen: agent.lastSeen, observedAt: snapshot?.observedAt }, obs: fresh ? base.obs : { ...base.obs, ready: false, streaming: null, message: agent.online ? "设备状态读取已过期，请检查直播电脑。" : "直播电脑离线；实际推流状态未知，已有直播可能仍在继续。" } };

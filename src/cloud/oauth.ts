@@ -1,4 +1,6 @@
 /** 云端 OAuth 事务桥：浏览器 cookie 绑定成员及设备，令牌交换在 Agent 完成。 */
+import type { Member } from "@/server/access";
+import { authorizeAgent } from "@/server/ownership";
 import { randomBytes, createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "@/core/config";
@@ -21,12 +23,13 @@ export async function beginRemoteOAuth(target: Target, actor: string) {
   url.searchParams.set("state", state); return { url: url.toString(), state, cookie };
 }
 /** 一次性认领后转交原设备；响应未知不重复交换授权码，需重新发起授权。 */
-export async function finishRemoteOAuth(state: string, cookie: string, actor: string, code: string) {
+export async function finishRemoteOAuth(state: string, cookie: string, actor: string, code: string, user?: Member) {
   oauthCookie(state); const store = cloudStore(); const name = "oauth-" + state + ".json";
   const transactionData = await transaction(store, async () => {
     const encrypted = await store.read<string>(name); if (!encrypted) throw new AppError("OAUTH", "授权已失效，请重新连接。");
     const value = unseal<OAuth>(encrypted);
     if (value.used || value.expires < Date.now() || value.actor !== actor || value.browserHash !== createHash("sha256").update(cookie).digest("hex")) throw new AppError("OAUTH", "授权校验失败，请在原浏览器重新连接。");
+    if (user) await authorizeAgent(user, value.target.agentId);
     value.used = true; await store.write(name, seal(value)); return value;
   }, "oauth.lock");
   try { await rpc(transactionData.target, actor, { kind: "oauth-finish", cookie: transactionData.cookie, state: transactionData.state, code }); }

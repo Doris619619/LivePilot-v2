@@ -1,5 +1,5 @@
 /** 初始化自有便携 OBS；重复操作保留已有场景和设置，绝不自动推流。 */
-import { mkdir, readFile, writeFile, access, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, access, readdir, stat, cp } from "node:fs/promises";
 import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
@@ -10,6 +10,7 @@ import { ObsController } from "../src/core/obs/controller";
 import { ObsProcessManager } from "../src/core/obs/process";
 import { LocalObsRuntime } from "../src/core/obs/runtime";
 import type { DesktopInstance } from "../src/shared/desktop";
+import { inspectObs } from "./obs-discovery";
 import { environment, type Settings } from "./settings";
 const exec = promisify(execFile);
 /** 即使尚未配对云端，也必须确认本机实例没有推流/录制后才能维护。 */
@@ -52,14 +53,21 @@ export async function prepareFiles(instance: DesktopInstance, resources: string,
   report("正在准备独立 OBS 目录");
   const root = path.resolve(instance.exe, "../../..");
   const extracted = await access(path.join(root, ".extracted")).then(() => true, () => false);
-  if (!extracted) await requireObsFile(path.join(resources, "vendor", "obs.zip"), "安装包内置 OBS 资源缺失或不可读，请重新安装完整 LiveNest 安装包后重试。无需另行安装 OBS，已有配置会保留。");
+  if (!extracted && !instance.sourceExe) await requireObsFile(path.join(resources, "vendor", "obs.zip"), "安装包内置 OBS 资源缺失或不可读，请重新安装完整 LiveNest 安装包后重试。无需另行安装 OBS，已有配置会保留。");
   await mkdir(root, { recursive: true });
   const owner = path.join(root, ".livenest-owner");
   try { if (await readFile(owner, "utf8") !== instance.id) throw new Error("OBS 目录归属不匹配。"); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; if ((await readdir(root)).length) throw new Error("OBS 目录已有其他文件，拒绝自动接管，请选择独立数据目录。"); await writeFile(owner, instance.id, { flag: "wx" }); }
   if (!extracted) {
+    if (instance.sourceExe) {
+      const source=await inspectObs(instance.sourceExe); if(source.running)throw new Error("请先关闭来源 OBS 再复制，原程序和场景不会被修改。");
+      report("正在复制 OBS 程序到独立目录（不复制原授权和推流密钥）");
+      const origin=path.resolve(source.exe,"../../..");
+      for(const folder of ["bin","data","obs-plugins"])await cp(path.join(origin,folder),path.join(root,folder),{recursive:true,force:true,errorOnExist:false,filter:async file=>{const info=await import("node:fs/promises").then(fs=>fs.lstat(file));if(info.isSymbolicLink())throw new Error("来源 OBS 含目录链接，请使用完整的普通程序目录或内置 OBS。");return true;}});
+    } else {
     report("正在解压 OBS（首次准备可能需要几分钟）");
     await exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:LN_OBS_ZIP -DestinationPath $env:LN_OBS_ROOT -Force"], { windowsHide: true, timeout: 180_000, env: { ...process.env, LN_OBS_ZIP: path.join(resources, "vendor", "obs.zip"), LN_OBS_ROOT: root } }).catch(e => { throw new Error(e.killed ? "OBS 解压超过 3 分钟，请检查磁盘空间、目录权限和系统负载后重试。" : "OBS 解压失败，请检查数据目录权限、磁盘空间及安装包是否完整后重试。"); });
+    }
     await requireObsFile(instance.exe, "OBS 解压未完成，未找到 obs64.exe。请检查安装包完整性、磁盘空间和安全软件拦截记录后重试；候选配置已保留。");
     await writeFile(path.join(root, ".extracted"), "32.2.2");
   }

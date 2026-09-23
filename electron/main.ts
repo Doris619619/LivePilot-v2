@@ -1,5 +1,5 @@
 /** LiveNest 桌面入口：本地静态界面、受限 IPC、托盘与用户确认的退出。 */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, session, Tray } from "electron";
+import { app, net, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, session, Tray } from "electron";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -7,7 +7,7 @@ import { z } from "zod";
 import { Manager } from "./manager";
 import { DesktopAuth } from "./auth";
 import { Shutdown } from "./shutdown";
-const auth = new DesktopAuth();
+const auth = new DesktopAuth((url, init) => net.fetch(url, init));
 protocol.registerSchemesAsPrivileged([{ scheme: "livenest", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName("LiveNest"); app.setAppUserModelId("com.doris619619.livenest");
 app.setPath("userData", path.join(app.getPath("appData"), "LiveNest"));
@@ -37,7 +37,7 @@ async function quit() {
 /** 独立窗口不加载云端站点，使用静态输出及 contextIsolation。 */
 async function launch() {
   const resources = app.isPackaged ? process.resourcesPath : path.join(app.getAppPath(), "desktop-resources");
-  manager = new Manager(resources, () => { quitting = true; });
+  manager = new Manager(resources, () => { quitting = true; }, () => auth.headers());
   shutdown = new Shutdown(manager, {
     /** 明确说明网页控制将离线，默认取消；不把退出解释为停播。 */
     confirm: async () => (await dialog.showMessageBox({ type: "question", title: "退出 LiveNest", message: "退出后网页将无法控制这台电脑。客户端会等待已接收的任务处理完毕；OBS 将保持运行。", buttons: ["取消", "退出"], defaultId: 0, cancelId: 0 })).response === 1,
@@ -54,9 +54,9 @@ async function launch() {
   ipcMain.handle("desktop:session", event => { trusted(event); return auth.session(); });
   ipcMain.handle("desktop:login", (event, username, password) => { trusted(event); return auth.login(username, password); });
   ipcMain.handle("desktop:logout", event => { trusted(event); auth.logout(); });
-  ipcMain.handle("desktop:state", event => { trusted(event); auth.require(); return manager.state(); });
-  const action = z.enum(["check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
-  ipcMain.handle("desktop:act", (event, name, input) => { trusted(event); auth.require(); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });
+  ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
+  const action = z.enum(["scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
+  ipcMain.handle("desktop:act", async (event, name, input) => { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });
   const image = nativeImage.createFromPath(path.join(resources, "icon.png")); tray = new Tray(image); tray.setToolTip("LiveNest");
   tray.setContextMenu(Menu.buildFromTemplate([{ label: "打开 LiveNest", click: () => window?.show() }, { label: "网页工作台", click: () => { void manager.act("web"); } }, { type: "separator" }, { label: "退出", click: () => { void quit(); } }])); tray.on("double-click", () => window?.show());
   await window.loadURL("livenest://app/index.html"); if (!process.argv.includes("--hidden")) window.show();

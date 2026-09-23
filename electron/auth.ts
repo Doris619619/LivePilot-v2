@@ -1,23 +1,36 @@
-/** 本地界面登录：主进程校验密码摘要，会话只驻留内存，不影响 Agent。 */
-import { scryptSync, timingSafeEqual } from "node:crypto";
-const credential = { salt: "774d9900bfff44d36ab15c44d99e7858", hash: "d3bed107de3bbb0ec0bdbdd80fa7676778788ee0bca7ad28f47e7995e011d53c" };
+/** 桌面账号统一在云端校验；客户会话仅驻留主进程，不保存密码。 */
+import { DESKTOP_ORIGIN } from "../src/shared/desktop";
+type Customer = { username: string; role: "customer" };
+type Requester = (url: string, init?: RequestInit) => Promise<Response>;
 export class DesktopAuth {
-  private authenticated = false; private failures = 0; private blockedUntil = 0;
-  /** 仅返回界面会话状态，不暴露摘要或配置。 */
-  session() { return { authenticated: this.authenticated }; }
-  /** 限制失败重试；密码不经过 Renderer 持久化、命令行或日志。 */
-  login(username: unknown, password: unknown) {
-    if (Date.now() < this.blockedUntil) return { ok: false, message: "尝试次数过多，请一分钟后重试。" };
-    const validInput = typeof username === "string" && typeof password === "string" && username.length <= 80 && password.length <= 256;
-    const validPassword = validInput && timingSafeEqual(scryptSync(password as string, credential.salt, 32), Buffer.from(credential.hash, "hex"));
-    if (!validPassword || username !== "Do") {
-      this.failures++; if (this.failures >= 5) { this.blockedUntil = Date.now() + 60_000; this.failures = 0; }
-      return { ok: false, message: "账号或密码不正确。" };
-    }
-    this.authenticated = true; this.failures = 0; this.blockedUntil = 0; return { ok: true };
-  }
-  /** 退出仅撤销界面会话，不停止后台服务。 */
-  logout() { this.authenticated = false; }
-  /** 每一次配置读取和写操作都必须经过主进程授权。 */
-  require() { if (!this.authenticated) throw new Error("请先登录 LiveNest。"); }
+ private token = ""; private user?: Customer; private expires = 0; private checked = 0; private checkedAgent?: string;
+ /** 请求实现由 Electron Session 注入，沿用 Windows 代理。 */
+ constructor(private request: Requester = fetch) {}
+ /** 公开状态不含令牌；过期会话立即锁定界面。 */
+ session() { if (this.expires <= Date.now()) this.clear(); return { authenticated: !!this.user, username: this.user?.username }; }
+ /** 主进程经云端验证角色；错误仅回显安全 API 消息。 */
+ async login(username: unknown, password: unknown) {
+  if(typeof username !== "string" || typeof password !== "string" || username.length > 32 || password.length > 256) return {ok:false,message:"请输入有效账号和密码。"};
+  this.clear();
+  try { const response = await this.request(DESKTOP_ORIGIN+"/api/desktop/session",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({username,password}),redirect:"error",signal:AbortSignal.timeout(15000)}); const result = await response.json();
+   if(!response.ok) return {ok:false,message:result.error||"登录失败，请重试。"};
+   if(result.user?.role!=="customer" || !/^[a-f0-9]{64}$/.test(result.token) || !Number.isFinite(result.expires)) return {ok:false,message:"管理员请使用管理员网页端。"};
+   this.user=result.user;this.token=result.token;this.expires=result.expires; return {ok:true};
+  } catch {return {ok:false,message:"无法连接登录服务，请检查网络后重试。离线帮助仍可查看。"};}
+ }
+ /** 清理界面会话与远程令牌，不停止 Agent。 */
+ async logout() { const token=this.token;this.clear(); if(token) await this.request(DESKTOP_ORIGIN+"/api/desktop/session",{method:"DELETE",headers:{Authorization:"Bearer "+token},signal:AbortSignal.timeout(10000)}).catch(()=>{}); }
+ /** 每次敏感操作重查角色及设备归属，状态轮询最多缓存 10 秒。 */
+ async require(agentId?:string, fresh=true) {
+  if(!this.session().authenticated) throw new Error("登录已失效，请重新登录。已有直播继续运行。");
+  if(!fresh && this.checkedAgent===agentId && Date.now()-this.checked<10000)return;
+  let response:Response;
+  try { response=await this.request(DESKTOP_ORIGIN+"/api/desktop/session"+(agentId?"?agentId="+encodeURIComponent(agentId):""),{headers:{Authorization:"Bearer "+this.token},redirect:"error",signal:AbortSignal.timeout(10000)}); }catch{throw new Error("无法验证客户会话，请检查网络；已有直播继续运行。");}
+  if(!response.ok){this.clear();throw new Error(response.status===403?"这台电脑尚未分配给当前客户，请联系管理员。":"登录已失效，请重新登录。");}
+  await response.body?.cancel();this.checked=Date.now();this.checkedAgent=agentId;
+ }
+ /** 配对请求携带客户会话，禁止 UI 接触原始令牌。 */
+ headers() { if(!this.session().authenticated)throw new Error("请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
+ /** 会话清理不触碰设备身份。 */
+ private clear(){this.token="";this.user=undefined;this.expires=0;this.checked=0;this.checkedAgent=undefined;}
 }

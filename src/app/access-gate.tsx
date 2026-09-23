@@ -4,15 +4,17 @@
 
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { api } from "./client-request";
 import { LiveNestLogo, UserIcon, LockIcon, LogOutIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
-type User = { username: string };
+type User = { username: string; role: "admin" | "customer" };
 
 /**
  * LiveNest 登录入口与状态门禁。
  */
 export default function AccessGate({ children }: { children: ReactNode }) {
+  const pathname = usePathname(); const router = useRouter();
   const [user, setUser] = useState<User | null>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,6 +47,8 @@ export default function AccessGate({ children }: { children: ReactNode }) {
       window.removeEventListener("livepilot-login-required", expired);
     };
   }, []);
+
+  useEffect(() => { if (!user) return; if (pathname === "/" || (pathname === "/admin" && user.role !== "admin")) router.replace(user.role === "admin" ? "/admin" : "/workspace"); }, [user, pathname, router]);
 
   /** 提交成员凭据，验证期间禁用重复提交；失败保留表单供修改。 */
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -192,7 +196,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
             <span className="brand-tag">Studio</span>
           </div>
 
-          <div className="header-actions">
+          <div className="header-actions">{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
             <div className="user-tag">
               <UserIcon />
               <span title={user.username}>{user.username}</span>

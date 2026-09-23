@@ -20,7 +20,7 @@ function mockApp(id: string) {
   };
 }
 const apps = new Map<string, ReturnType<typeof mockApp>>();
-vi.mock("@/server/access", () => ({ authenticate: vi.fn(async () => ({ username: "alice" })) }));
+vi.mock("@/server/access", async importOriginal => ({ ...await importOriginal<typeof import("@/server/access")>(), authenticate: vi.fn(async () => ({ username: "alice", role: "admin" as const })) }));
 vi.mock("@/server/audit", () => ({ audit: vi.fn() }));
 vi.mock("next/server", async importOriginal => ({ ...await importOriginal<typeof import("next/server")>(), after: vi.fn() }));
 vi.mock("@/server/service", () => ({ service: vi.fn() }));
@@ -28,7 +28,7 @@ vi.mock("@/server/service", () => ({ service: vi.fn() }));
 beforeEach(() => {
   vi.stubEnv("LIVEPILOT_INSTANCES", "main,obs_a,studio_c");
   vi.stubEnv("LIVEPILOT_ORIGIN", "http://127.0.0.1:3010");
-  vi.mocked(authenticate).mockResolvedValue({ username: "alice" });
+  vi.mocked(authenticate).mockResolvedValue({ username: "alice", role: "admin" as const });
   apps.clear();
   for (const id of ["main", "obs_a", "studio_c"]) {
     apps.set(id, mockApp(id));

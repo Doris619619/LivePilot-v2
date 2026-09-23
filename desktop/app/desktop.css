@@ -60,3 +60,6 @@
 .desktop-header-actions > button, .desktop-header-actions > span { display: inline-flex; align-items: center; height: 44px; min-height: 44px; font: inherit; line-height: 24px; white-space: nowrap; }
 .desktop-header-actions > button { padding-block: 9px; }
 .desktop-header-actions .desktop-update-entry svg { width: 16px; height: 16px; }
+
+/* 正常说明和待操作提示不作为错误着色。 */
+.check-message.ready,.check-message.pending{color:var(--text-secondary,#526074)}.obs-candidate{padding:16px 0;border-top:1px solid var(--border-color,#e2e6ed)}.desktop-path{overflow-wrap:anywhere}

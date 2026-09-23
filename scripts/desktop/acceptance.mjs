@@ -28,7 +28,7 @@ try {
   await page.screenshot({ path: path.join(output, "login.png"), fullPage: true });
   const blocked = await page.evaluate(async () => { try { await window.liveNest.state(); return false; } catch { return true; } }); if (!blocked) throw new Error("Unauthenticated state exposed");
   if (!process.env.LIVENEST_TEST_PASSWORD) throw new Error("Set LIVENEST_TEST_PASSWORD for local UI acceptance");
-  await page.getByLabel("账号", { exact: true }).fill("Do"); await page.getByLabel("密码", { exact: true }).fill("incorrect"); await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByLabel("账号", { exact: true }).fill(process.env.LIVENEST_TEST_USERNAME || "Liang"); await page.getByLabel("密码", { exact: true }).fill("incorrect"); await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("alert").filter({ hasText: "账号或密码不正确" }).waitFor();
   await page.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("heading", { name: "设备配置", exact: true }).waitFor();
@@ -52,11 +52,11 @@ try {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth); if (overflow) throw new Error("Horizontal overflow");
   const beforeLogout = await page.evaluate(() => window.liveNest.state()); await page.getByRole("button", { name: "退出登录", exact: true }).click(); await page.getByRole("heading", { name: "登录 LiveNest" }).waitFor();
   const denied = await page.evaluate(async () => { try { await window.liveNest.act("check"); return false; } catch { return true; } }); if (!denied) throw new Error("Logout did not revoke IPC access");
-  await page.getByLabel("账号", { exact: true }).fill("Do"); await page.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByRole("heading", { name: "设备配置", exact: true }).waitFor();
+  await page.getByLabel("账号", { exact: true }).fill(process.env.LIVENEST_TEST_USERNAME || "Liang"); await page.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await page.getByRole("button", { name: "登录", exact: true }).click(); await page.getByRole("heading", { name: "设备配置", exact: true }).waitFor();
   const afterLogout = await page.evaluate(() => window.liveNest.state()); if (JSON.stringify(beforeLogout.instances) !== JSON.stringify(afterLogout.instances) || beforeLogout.agentRunning !== afterLogout.agentRunning) throw new Error("Logout changed background configuration");
   await closeTestApplication();
   application = await _electron.launch(launchOptions); const reopened = await application.firstWindow(); await reopened.getByRole("heading", { name: "登录 LiveNest" }).waitFor();
-  await reopened.getByLabel("账号", { exact: true }).fill("Do"); await reopened.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await reopened.getByRole("button", { name: "登录", exact: true }).click(); await reopened.getByRole("heading", { name: "设备配置", exact: true }).waitFor();
+  await reopened.getByLabel("账号", { exact: true }).fill(process.env.LIVENEST_TEST_USERNAME || "Liang"); await reopened.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await reopened.getByRole("button", { name: "登录", exact: true }).click(); await reopened.getByRole("heading", { name: "设备配置", exact: true }).waitFor();
   const restored = await reopened.evaluate(() => window.liveNest.state()); if (JSON.stringify(restored.instances) !== JSON.stringify(afterLogout.instances) || restored.dataRoot !== afterLogout.dataRoot) throw new Error("Restart did not preserve configuration");
   if (errors.length) throw new Error(errors.join("\n"));
   console.log(JSON.stringify({ result: "passed", isolatedData: data, screenshots: output, obs: process.argv.includes("--obs"), restart: true }));

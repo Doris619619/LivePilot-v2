@@ -1,9 +1,9 @@
-/** 本地登录拒绝未授权读写、异常输入及连续猜测，不涉及网页成员数据。 */
-import { describe, it, expect, vi, afterEach } from "vitest";
+/** 桌面云端登录只接受客户，过期及跨客户检查不会停止 Agent。 */
+import { it, expect, vi } from "vitest";
 import { DesktopAuth } from "../electron/auth";
-afterEach(() => vi.useRealTimers());
-describe("desktop local login", () => {
-  it("starts locked and does not expose credentials", () => { const auth = new DesktopAuth(); expect(auth.session()).toEqual({ authenticated: false }); expect(() => auth.require()).toThrow("请先登录"); auth.logout(); expect(() => auth.require()).toThrow(); });
-  it("rejects malformed input and wrong passwords", () => { const auth = new DesktopAuth(); for (const input of [undefined, {}, "a".repeat(257), "wrong"]) expect(auth.login("Do", input)).toEqual({ ok: false, message: "账号或密码不正确。" }); });
-  it("limits guesses and allows retry after the cooldown", () => { vi.useFakeTimers(); const auth = new DesktopAuth(); for (let i = 0; i < 5; i++) auth.login("Do", "wrong"); expect(auth.login("Do", "wrong").message).toContain("一分钟"); vi.advanceTimersByTime(60_001); expect(auth.login("Do", "wrong").message).toContain("账号或密码"); });
-});
+/** 合成令牌不涉及真实账号。 */
+const reply=()=>Response.json({token:"a".repeat(64),user:{username:"testcustomer",role:"customer"},expires:Date.now()+60000});
+it("starts locked and rejects invalid input without network",async()=>{const request=vi.fn();const a=new DesktopAuth(request);expect(a.session().authenticated).toBe(false);await expect(a.require()).rejects.toThrow();expect((await a.login({},{})).ok).toBe(false);expect(request).not.toHaveBeenCalled();});
+it("accepts customer only and hides token from renderer",async()=>{const request=vi.fn().mockResolvedValueOnce(reply()).mockResolvedValue(Response.json({user:{username:"testcustomer",role:"customer"}}));const a=new DesktopAuth(request);expect((await a.login("testcustomer","synthetic-secret")).ok).toBe(true);expect(a.session()).toEqual({authenticated:true,username:"testcustomer"});await a.require("pc_test");expect(request.mock.calls[1][0]).toContain("agentId=pc_test");await a.logout();expect(a.session().authenticated).toBe(false);});
+it("rejects admin and expired or foreign-device sessions",async()=>{const a=new DesktopAuth(vi.fn().mockResolvedValue(Response.json({error:"管理员请使用管理员网页端。"},{status:403})));expect((await a.login("testadmin","synthetic-secret")).message).toContain("管理员");const request=vi.fn().mockResolvedValueOnce(reply()).mockResolvedValue(Response.json({},{status:403}));const customer=new DesktopAuth(request);await customer.login("testcustomer","synthetic-secret");await expect(customer.require("pc_other")).rejects.toThrow("分配");expect(customer.session().authenticated).toBe(false);});
+it("reports offline login clearly",async()=>{const a=new DesktopAuth(async()=>{throw new Error("private network detail");});expect((await a.login("customer","synthetic-secret")).message).toContain("网络");});
