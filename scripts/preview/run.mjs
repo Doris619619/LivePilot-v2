@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
 import { seed, refresh, control, password } from './fixtures.mjs';
+import { guardPreview, authorizePreviewControl } from './security.mjs';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(directory, '../..');
 process.chdir(repo);
@@ -40,11 +41,12 @@ async function proxy(port, username) {
   let cookie = session.headers.get('set-cookie').split(';')[0];
   const server = createServer(async (request, response) => {
     try {
+      guardPreview(request, port);
       const url = new URL(request.url, origin);
       if (url.origin !== origin) return json(response, 400, { error: 'Invalid local preview URL' });
       if (/^\/api\/(uploads|youtube)/.test(url.pathname)) return json(response, 409, { error: '本地界面预览：不上传真实素材或连接 YouTube。' });
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
-      if (url.pathname === '/api/control' && request.method === 'POST') return json(response, 200, await control(root, JSON.parse(input), username));
+      if (url.pathname === '/api/control' && request.method === 'POST') { const command = JSON.parse(input); const actor = await authorizePreviewControl(origin, cookie, command); return json(response, 200, await control(root, command, actor)); }
       const headers = new Headers();
       for (const [key, value] of Object.entries(request.headers)) if (value && !['host', 'connection', 'accept-encoding', 'content-length', 'cookie'].includes(key)) headers.set(key, String(value));
       headers.set('Cookie', cookie); if (headers.has('origin')) headers.set('Origin', origin);
@@ -52,7 +54,7 @@ async function proxy(port, username) {
       if (url.pathname === '/api/session' && upstream.headers.has('set-cookie')) cookie = upstream.headers.get('set-cookie').split(';')[0];
       for (const [key, value] of upstream.headers) if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie'].includes(key)) response.setHeader(key, value);
       response.statusCode = upstream.status; response.end(Buffer.from(await upstream.arrayBuffer()));
-    } catch (error) { json(response, 500, { error: error.message }); }
+    } catch (error) { json(response, error.status || 500, { error: error.message }); }
   });
   servers.push(server); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
 }

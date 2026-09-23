@@ -1,5 +1,8 @@
 /** 管理员指标钻取与时区回归：包含没有 OBS 的电脑和未接入客户。 */
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import Assignment from "../src/app/admin/assignment";
 import { groupOverview, searchOverview, updateTime, validTimeZone, type Overview } from "../src/app/admin/view-model";
 /** 合成状态覆盖在线、离线、待分配及空设备；不读取运行数据。 */
 function fixture(): Overview {
@@ -16,6 +19,11 @@ function fixture(): Overview {
   return { at: 1, agents, rows, customers: ["Liang", "Demo", "New"].map(username => ({ username, role: "customer" })), totals: { live: 1, online: 2, offline: 1, customers: 3, errors: 1, unknown: 1 } };
 }
 describe("admin drilldowns", () => {
+  it("keeps an unavailable owner selected instead of displaying another customer", () => {
+    const data = fixture(); data.agents[0].owner = "Former";
+    const html = renderToStaticMarkup(createElement(Assignment, { data, busy: false, notice: "", assign: async () => {} }));
+    expect(html).toMatch(/<option value="Former" disabled="" selected="">Former（已停用或不可分配）<\/option>/);
+  });
   it("searches customers, computers and OBS without retaining a status filter", () => {
     const data = fixture();
     expect(searchOverview(data, " liang ")[0].devices[0].rows).toHaveLength(2);

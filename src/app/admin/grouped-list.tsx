@@ -5,7 +5,7 @@ const lifecycle: Record<string, string> = { live: "直播中", complete: "已结
 /** 客户与设备用标题和缩进区分，OBS 使用紧凑表格对照。 */
 export default function GroupedList({ groups, timeZone, stale }: { groups: Group[]; timeZone: string; stale: boolean }) {
   if (!groups.length) return <p className="admin-empty" role="status">没有符合条件的客户或设备。</p>;
-  return <div className="admin-groups">{groups.map(group => <section className="admin-customer-group" key={group.customer || "unassigned"} aria-label={group.customer || "待分配设备"}>
+  return <div className="admin-groups">{groups.map(group => <section className="admin-customer-group" key={"customer:" + group.customer} aria-label={group.customer || "待分配设备"}>
     <h3>{group.customer || "待分配设备"}</h3>{!group.devices.length && <p className="admin-empty">尚未接入电脑</p>}
     {group.devices.map(({ agent, rows }) => <section className="admin-device-group" key={agent.id} aria-label={agent.name}>
       <header className="admin-device-heading"><div><h4>{agent.name}</h4><span className={"admin-connection " + (!stale && agent.online ? "is-online" : "")}>{stale ? "状态待确认" : agent.online ? "在线" : "离线"}</span></div><span className="admin-updated">最近更新 <time dateTime={agent.lastSeen ? new Date(agent.lastSeen).toISOString() : undefined}>{updateTime(agent.lastSeen, timeZone)}</time></span></header>
