@@ -63,3 +63,6 @@
 
 /* 正常说明和待操作提示不作为错误着色。 */
 .check-message.ready,.check-message.pending{color:var(--text-secondary,#526074)}.obs-candidate{padding:16px 0;border-top:1px solid var(--border-color,#e2e6ed)}.desktop-path{overflow-wrap:anywhere}
+
+/* 登录前更新与登录表单分隔，长错误在窄窗口中换行。 */
+.login-update{border-top:1px solid var(--border-color,#e5e7eb);margin-top:24px;padding-top:20px;overflow-wrap:anywhere}.login-update h2{font-size:16px}.login-update p{font-size:14px;margin:10px 0}.login-update [role=alert]{color:var(--text-danger,#b42342)}

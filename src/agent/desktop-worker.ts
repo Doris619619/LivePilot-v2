@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { runAgent } from "./runner";
 import type { Transport } from "./transport";
-import { safeError, problemFor } from "@/core/errors";
+import { AppError, safeError, problemFor } from "@/core/errors";
 const initSchema = z.object({ type: z.literal("init"), env: z.record(z.string(), z.string().optional()), identity: z.object({ agentId: z.string(), origin: z.string(), token: z.string() }) });
 let started = false; let stopped = false; let transport: Transport | undefined;
 /** 父进程通道失效时停止接收新任务，排空后退出。 */
@@ -15,7 +15,8 @@ process.on("message", async raw => {
   if (message.type === "stop") { stopped = true; return; }
   if (message.type === "rpc") {
     try {
-      if (!transport || !["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new Error("设备尚未连接或操作无效。");
+      if (!["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new AppError("AGENT_REQUEST", "此设备操作不受支持。");
+      if (!transport) throw new AppError("AGENT_CONNECTION", "设备尚未建立云端控制连接，无法确认维护操作。请先恢复配对或网络连接，再重试原操作。");
       send({ type: "reply", id: message.id, result: await transport.post("/api/agent/" + message.route, message.data) });
     } catch (error) { send({ type: "reply", id: message.id, error: safeError(error), problem: problemFor(error) }); }
     return;
@@ -37,5 +38,5 @@ process.on("message", async raw => {
         transport = active; send({ type: "google", google });
       },
     }); process.exit(0);
-  } catch (e) { send({ type: "error", message: safeError(e) }); process.exit(1); }
+  } catch (e) { const problem = problemFor(e); send({ type: "error", message: problem.message, code: problem.code }); process.exit(1); }
 });

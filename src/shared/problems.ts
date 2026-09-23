@@ -43,6 +43,11 @@ const catalog: Record<string, Guidance> = {
   RESULT_SAVE: { title: "操作结果未能保存", steps: ["操作可能已经生效。核对 OBS 和 YouTube 的实际状态，并检查直播电脑磁盘与权限；不要重复发起开播。"], actions: ["refresh", "support"] },
   CANCELLED: { title: "本次操作已取消", steps: ["可以保留当前输入，准备好后继续。"], actions: [] },
   UPDATE_INTEGRITY: { title: "更新文件校验未通过", steps: ["保留当前版本，联系管理员检查官方发行文件；不要绕过校验安装。"], actions: ["support"] },
+  UPDATE_INSTALL: { title: "安装程序尚未启动", steps: ["点击“重试重启更新”。仍失败时从官方发行页下载安装包，在确认客户端正常退出后安装，保留原数据目录。"], actions: ["support"] },
+  UPDATE_STATE: { title: "更新状态已变化", steps: ["查看软件更新区域的当前阶段，下载完成后再确认重启。"], actions: [] },
+  AGENT_AUTH: { title: "设备配对已失效", steps: ["在网页为原客户获取新配对码，回到原电脑重新连接。软件更新无需重新配对。"], actions: ["help", "support"] },
+  AGENT_CONNECTION: { title: "设备连接尚未确认", steps: ["等待已接收任务完成；需要恢复控制连接时，在设备配置中重新连接。不要强行结束 Agent 或 OBS。"], actions: ["help", "support"] },
+  OBS_MAINTENANCE: { title: "本机 OBS 暂不满足维护条件", steps: ["在对应 OBS 核对实际推流、录制与控制连接。准备好后重试原操作；程序不会自动停播或结束录制。"], actions: ["help", "support"] },
 };
 /** 未知原因仍提供对象相关的核对步骤，不根据中文消息猜测可执行动作。 */
 export function guidance(problem: Pick<Problem, "code" | "domain" | "outcome">): Guidance {

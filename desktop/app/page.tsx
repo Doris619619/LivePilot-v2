@@ -12,12 +12,14 @@ import SettingsPanel from "./settings-panel";
 import SetupFeedback from "./setup-feedback";
 import ObsPicker from "./obs-picker";
 import ManualConnection from "./manual-connection";
+import { UpdateProvider, useLocalUpdates } from "./local-updates";
 declare global { interface Window { liveNest?: DesktopBridge } }
 const pages = ["设备配置", "本机 OBS", "帮助", "设置"] as const;
 /** 六步进度来自真实检查与新鲜 Agent 状态，不使用模拟百分比。 */
-export default function Page() { return <Login>{(logout, username) => <Desktop logout={logout} username={username} />}</Login>; }
+export default function Page() { return <UpdateProvider><Login>{(logout, username) => <Desktop logout={logout} username={username} />}</Login></UpdateProvider>; }
 /** 登录后的配置界面持续读取后台状态。 */
 function Desktop({ logout, username }: { logout: () => Promise<void>; username: string }) {
+  const localUpdates = useLocalUpdates();
   const [page, setPage] = useState<(typeof pages)[number]>("设备配置"); const [state, setState] = useState<DesktopState>();
   const [now, setNow] = useState(0); const [lastRead, setLastRead] = useState(0); const [readError,setReadError] = useState(""); const [problem,setProblem] = useState<Problem>(); const [helpTopic,setHelpTopic] = useState("obs");
   const [failedActivity,setFailedActivity] = useState<DesktopActivity>();
@@ -32,6 +34,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   }, []);
   /** 写操作去重，失败保留表单，成功后采用宿主最新快照。 */
   async function act(action: DesktopAction, input?: Record<string, unknown>) {
+    if (["update-check", "update-download", "update-install", "update-apply"].includes(action)) return localUpdates.act(action);
     if (pending) return false; setProblem(undefined); setFailedActivity(undefined); setPending(true); setActiveAction(action); setFailedStep(0); setError("");
     if (action !== "web") setState(previous => previous && ({ ...previous, activity: { instanceId: typeof input?.id === "string" ? input.id : undefined, action, step: activityStep(action), status: "running", stage: "正在检查操作条件", startedAt: now } }));
     try { if (!window.liveNest) throw new Error("桌面连接不可用。"); const result=await window.liveNest.act(action,input); if(!result.ok){const message=result.problem.message+(result.fields?" · "+Object.entries(result.fields).map(([key,value])=>({port:"端口",password:"密码",name:"名称"}[key]||key)+"："+value).join("；"):"");const failure={...result.problem,message};setFailedActivity({action,instanceId:failure.target.instanceId || (typeof input?.id==="string"?input.id:undefined),step:activityStep(action),status:"failed",stage:failure.stage,attemptId:failure.attemptId,startedAt:failure.observedAt,problem:failure,message});setProblem(failure);setError(message);setFailedStep(activityStep(action));const field=Object.keys(result.fields||{})[0];if(field)document.querySelector<HTMLInputElement>('[name="'+CSS.escape(field)+'"]')?.focus();return false;} setState(result.state);if(!result.cancelled && action==="pair")setInvitation("");return !result.cancelled; }
@@ -43,7 +46,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   const online = !!state?.online && now-lastRead<20_000 && !readError;
   const connectionRecovered = online && !state.maintenance && reportedActivity?.step === 3 && reportedActivity.status === "failed";
   const activity = connectionRecovered ? undefined : reportedActivity;
-  const visibleError = connectionRecovered ? "" : error || state?.message;
+  const visibleError = connectionRecovered ? "" : error || (state?.activity?.action.startsWith("update-") ? "" : state?.message);
   const pairingExpired = !state?.online && state?.connectionError === "AGENT_AUTH";
   const inline = !!activity?.step && activity.status !== "complete" && (page === "设备配置" || (page === "本机 OBS" && activity.step === 2));
   const busy = pending || state?.busy; const instances = state?.instances || []; const candidates = state?.candidates || [];
@@ -70,7 +73,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   function pairingForm() {
     return <><label className="field-group">配对码<textarea value={invitation} onChange={e => setInvitation(e.target.value)} placeholder="粘贴网页复制的配对码" /></label><button className="btn-primary" disabled={busy || !obsConfigured || !invitation.trim()} onClick={() => void act("pair", { invitation })}>连接</button></>;
   }
-  return <><header className="app-header"><div className="header-container"><div className="brand-section"><span aria-hidden="true" style={{ color: "var(--accent-primary)", fontSize: 24 }}>◉</span><span className="brand-name">LiveNest</span><span className="brand-tag">Studio</span></div><div className="desktop-actions desktop-header-actions">{state && <UpdateEntry update={state.update} busy={!!busy} act={act} error={state.activity?.action === "update-install" && state.activity.status === "failed" ? state.activity.message : undefined} />}<button className="btn-ghost" onClick={() => void act("web")}>打开网页工作台 ↗</button><span>{username}</span><button className="btn-ghost" onClick={() => void logout()}>退出登录</button></div></div></header>
+  return <><header className="app-header"><div className="header-container"><div className="brand-section"><span aria-hidden="true" style={{ color: "var(--accent-primary)", fontSize: 24 }}>◉</span><span className="brand-name">LiveNest</span><span className="brand-tag">Studio</span></div><div className="desktop-actions desktop-header-actions">{localUpdates.state && <UpdateEntry update={localUpdates.state.update} busy={localUpdates.pending || localUpdates.state.busy} act={localUpdates.act} error={localUpdates.error} />}<button className="btn-ghost" onClick={() => void act("web")}>打开网页工作台 ↗</button><span>{username}</span><button className="btn-ghost" onClick={() => void logout()}>退出登录</button></div></div></header>
     <div className="workspace-shell"><aside className="workspace-sidebar"><nav aria-label="桌面导航">{pages.map(p => <button key={p} className={"sidebar-link desktop-nav " + (p === page ? "is-active" : "")} onClick={() => setPage(p)}>{p === "本机 OBS" ? <VideoIcon /> : <DeviceIcon />}<span>{p}</span></button>)}</nav><div className="desktop-status"><span className={"device-state " + (online ? "online" : "")}>{online ? "设备在线" : pairingExpired ? "配对已失效" : state?.agentRunning ? visibleError ? "等待重连" : "正在连接" : "尚未连接"}</span></div></aside>
     <main className="main-wrapper"><div className="workspace-heading"><h1>{page}</h1>{page === "设备配置" && <button disabled={busy} onClick={() => void act("check")}><RefreshIcon />重新检查</button>}</div>
     {state?.maintenance && <div className="banner" role="status">设备维护尚未确认结束，原配置已保留。<button disabled={busy} onClick={() => void act("start")}>重新连接并恢复</button></div>}
@@ -91,6 +94,6 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
     </div>}
     {state && page === "本机 OBS" && <>{activity?.step === 2 && feedback()}{instances.map(i => <section className="desktop-instance" key={i.id}><div className="setup-title"><h2>{i.name}</h2><span className={"setup-state " + (i.initialized ? "ready" : "")}>{i.initialized ? "已配置" : "待配置"}</span></div>{fresh.filter(s=>s.instance.id===i.id&&s.dashboard.obs.problem).map(s=><ProblemCard key={i.id} problem={s.dashboard.obs.problem!} objectName={i.name} onRefresh={()=>void act("diagnose-obs",{id:i.id})} onSettings={()=>{setHelpTopic("obs");setPage("帮助");}} />)}<details><summary>OBS 详情与修复</summary><p className="desktop-path">{i.exe}</p>{state.paired && <p>{fresh.some(s=>s.instance.id===i.id&&s.dashboard.youtube.connected)?"频道已连接":"下一步：在网页为此 OBS 连接独立频道"} · {fresh.some(s=>s.instance.id===i.id&&s.dashboard.media.videos.length&&s.dashboard.media.music.length)?"素材已准备":"为此 OBS 选择视频和音乐"}<button disabled={busy} onClick={()=>void act("web",{id:i.id})}>前往 {i.name} 网页配置 ↗</button></p>}<div className="desktop-actions"><span>端口 {i.port}</span>{i.managed && <button disabled={busy} onClick={() => void act("repair-managed", { id: i.id })}>修复连接（先关闭 OBS）</button>}<button disabled={busy} onClick={() => void act("prepare", { id: i.id })}>启动并检查</button><input aria-label={i.name + "名称"} defaultValue={i.name} maxLength={80} onBlur={e => { if (e.target.value.trim() && e.target.value !== i.name) void act("rename", { id: i.id, name: e.target.value }); }} /></div></details></section>)}<ObsPicker state={state} busy={!!busy} act={act} /></>}
     {page === "帮助" && <Help key={helpTopic} initialTopic={helpTopic} />}
-    {state && page === "设置" && <SettingsPanel state={state} busy={!!busy} act={act} />}
+    {state && page === "设置" && <><SettingsPanel state={{...state, update: localUpdates.state?.update || state.update}} busy={!!busy || localUpdates.pending || !!localUpdates.state?.busy} act={act} />{localUpdates.error && <p role="alert">{localUpdates.error}</p>}</>}
     </main></div></>;
 }

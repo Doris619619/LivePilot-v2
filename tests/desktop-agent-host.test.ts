@@ -72,6 +72,8 @@ it("keeps pairing recovery separate from network advice and clears the classific
   const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
   child.emit("message", { type: "error", code: "AGENT_AUTH", message: "设备凭据失效" });
   expect(host.message).toContain("新配对码"); expect(host.message).not.toContain("代理"); expect(host.errorCode).toBe("AGENT_AUTH");
+  await expect(host.ready()).rejects.toMatchObject({ code: "AGENT_AUTH" });
+  await expect(host.rpc("maintenance-begin", {})).rejects.toMatchObject({ code: "AGENT_AUTH" });
   child.emit("message", { type: "error", code: "CLOUD_NETWORK", message: "连接失败" });
   expect(host.message).toContain("无需重新配对"); expect(host.message).toContain("自动重试");
   child.emit("message", { type: "heartbeat", at: Date.now() });

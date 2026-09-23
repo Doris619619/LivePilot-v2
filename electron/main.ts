@@ -9,6 +9,7 @@ import { problemFor, safeError } from "../src/core/errors";
 import { Manager } from "./manager";
 import { DesktopAuth } from "./auth";
 import { Shutdown } from "./shutdown";
+import { UpdateAccess } from "./update-access";
 const auth = new DesktopAuth((url, init) => net.fetch(url, init));
 protocol.registerSchemesAsPrivileged([{ scheme: "livenest", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName("LiveNest"); app.setAppUserModelId("com.doris619619.livenest");
@@ -56,8 +57,11 @@ async function launch() {
   ipcMain.handle("desktop:session", event => { trusted(event); return auth.session(); });
   ipcMain.handle("desktop:login", (event, username, password) => { trusted(event); return auth.login(username, password); });
   ipcMain.handle("desktop:logout", event => { trusted(event); return auth.logout(); });
+  const updates = new UpdateAccess(manager, () => app.getVersion());
+  ipcMain.handle("desktop:update-state", event => { trusted(event); return updates.state(); });
+  ipcMain.handle("desktop:update", (event, name) => { trusted(event); return updates.act(name); });
   ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
-  const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
+  const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
     try { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined);
       const state=await manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(),z.unknown()).parse(input));
@@ -67,11 +71,11 @@ async function launch() {
   const image = nativeImage.createFromPath(path.join(resources, "icon.png")); tray = new Tray(image); tray.setToolTip("LiveNest");
   tray.setContextMenu(Menu.buildFromTemplate([{ label: "打开 LiveNest", click: () => window?.show() }, { label: "网页工作台", click: () => { void manager.act("web"); } }, { type: "separator" }, { label: "退出", click: () => { void quit(); } }])); tray.on("double-click", () => window?.show());
   await window.loadURL("livenest://app/index.html"); if (!process.argv.includes("--hidden")) window.show();
-  const launched = Date.now(); setTimeout(() => { void manager.updates.check(true); }, 30_000).unref(); setInterval(() => { void manager.updates.check(true); }, 6 * 3_600_000).unref();
+  const launched = Date.now(); setTimeout(() => { void manager.updates.check(true).catch(() => {}); }, 30_000).unref(); setInterval(() => { void manager.updates.check(true).catch(() => {}); }, 6 * 3_600_000).unref();
   /** 焦点与唤醒只在首次启动窗口后触发补查。 */
-  const recheck = () => { if (Date.now() - launched >= 30_000) void manager.updates.check(true); }; window.on("focus", recheck); powerMonitor.on("resume", recheck);
+  const recheck = () => { if (Date.now() - launched >= 30_000) void manager.updates.check(true).catch(() => {}); }; window.on("focus", recheck); powerMonitor.on("resume", recheck);
 }
 app.on("second-instance", () => { window?.show(); window?.focus(); });
-/** 应用级退出复用托盘确认；更新器已获维护许可时通过 quitting 放行。 */
-app.on("before-quit", event => { if (!quitting && shutdown) { event.preventDefault(); void quit(); } });
+/** 应用级退出复用托盘确认；更新器已进入安装退出生命周期时才放行。 */
+app.on("before-quit", event => { if (!quitting && shutdown) { event.preventDefault(); if (manager.updates.state.status === "error" && manager.updates.state.stage === "install") { window?.show(); return; } void quit(); } });
 if (ownsLock) void app.whenReady().then(launch).catch(async error => { quitting = true; await dialog.showMessageBox({ type: "error", message: "LiveNest 未能加载数据。请检查原数据盘与 Windows 账户，原有文件没有删除。", detail: safeError(error) }); app.quit(); });
