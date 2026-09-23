@@ -24,9 +24,18 @@ export class SettingsStore {
       return value;
     } catch { throw new Error("无法解密本机配置，请使用原 Windows 账户打开；不要删除配置文件。"); }
   }
+  /** 只有文件真正不存在才返回空；null、空串和 false 均不能触发新身份初始化。 */
+  private async record<T>(store: Store, name: string): Promise<T | null> {
+    const value = await store.read<T>(name);
+    if (!value) {
+      const exists = await access(path.join(store.dir, name)).then(() => true, error => { if(error.code === "ENOENT") return false; throw error; });
+      if (exists) throw new Error("本机配置内容为空或损坏，请保留原文件并恢复配置；没有创建新身份。");
+    }
+    return value;
+  }
   /** 定位记录优先；目标丢失禁止退回旧副本并产生分叉身份。 */
   async read(): Promise<Settings> {
-    const location = await this.locator.read<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>("data-location.json");
+    const location = await this.record<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>(this.locator, "data-location.json");
     if (location) {
       if (location.version !== 1 || !path.isAbsolute(location.dataRoot || "") || (!location.pending && !location.rootId)) throw new Error("数据位置记录损坏，请保留配置并恢复原数据位置。");
       if (location.pending) return this.select(location.dataRoot);
@@ -35,18 +44,18 @@ export class SettingsStore {
       const marker = await readRoot(location.dataRoot);
       if (marker.id !== location.rootId) throw new Error("LiveNest 数据目录归属已改变，未加载或覆盖配置。");
       const store = await this.rootStore(location.dataRoot);
-      const encrypted = await store.read<string>("settings.json");
+      const encrypted = await this.record<string>(store, "settings.json");
       if (!encrypted) throw new Error("LiveNest 数据配置缺失，请恢复原配置；没有创建新身份。");
       const settings = await this.decode(encrypted);
       if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) throw new Error("LiveNest 配置与数据位置不匹配，请恢复原目录。");
       return settings;
     }
-    const legacy = await this.locator.read<string>("settings.json");
+    const legacy = await this.record<string>(this.locator, "settings.json");
     if (legacy) {
       const settings = await this.decode(legacy);
       const marker = await claimLegacyRoot(settings, this.installation());
       // 定位记录提交中断时，根内已验证的配置比保留的旧密文更新；不可用旧快照覆盖。
-      const existing = await (await this.rootStore(settings.dataRoot)).read<string>("settings.json");
+      const existing = await this.record<string>(await this.rootStore(settings.dataRoot), "settings.json");
       if(existing) return this.select(settings.dataRoot);
       const next = { ...settings, rootId: marker.id };
       await this.write(next); return next;
@@ -58,7 +67,7 @@ export class SettingsStore {
   async select(target: string): Promise<Settings> {
     const marker = await claimRoot(target, this.installation());
     const store = await this.rootStore(target);
-    const encrypted = await store.read<string>("settings.json");
+    const encrypted = await this.record<string>(store, "settings.json");
     if (encrypted) {
       const settings = await this.decode(encrypted);
       if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(target).toLowerCase()) throw new Error("已有 LiveNest 配置与选择位置不匹配，没有覆盖文件。");
@@ -77,7 +86,6 @@ export class SettingsStore {
   /** 先保存并读回密文，再提交定位记录；调用方只能在成功后替换内存配置。 */
   async write(settings: Settings) {
     if (!settings.dataRoot) return;
-    if (process.platform !== "win32") throw new Error("此版本需要 Windows 用户凭据保护。");
     const snapshot = structuredClone(settings);
     const next = this.saving.catch(() => {}).then(async () => {
       const marker = await readRoot(snapshot.dataRoot);

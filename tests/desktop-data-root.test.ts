@@ -43,3 +43,21 @@ it("recovers an unextracted legacy candidate but rejects ownerless existing file
  const obs=path.join(target,"obs/main");await mkdir(obs,{recursive:true});await writeFile(path.join(obs,"user.txt"),"keep");
  await expect(new SettingsStore().read()).rejects.toThrow();expect(await readFile(path.join(obs,"user.txt"),"utf8")).toBe("keep");
 });
+
+/** 合法 JSON 空值也是损坏配置，绝不能与文件不存在混淆并重置身份。 */
+it.each([null, "", false])("rejects an existing invalid locator value %j",async value=>{
+ await new Store(f.bootstrap).write("data-location.json",value);
+ await expect(new SettingsStore().read()).rejects.toThrow();
+ expect(await new Store(f.bootstrap).read("data-location.json")).toEqual(value);
+});
+it.each([null, "", false])("preserves existing invalid encrypted settings %j without generating an identity",async value=>{
+ const store=new SettingsStore();await store.select(target);
+ const config=new Store(path.join(target,"state/desktop"));await config.write("settings.json",value);
+ await expect(store.select(target)).rejects.toThrow();
+ expect(await config.read("settings.json")).toEqual(value);
+});
+it("rejects an explicitly empty legacy configuration",async()=>{
+ await new Store(f.bootstrap).write("settings.json",null);
+ await expect(new SettingsStore().read()).rejects.toThrow();
+ expect(await new Store(f.bootstrap).read("data-location.json")).toBeNull();
+});
