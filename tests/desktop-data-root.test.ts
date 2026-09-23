@@ -1,5 +1,5 @@
 /** 根归属与配置定位回归，所有文件及密钥均为临时合成数据。 */
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, afterEach, it, expect, vi } from "vitest";
@@ -60,4 +60,11 @@ it("rejects an explicitly empty legacy configuration",async()=>{
  await new Store(f.bootstrap).write("settings.json",null);
  await expect(new SettingsStore().read()).rejects.toThrow();
  expect(await new Store(f.bootstrap).read("data-location.json")).toBeNull();
+});
+
+/** 配置可能保留旧 8.3 拼写，重新选择长路径时仍必须识别为同一份身份。 */
+it("restores the same encrypted identity through its canonical root path",async()=>{
+ const store=new SettingsStore();const first=await store.select(target);
+ const restored=await store.select(await realpath(target));
+ expect(restored.rootId).toBe(first.rootId);expect(restored.encryptionKey).toBe(first.encryptionKey);
 });

@@ -69,12 +69,12 @@ OBS 自身日志保留在对应 portable OBS 内，仍位于根目录下。AppDa
 
 ## 验证
 
-- `npm.cmd run verify`：288 项业务测试、8 项部署测试、类型检查、Lint、网页生产构建、Agent 构建通过。测试包含安装脚本在真实 Windows PowerShell 的隔离路径调用。
+- `npm.cmd run verify`：291 项业务测试、8 项部署测试、类型检查、Lint、网页生产构建、Agent 构建通过。测试包含安装脚本在真实 Windows PowerShell 的隔离路径调用。
 - 数据测试覆盖中文／空格、未知非空目录、损坏标记、安装包含关系、junction、加密写失败、定位提交失败、旧配置保留、数据盘消失、复制校验失败、外部素材引用和候选／归档路径迁移。
 - Manager 测试覆盖运行中归档 OBS 阻止迁移、目标冲突前置拒绝、复制／提交失败恢复旧位置、已切换后 Agent 恢复失败保留维护状态。
 - `desktop:renderer` 和静态 UI 验收通过：首次创建、连续新增、高级折叠、目标候选重试、设置按钮、800 px 无横向溢出。已有进度／重试／重登录／更新反馈脚本通过；素材与账号为合成状态。
 - 真实 Windows OBS 32.2.2：顺序创建 3 个独立实例，端口 15455／15456／15457，分别通过 WebSocket 与标准源验证；OBS 1 自定义场景保持，合成授权文件不变，三个实例均未推流、未录制。最终脚本退出码 0，三个测试进程已清理。[原始结果](evidence/managed-obs-20260923.json)。
-- `npm.cmd run desktop:build` 从干净提交 `6a0e555` 完整通过：Renderer、Electron、NSIS、ASAR 隔离、Node 版本、OBS ZIP 摘要、Electron fuse。测试安装包 `LiveNest_0.1.2_x64-setup.exe`，396,883,310 字节，SHA-256 `f5279705627be54e7ce61f607cc2592bbd4f0b83d22063122b92b72dd1e18d60`。[构建证据](evidence/build-20260923.json)。版本沿用 0.1.2，仅为本地验收产物，未发布；这是实现阶段的安装包证据；后续 PR 审查补充了空配置拒绝与 DPAPI 平台边界修复，该包不代表最终 PR 代码，也未公开发布。
+- `npm.cmd run desktop:build` 从干净提交 `6a0e555` 完整通过：Renderer、Electron、NSIS、ASAR 隔离、Node 版本、OBS ZIP 摘要、Electron fuse。测试安装包 `LiveNest_0.1.2_x64-setup.exe`，396,883,310 字节，SHA-256 `f5279705627be54e7ce61f607cc2592bbd4f0b83d22063122b92b72dd1e18d60`。[构建证据](evidence/build-20260923.json)。版本沿用 0.1.2，仅为本地验收产物，未发布；这是实现阶段的安装包证据；后续 PR 审查补充了空配置拒绝与 DPAPI 平台边界修复，后续还修复了 CI 暴露的 Windows 短路径兼容，该包不代表最终 PR 代码，也未公开发布。
 
 首次构建曾因 node_modules 联接超出 Turbopack 根目录失败，改为工作区独立依赖后完整 verify 通过；NSIS 卸载器的未引用安装函数警告，以及插件注册之前编译自定义函数的时序和重复包含问题也已修正，完整 NSIS 编译通过。首次真实 OBS 检查成功但隐藏窗口未优雅退出，清理逻辑限定到已确认无输出且路径归属精确匹配的测试 PID 后，完整重跑通过。以上测试清理不改变生产退出／更新策略。
 
@@ -89,6 +89,8 @@ OBS 自身日志保留在对应 portable OBS 内，仍位于根目录下。AppDa
 发现并修复配置 JSON 为 `null`、空串或 `false` 时被当作不存在的边界。定位记录、根内密文和旧版密文均只有文件真正缺失才允许首次初始化；损坏文件保持原样，不生成替代身份。新增 7 项先失败后通过的回归。
 
 Windows 平台限制下移到实际 DPAPI 边界；生产环境仍拒绝非 Windows 凭据调用，模拟加密的配置事务测试可在 Windows／Linux CI 上一致执行。安装与用户目录语义未改变，README 无额外使用步骤变更。
+
+Windows CI 首轮暴露 `RUNNER~1` 短路径与长路径混用问题：旧候选归属判断和外部素材引用检查必须基于同一真实路径。根、exe 和已识别素材字段现在统一解析真实路径（含不存在叶子的已存在祖先），仍拒绝目录链接。测试期望使用规范路径，并新增 3 项长短路径混用回归。本机以真实 8.3 TEMP 路径执行相关测试，覆盖 Windows runner 环境差异。
 
 ## 实际修改文件清单
 

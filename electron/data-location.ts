@@ -1,10 +1,10 @@
 /** 数据复制事务：校验后切换、只修正托管路径、源目录始终保留。 */
-import { mkdir, writeFile, unlink, readdir, cp, lstat, realpath, readFile } from "node:fs/promises";
+import { mkdir, writeFile, unlink, readdir, cp, lstat, readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { Settings } from "./settings";
-import { checkRootPath, claimRoot, readRoot, ROOT_MARKER, within } from "./data-root";
+import { checkRootPath, claimRoot, readRoot, ROOT_MARKER, within, ordinaryEntry } from "./data-root";
 import { Store } from "../src/core/storage";
 export const MIGRATION_FILE = ".livenest-migration.json";
 /** 验证可写，探针只删除本次随机文件。 */
@@ -29,15 +29,21 @@ async function manifest(root: string) {
   await walk(root); return { files, dirs: dirs.sort() };
 }
 /** 限定 OBS 场景的已知本地路径字段，绝不替换频道名、密钥或任意字符串。 */
-function relocateScene(value: unknown, source: string, target: string, field = ""): unknown {
-  if (typeof value === "string" && ["local_file", "file", "filename", "path"].includes(field) && path.isAbsolute(value) && within(source,value)) return path.join(target,path.relative(source,value));
-  if(Array.isArray(value)) return value.map(item=>relocateScene(item,source,target,field));
-  if(value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,relocateScene(item,source,target,key)]));
+async function relocateScene(value: unknown, source: string, target: string, field = ""): Promise<unknown> {
+  if (typeof value === "string" && ["local_file", "file", "filename", "path"].includes(field) && path.isAbsolute(value)) {
+    // 数据根只允许本机磁盘；外部网络素材保持原地址。
+    if (process.platform === "win32" && value.startsWith("\\\\")) return value;
+    const canonical = await ordinaryEntry(value);
+    if (within(source, canonical)) return path.join(target, path.relative(source, canonical));
+    return value;
+  }
+  if(Array.isArray(value)) return Promise.all(value.map(item=>relocateScene(item,source,target,field)));
+  if(value && typeof value === "object") return Object.fromEntries(await Promise.all(Object.entries(value).map(async ([key,item])=>[key,await relocateScene(item,source,target,key)])));
   return value;
 }
 /** 停止 Agent 之前检查目标边界与占用，不创建或覆盖目标内容。 */
 export async function preflightDataLocation(settings: Settings,target: string,installation?: string) {
-  const source=await realpath(settings.dataRoot);const destination=await checkRootPath(target,installation);
+  const source=await checkRootPath(settings.dataRoot,installation);const destination=await checkRootPath(target,installation);
   if(settings.rootId && (await readRoot(source)).id!==settings.rootId)throw new Error("原数据目录归属已改变，未开始迁移。");
   if(within(source,destination)||within(destination,source))throw new Error("请选择原目录之外的独立空文件夹。");
   const names=await readdir(destination).catch(error=>{if(error.code==="ENOENT")return [];throw error;});
@@ -50,14 +56,15 @@ export async function copyDataLocation(settings: Settings, target: string, progr
   await mkdir(destination,{recursive:true});
   if((await readdir(destination)).length) throw new Error("目标文件夹不是空目录，请选择新的文件夹；失败副本和原数据均保留。");
   const items=[...settings.instances,...(settings.candidates||[]),...(settings.archivedCandidates||[])];
+  const canonicalExes = new Map(await Promise.all(items.map(async item => [item, await ordinaryEntry(item.exe)] as const)));
   // 外部 OBS 若自身位于根内，复制后无法保证它保持独立管理，必须先人工处理。
   for(const item of items.filter(i=>!i.managed)) {
-    if(within(source,path.resolve(item.exe))) throw new Error("手动 OBS 位于原数据根目录内，请先处理外部 OBS 路径再迁移。");
+    if(within(source,canonicalExes.get(item)!)) throw new Error("手动 OBS 位于原数据根目录内，请先处理外部 OBS 路径再迁移。");
     const sceneDir=path.resolve(item.exe,"../../../config/obs-studio/basic/scenes");
     for(const name of await readdir(sceneDir).catch(e=>{if(e.code==="ENOENT")return [];throw e;})) {
       if(!/\.json(?:\.bak)?$/i.test(name))continue;
       const scene=JSON.parse(await readFile(path.join(sceneDir,name),"utf8"));
-      if(JSON.stringify(scene)!==JSON.stringify(relocateScene(scene,source,destination)))throw new Error("手动 OBS 的场景引用原数据目录，请先在 OBS 调整素材引用再迁移。");
+      if(JSON.stringify(scene)!==JSON.stringify(await relocateScene(scene,source,destination)))throw new Error("手动 OBS 的场景引用原数据目录，请先在 OBS 调整素材引用再迁移。");
     }
   }
   await progress("正在校验源文件与磁盘空间");
@@ -80,17 +87,18 @@ export async function copyDataLocation(settings: Settings, target: string, progr
     /** 所有实例种类共享相同的路径迁移，外部 OBS 保留。 */
     const relocate=(list: Settings["instances"]|undefined)=>list?.map(item=>{
       if(!item.managed)return {...item};
-      const relative=path.relative(settings.dataRoot,item.exe);
-      if(!within(settings.dataRoot,item.exe))throw new Error("托管 OBS 不在原数据目录内，原配置保留。");
+      const canonical = canonicalExes.get(item)!;
+      const relative=path.relative(source,canonical);
+      if(!within(source,canonical))throw new Error("托管 OBS 不在原数据目录内，原配置保留。");
       return {...item,exe:path.join(destination,relative)};
     });
     for(const item of items.filter(i=>i.managed)) {
-      const sceneDir=path.join(destination,path.relative(settings.dataRoot,path.resolve(item.exe,"../../../config/obs-studio/basic/scenes")));
+      const sceneDir=path.join(destination,path.relative(source,path.resolve(canonicalExes.get(item)!,"../../../config/obs-studio/basic/scenes")));
       if(!within(destination,sceneDir))throw new Error("托管 OBS 路径超出数据目录。");
       for(const name of await readdir(sceneDir).catch(e=>{if(e.code==="ENOENT")return [];throw e;})) {
         if(!/\.json(?:\.bak)?$/i.test(name))continue;
         const file=path.join(sceneDir,name); const original=JSON.parse(await readFile(file,"utf8"));
-        const updated=relocateScene(relocateScene(original,source,destination),settings.dataRoot,destination);
+        const updated=await relocateScene(original,source,destination);
         if(JSON.stringify(updated)!==JSON.stringify(original)) { await writeFile(file,JSON.stringify(updated)); if(JSON.stringify(JSON.parse(await readFile(file,"utf8")))!==JSON.stringify(updated))throw new Error("素材路径写入校验失败。"); }
       }
     }

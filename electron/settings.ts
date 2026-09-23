@@ -47,7 +47,7 @@ export class SettingsStore {
       const encrypted = await this.record<string>(store, "settings.json");
       if (!encrypted) throw new Error("LiveNest 数据配置缺失，请恢复原配置；没有创建新身份。");
       const settings = await this.decode(encrypted);
-      if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) throw new Error("LiveNest 配置与数据位置不匹配，请恢复原目录。");
+      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(location.dataRoot)).toLowerCase()) throw new Error("LiveNest 配置与数据位置不匹配，请恢复原目录。");
       return settings;
     }
     const legacy = await this.record<string>(this.locator, "settings.json");
@@ -70,7 +70,7 @@ export class SettingsStore {
     const encrypted = await this.record<string>(store, "settings.json");
     if (encrypted) {
       const settings = await this.decode(encrypted);
-      if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(target).toLowerCase()) throw new Error("已有 LiveNest 配置与选择位置不匹配，没有覆盖文件。");
+      if (settings.rootId !== marker.id || (await ordinaryPath(settings.dataRoot)).toLowerCase() !== (await ordinaryPath(target)).toLowerCase()) throw new Error("已有 LiveNest 配置与选择位置不匹配，没有覆盖文件。");
       // 存活 Agent 的目录不能被第二个安装接管；失效锁由原有恢复机制处理。
       const lock = await import("node:fs/promises").then(fs => fs.readFile(path.join(target, "state", "host.lock"), "utf8")).catch(e => { if (e.code === "ENOENT") return ""; throw e; });
       if (lock) { const pid = Number(lock); if (!Number.isInteger(pid) || pid <= 0) throw new Error("已有 Agent 锁损坏，请保留原目录。"); try { process.kill(pid, 0); throw new Error("原数据目录仍有 Agent 使用，请先退出原客户端。"); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; } }

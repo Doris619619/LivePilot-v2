@@ -18,6 +18,18 @@ export async function ordinaryPath(value: string): Promise<string> {
   try { const info = await lstat(absolute); if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("数据位置不能包含文件或目录链接。"); return await realpath(absolute); }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; if(parent===absolute)throw new Error("目标数据盘不可用。"); return path.join(canonicalParent,path.basename(absolute)); }
 }
+/** 文件或目录路径统一展开短路径；不存在的叶子沿用已验证祖先，不跟随链接。 */
+export async function ordinaryEntry(value: string): Promise<string> {
+  const parent = await ordinaryPath(path.dirname(value));
+  try {
+    const info = await lstat(value);
+    if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory())) throw new Error("数据路径包含链接或特殊文件，无法安全处理。");
+    return await realpath(value);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return path.join(parent, path.basename(value));
+  }
+}
 /** 写入之前检查真实安装路径，防止卸载误删业务目录。 */
 export async function checkRootPath(target: string, installation?: string) {
   const root = await ordinaryPath(target);
@@ -55,9 +67,8 @@ export async function claimLegacyRoot(settings: Settings, installation?: string)
   if (names.some(n => !["obs", "media", "state", "logs", "temp"].includes(n))) throw new Error("旧数据目录含未知文件，未自动接管；请保留目录并检查。");
   for (const item of [...settings.instances, ...(settings.candidates || []), ...(settings.archivedCandidates || [])]) {
     if (!item.managed) continue;
-    const obs = path.resolve(item.exe, "../../..");
+    const obs = await ordinaryPath(path.resolve(item.exe, "../../.."));
     if (!within(root, obs)) throw new Error("旧托管 OBS 位于数据目录之外，未更改配置。");
-    await ordinaryPath(obs);
     try { if (await readFile(path.join(obs, ".livenest-owner"), "utf8") !== item.id) throw new Error("旧 OBS 归属不匹配。"); }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" || item.initialized || (await readdir(obs).catch(error => { if(error.code === "ENOENT") return []; throw error; })).length) throw e; }
   }
