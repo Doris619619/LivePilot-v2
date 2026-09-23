@@ -1,4 +1,4 @@
-/** 对照 Threadline：标题栏仅在发现版本后显示小入口，点击才展开详情。 */
+/** 标题栏发现新版后直接提供一键升级；仅进度与故障详情使用浮层。 */
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { RefreshIcon } from "../../src/app/components/icons";
