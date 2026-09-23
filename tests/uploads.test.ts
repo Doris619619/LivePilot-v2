@@ -5,7 +5,7 @@ import * as fs from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { CHUNK_SIZE, createUpload, uploadChunk, uploadStatus, prepareFinish, finishUpload, cancelUpload } from "@/server/uploads";
+import { CHUNK_SIZE, createUpload, uploadChunk, uploadStatus, prepareFinish, finishUpload, cancelUpload, uploadFailure } from "@/server/uploads";
 import { scanMedia } from "@/server/media";
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -94,3 +94,9 @@ it("queries a missing upload with 404 and cancels missing or expired uploads ide
   await cancelUpload("main", "alice", record.id); await cancelUpload("main", "alice", record.id);
   await expect(uploadStatus("main", "alice", record.id)).rejects.toMatchObject({ status: 404 });
 });
+
+/** 一类素材不可读时保留另一类，绝不能把错误表示为空库。 */
+it("distinguishes an unreadable category from an empty library",async()=>{await writeFile(path.join(dir,"music","track.mp3"),"fixture");await fs.rmdir(path.join(dir,"videos"));const result=await scanMedia(dir);expect(result.music).toEqual(["track.mp3"]);expect(result.problems?.[0]).toMatchObject({domain:"media",stage:"读取视频目录"});expect(result.error).toBeTruthy();});
+
+/** 失败/查询/重新校验/成功各有明确状态，查询本身不改变失败结果。 */
+it("retains verification failure until explicit retry and clears it after publication",async()=>{const data=Buffer.from("fixture");const item=await createUpload("main","alice",{kind:"videos",filename:"retry.mp4",size:data.length,fingerprint:sha(sha(data))});await uploadChunk("main","alice",item.id,0,sha(data),request(data));await prepareFinish("main","alice",item.id);await uploadFailure("main","alice",item.id,Object.assign(new Error("PRIVATE"),{code:"ENOSPC"}));expect(await uploadStatus("main","alice",item.id)).toMatchObject({status:"verifying",verification:"failed",problem:{code:"STORAGE_SPACE"}});expect(await prepareFinish("main","alice",item.id)).toMatchObject({verification:"running",error:undefined,problem:undefined});expect(await finishUpload("main","alice",item.id)).toMatchObject({status:"complete",error:undefined,problem:undefined});});

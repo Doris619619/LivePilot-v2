@@ -40,7 +40,7 @@ export class YouTubeApi implements YouTubePort {
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: { errors?: { reason?: string }[] } };
       const reason = data.error?.errors?.[0]?.reason || "";
-      throw new AppError(response.status === 401 ? "YOUTUBE_AUTH" : "YOUTUBE_API", response.status === 401 ? "YouTube 授权失效，请重新连接。" : reasons[reason] || "YouTube 请求失败（HTTP " + response.status + "），请检查 API 权限、配额与 YouTube Studio。", response.status === 401 ? 401 : 502);
+      throw new AppError(response.status === 401 ? "YOUTUBE_AUTH" : response.status === 429 || reason === "quotaExceeded" ? "YOUTUBE_QUOTA" : response.status >= 500 ? "YOUTUBE_UNAVAILABLE" : "YOUTUBE_API", response.status === 401 ? "YouTube 授权失效，请重新连接。" : reasons[reason] || "YouTube 请求失败（HTTP " + response.status + "），请检查 API 权限、配额与 YouTube Studio。", response.status === 401 ? 409 : 502);
     }
     return await response.json() as T;
   }

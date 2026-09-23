@@ -1,9 +1,10 @@
 /** 为一个 OBS 面板管理状态轮询、媒体草稿及命令；各面板互不阻塞。 */
 "use client";
+import { makeProblem, type Problem } from "../shared/problems";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
 import { targetKey } from "@/shared/remote";
-import { api } from "./client-request";
+import { api, requestProblem } from "./client-request";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
 
@@ -23,7 +24,10 @@ export function useInstance(instance: InstanceDescriptor) {
   const [selection, setSelection] = useState<Selection>({ video: "", music: "", videoAudio: false });
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
-  const [stale, setStale] = useState(false);
+  const [problem, setProblem] = useState<Problem>(); const failedRequest = useRef<string | undefined>(undefined);
+  const [readFailed, setStale] = useState(false);
+  const [readAt,setReadAt]=useState(0);const [now,setNow]=useState(0);
+  const stale=readFailed || (!!data && now-readAt>20_000);
   const [readError, setReadError] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const initialized = useRef(false);
@@ -35,7 +39,8 @@ export function useInstance(instance: InstanceDescriptor) {
     fetching.current = true;
     try {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
-      synchronize(result);
+      setReadAt(Date.now()); synchronize(result);
+      if (result.operation?.id === failedRequest.current && result.operation?.status === "succeeded") { setError(""); setProblem(undefined); failedRequest.current = undefined; }
       setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
@@ -60,11 +65,12 @@ export function useInstance(instance: InstanceDescriptor) {
   /** 挂载时读取状态；卸载时停止定期轮询。 */
   useEffect(() => {
     const first = setTimeout(() => void refresh(), 0);
+    const clock=setInterval(()=>setNow(Date.now()),1000);
     const interval = setInterval(() => void refresh(), 5000);
     /** 素材发布后刷新列表，不自动选择或替换当前直播内容。 */
     const mediaUpdated = () => { void refresh(); };
     window.addEventListener("livepilot-media-updated", mediaUpdated);
-    return () => { clearTimeout(first); clearInterval(interval); window.removeEventListener("livepilot-media-updated", mediaUpdated); };
+    return () => { clearTimeout(first); clearInterval(interval); clearInterval(clock); window.removeEventListener("livepilot-media-updated", mediaUpdated); };
   }, [refresh]);
 
   /** 修改当前实例草稿，在 OAuth 页面往返后仍可恢复选择。 */
@@ -76,7 +82,7 @@ export function useInstance(instance: InstanceDescriptor) {
   /** 提交显式实例命令；网络错误不自动重放，避免重复创建直播。 */
   async function act(action: string) {
     if (acting.current) return;
-    acting.current = true; setWorking(action); setError("");
+    acting.current = true; setWorking(action); setError(""); setProblem(undefined);
     const payload = { instanceId, ...(agentId ? { agentId } : {}), ...(action === "connect" ? {} : action === "start" ? { action, ...selection } : action === "clear-uncertain" ? { action, confirmed } : { action }) };
     const key = "livepilot-request-" + id;
     let requestId = crypto.randomUUID();
@@ -94,6 +100,7 @@ export function useInstance(instance: InstanceDescriptor) {
       if (result.url) { window.location.assign(result.url); return; }
       if (action === "clear-uncertain") setConfirmed(false);
     } catch (e) {
+      failedRequest.current = requestId; setProblem({...requestProblem(e),target:{agentId,instanceId},attemptId:requestId});
       const status = (e as { status?: number }).status;
       if (status && status < 500) { try { sessionStorage.removeItem(key); } catch { /* 明确拒绝的请求不保留。 */ } }
       setError(e instanceof Error ? e.message : "请求中断，结果待确认，请核对状态后重试");
@@ -105,5 +112,5 @@ export function useInstance(instance: InstanceDescriptor) {
   const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
   const locked = busy || live || pending;
   const blocker = startBlocker(data, selection, busy, stale, live);
-  return { data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
+  return { problem: stale ? makeProblem("CLOUD_UNAVAILABLE",readError || "实例状态已过期，实际推流状态未知。",{target:{agentId,instanceId},stage:"读取实例状态"}) : problem || (data?.operation && ["failed","interrupted","uncertain","expired"].includes(data.operation.status) ? data.operation.problem : undefined), data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
 }

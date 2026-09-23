@@ -1,7 +1,7 @@
 /** 本地运行核心：供 Windows Agent 和本地控制台共同使用。 */
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { AppError } from "./errors";
+import { AppError, problemFor } from "./errors";
 const extensions = { videos: new Set([".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"]), music: new Set([".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"]) };
 export type MediaKind = keyof typeof extensions;
 function inside(root: string, target: string) {
@@ -9,7 +9,7 @@ function inside(root: string, target: string) {
   return relative !== "" && relative !== ".." && !relative.startsWith(".." + path.sep) && !path.isAbsolute(relative);
 }
 export async function resolveMedia(root: string, kind: MediaKind, filename: string) {
-  if (!root || !path.isAbsolute(root)) throw new AppError("MEDIA", "请配置绝对路径 LIVEPILOT_MEDIA_ROOT，并创建 videos / music 文件夹。");
+  if (!root || !path.isAbsolute(root)) throw new AppError("MEDIA", "请在直播电脑的客户端选择数据位置，并检查视频和音乐目录。");
   if (!filename || /[\\/:%\x00-\x1f]/.test(filename) || filename === "." || filename === ".." || filename.endsWith(".") || filename.endsWith(" ") || !extensions[kind].has(path.extname(filename).toLowerCase())) {
     throw new AppError("MEDIA", "媒体文件名无效。请从媒体列表中选择文件。");
   }
@@ -23,7 +23,7 @@ export async function resolveMedia(root: string, kind: MediaKind, filename: stri
 }
 export async function scanMedia(root: string) {
   const scan = async (kind: MediaKind) => {
-    if (!root) throw new AppError("MEDIA", "请在 .env.local 配置 LIVEPILOT_MEDIA_ROOT，并添加 videos / music 文件。");
+    if (!root) throw new AppError("MEDIA", "请在直播电脑的客户端选择数据位置并准备素材目录。");
     const items = await readdir(path.join(root, kind), { withFileTypes: true }).catch(() => { throw new AppError("MEDIA", "无法读取媒体目录。请检查 videos / music 文件夹和访问权限。"); });
     const names: string[] = [];
     for (const item of items) {
@@ -32,5 +32,7 @@ export async function scanMedia(root: string) {
     }
     return names.sort((a, b) => a.localeCompare(b));
   };
-  return { videos: await scan("videos"), music: await scan("music") };
+  const results = await Promise.allSettled([scan("videos"), scan("music")]);
+  const problems = results.flatMap((result, index) => result.status === "rejected" ? [problemFor(result.reason, {domain:"media",stage:index === 0 ? "读取视频目录" : "读取音乐目录",outcome:"rejected"})] : []);
+  return { videos: results[0].status === "fulfilled" ? results[0].value : [], music: results[1].status === "fulfilled" ? results[1].value : [], ...(problems.length ? {problems, error: problems.map(p=>p.stage+"："+p.message).join(" ")} : {}) };
 }

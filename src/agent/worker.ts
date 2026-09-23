@@ -2,17 +2,19 @@
 import { randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import { Store, seal, unseal } from "@/core/storage";
-import { isAppError, safeError } from "@/core/errors";
+import { isAppError, safeError, problemFor } from "@/core/errors";
 import { taskSchema, type RemoteTask, type TaskReport } from "@/shared/remote";
+import { makeProblem, type Problem } from "../shared/problems";
 type Entry = { task: RemoteTask; report: TaskReport; owner: string; acknowledged?: boolean };
 export class Worker {
+  readonly problems = new Map<string, Problem>();
   private owner = randomUUID();
   private accepting: Promise<unknown> = Promise.resolve();
   private running = new Map<string, Promise<void>>();
   /** 注入执行器便于验证网络断开时任务仍可独立完成。 */
   constructor(readonly store: Store, private execute: (task: RemoteTask) => Promise<unknown>) {}
   /** 加密内部日志，OAuth code/cookie 不以明文持久化。 */
-  private async write(entry: Entry) { await this.store.write(entry.task.id + ".json", seal(entry)); }
+  private async write(entry: Entry) { await this.store.write(entry.task.id + ".json", seal(entry)); this.problems.delete(entry.task.id); }
   /** 只解密属于本机的协议记录。 */
   private async read(id: string) { const value = await this.store.read<string>(id + ".json"); return value ? unseal<Entry>(value) : null; }
   /** 首次接收持久化后即可离线执行；迟到或前进程残留不会重新执行。 */
@@ -31,14 +33,14 @@ export class Worker {
     await this.write(entry);
     if (entry.report.status === "expired") return;
     const promise = this.run(entry).finally(() => this.running.delete(task.id)); this.running.set(task.id, promise);
-    void promise.catch(() => { console.error("Agent 无法持久化任务结果；请保留数据并检查磁盘，云端将保持结果待核对。"); });
+    void promise.catch(() => { this.problems.set(task.id, makeProblem("RESULT_SAVE", "此操作结果未能保存，请检查本机磁盘并核对实际状态。", {source:"agent",target:{instanceId:task.instanceId},attemptId:task.id,stage:"保存操作结果"})); });
   }
   /** 后台执行不继承 HTTP abort signal；异常只保存过滤后的安全说明。 */
   private async run(entry: Entry) {
     try {
       entry.report.status = "running"; await this.write(entry);
       const result = await this.execute(entry.task); entry.report = { id: entry.task.id, status: "succeeded", result };
-    } catch (error) { entry.report = { id: entry.task.id, status: "failed", error: safeError(error), httpStatus: isAppError(error) ? error.status : 500 }; }
+    } catch (error) { entry.report = { id: entry.task.id, status: "failed", error: safeError(error), httpStatus: isAppError(error) ? error.status : 500, problem: problemFor(error, {source:"agent",target:{instanceId:entry.task.instanceId},attemptId:entry.task.id}) }; }
     await this.write(entry);
   }
   /** 汇报所有未确认结果；重启的旧执行记录显示中断，不再启动执行器。 */

@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
+import OAuthFeedback, { OAuthFeedbackProvider } from "./oauth-feedback";
 import UploadPanel, { type UploadRequest } from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
@@ -70,7 +71,7 @@ export default function Console() {
   const devices = agents?.filter(a => !a.revoked && a.paired !== false);
 
   return (
-    <div className="workspace-shell">
+    <OAuthFeedbackProvider><div className="workspace-shell">
       <aside className="workspace-sidebar" aria-label="工作台导航">
         <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
         <div className="sidebar-heading device-heading">直播设备</div>
@@ -90,6 +91,7 @@ export default function Console() {
         {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<h1>直播工作台</h1>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
+        <OAuthFeedback available={loaded?instances:undefined} />
         {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
         {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
         {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接直播电脑</h2><p>点击“添加直播电脑”，复制配对码到 LiveNest。<br />连接后，直播实例会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
@@ -104,6 +106,6 @@ export default function Console() {
           );
         }) : <section className="device-section" id="device-local" aria-label="本机设备"><div className="instance-grid">{instances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} onUpload={openUpload} />)}</div></section>}
       </main>
-    </div>
+    </div></OAuthFeedbackProvider>
   );
 }

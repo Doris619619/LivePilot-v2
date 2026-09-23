@@ -1,5 +1,6 @@
 /** 专用设备接口：独立 Bearer 认证，不接受浏览器会话或任意业务调用。 */
 import { authenticate } from "@/server/access";
+import { problemSchema } from "@/shared/problems";
 import { z } from "zod";
 import { PROTOCOL, idSchema, uuidSchema, reportSchema } from "@/shared/remote";
 import { snapshotSchema } from "@/shared/remote-validation";
@@ -65,12 +66,12 @@ export async function POST(request: Request, context: Context) {
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
-      return Response.json(await openSession(agent.id, value.bootId, value.instances));
+      return Response.json({ ...await openSession(agent.id, value.bootId, value.instances), capabilities: ["problem-v1"] });
     }
     if (route === "heartbeat") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), reports: z.array(reportSchema).max(32) }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);
       const acknowledged = await reportTasks(agent.id, value.reports);
-      await heartbeatAgent(agent.id, agent.session!, value.snapshots);
+      await heartbeatAgent(agent.id, agent.session!, value.snapshots, value.problems);
       return Response.json({ acknowledged });
     }
     if (route === "bindings") {

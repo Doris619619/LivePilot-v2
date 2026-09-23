@@ -3,6 +3,8 @@ import { app, dialog } from "electron";
 import { autoUpdater } from "electron-updater";
 import { existsSync } from "node:fs";
 import path from "node:path";
+import { makeProblem } from "../src/shared/problems";
+import { problemFor } from "../src/core/errors";
 import type { DesktopState } from "../src/shared/desktop";
 export class Updates {
   state: DesktopState["update"] = { status: "idle", message: "尚未检查更新" }; private lastCheck = 0; private checking = false;
@@ -14,22 +16,31 @@ export class Updates {
     autoUpdater.on("update-not-available", () => { this.state = { status: "idle", message: "已是最新版本" }; });
     autoUpdater.on("download-progress", p => { this.state = { ...this.state, status: "downloading", percent: p.percent, message: "正在下载" }; });
     autoUpdater.on("update-downloaded", info => { this.state = { status: "downloaded", version: info.version, message: "下载完成，可以重启更新" }; });
-    autoUpdater.on("error", () => { this.state = { ...this.state, status: "error", message: "更新请求失败，当前版本仍可使用。" }; });
+    autoUpdater.on("error", error => this.fail(error));
+  }
+  /** 更新器异常仅按稳定代码分类，不读取可能带下载 URL 的原始 message。 */
+  private fail(error: unknown) {
+    const code=(error as {code?:string}|undefined)?.code;
+    const integrity=["ERR_UPDATER_INVALID_SIGNATURE","ERR_CHECKSUM_MISMATCH","ERR_UPDATER_INVALID_UPDATE_INFO","ERR_UPDATER_NO_FILES_PROVIDED"].includes(code || "");
+    const disk=["ENOSPC","EACCES","EPERM"].includes(code || "");
+    const problem=disk?problemFor(error,{domain:"update",stage:this.state.stage === "install" ? "准备安装更新" : "下载更新"}):makeProblem(integrity?"UPDATE_INTEGRITY":"UPDATE_NETWORK",integrity?"更新文件校验或发行信息异常，未安装。请联系管理员核对官方发行文件。":"更新未完成，当前版本仍可使用。请检查网络后重试。",{domain:"update",stage:integrity?"校验更新文件":this.state.stage==="download"?"下载更新":"检查更新",outcome:"rejected"});
+    this.state={...this.state,status:"error",problem,message:problem.message};
   }
   /** 焦点和唤醒补查最少间隔一小时，已发现版本不会被覆盖。 */
   async check(automatic = false) {
     if (!this.installed) { this.state = { status: "preview", message: "目录预览版不支持更新，请使用安装版。" }; return; }
     if (this.checking || ["available", "downloading", "downloaded", "installing"].includes(this.state.status) || (automatic && Date.now() - this.lastCheck < 3_600_000)) return;
-    this.checking = true; this.lastCheck = Date.now(); this.state = { ...this.state, status: "checking", message: "正在检查更新…" };
-    try { await autoUpdater.checkForUpdates(); } catch { this.state = { ...this.state, status: "error", message: "无法读取更新源，请检查网络后重试。" }; } finally { this.checking = false; }
+    this.checking = true; this.lastCheck = Date.now(); this.state = { ...this.state, status: "checking", stage:"check", automatic, problem:undefined, message: "正在检查更新…" };
+    try { await autoUpdater.checkForUpdates(); } catch(e) { this.fail(e); } finally { this.checking = false; }
   }
   /** 用户点击才下载，普通退出仍不安装。 */
-  async download() { if (this.state.status !== "available") return; this.state = { ...this.state, status: "downloading", percent: 0 }; try { await autoUpdater.downloadUpdate(); } catch { this.state = { ...this.state, status: "error", message: "下载未完成，请重新检查更新。" }; } }
+  async download() { if (this.state.status !== "available" && !(this.state.status==="error"&&this.state.stage==="download"&&this.state.problem?.code!=="UPDATE_INTEGRITY")) return; this.state = { ...this.state, status: "downloading", stage:"download", automatic:false, problem:undefined, percent: 0 }; try { await autoUpdater.downloadUpdate(); } catch(e) { this.fail(e); } }
   /** 用户确认后先申请维护及排空任务，再调用更新器标准退出生命周期。 */
   async install(prepare: () => Promise<void>, quit: () => void) {
     if (this.state.status !== "downloaded") return;
     const answer = await dialog.showMessageBox({ type: "question", title: "重启更新", message: "确认结束当前配置并重启 LiveNest？", buttons: ["稍后", "重启更新"], defaultId: 0, cancelId: 0 });
-    if (answer.response !== 1) return;
-    await prepare(); this.state = { ...this.state, status: "installing", message: "正在安装更新" }; quit(); autoUpdater.quitAndInstall(false, true);
+    if (answer.response !== 1) return false;
+    this.state={...this.state,stage:"install"};
+    try { await prepare(); } catch(error) { this.state={...this.state,problem:problemFor(error,{domain:"update",stage:"准备安装更新",outcome:"not-sent"})};throw error; } this.state = { ...this.state, status: "installing", message: "正在安装更新" }; quit(); autoUpdater.quitAndInstall(false, true);return true;
   }
 }

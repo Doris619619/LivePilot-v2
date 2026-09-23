@@ -38,7 +38,7 @@ export class Executor {
       const result = await app.commands.accept({ requestId: task.id, instanceId: id, ...p.input }, actor);
       if (result.fresh) await app.commands.run(task.id);
       const operation = await app.commands.get(task.id);
-      if (operation?.status !== "succeeded") throw new AppError("CONTROL", operation?.message || "操作未完成，请核对实际状态。", 409);
+      if (operation?.status !== "succeeded") throw new AppError("CONTROL", operation?.message || "操作未完成，请核对实际状态。", 409, operation?.problem);
       return operation;
     }
     if (p.kind === "oauth-begin") return app.commands.withIdle(() => app.control.exclusive(() => app.auth.begin(actor)));

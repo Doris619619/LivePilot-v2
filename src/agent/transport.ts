@@ -1,4 +1,5 @@
 /** Agent 仅主动访问一个固定 HTTPS 控制端，不接受远程任意 URL。 */
+import { problemSchema } from "../shared/problems";
 import { AppError } from "@/core/errors";
 /** 生产固定 HTTPS，测试只允许显式 loopback HTTP。 */
 export function controllerOrigin(value: string) {
@@ -7,7 +8,7 @@ export function controllerOrigin(value: string) {
   return url.origin;
 }
 export class Transport {
-  session = "";
+  session = ""; structuredProblems = false;
   /** 凭据来自本机文件，只送入固定控制端 Authorization。 */
   constructor(readonly origin: string, readonly agentId: string, private token: string) { controllerOrigin(origin); }
   /** 每个请求有超时，不跟随重定向以免发送设备凭据到其他地址。 */
@@ -18,6 +19,8 @@ export class Transport {
     try { response = await fetch(this.origin + route, { ...init, headers, redirect: "error", signal: AbortSignal.timeout(timeout), cache: "no-store" }); }
     catch { throw new AppError("CLOUD_NETWORK", "暂时无法连接控制端，任务和素材进度保留。", 503); }
     if (!response.ok) {
+      const parsed = problemSchema.safeParse((await response.clone().json().catch(() => null))?.problem);
+      if (parsed.success) { await response.body?.cancel(); throw new AppError(parsed.data.code, parsed.data.message, response.status, parsed.data); }
       if (route === "/api/agent/maintenance-begin" && response.status === 409) {
         const body = await response.json().catch(() => null) as { error?: unknown } | null;
         if (typeof body?.error === "string" && body.error.length <= 500) throw new AppError("MAINTENANCE", body.error, 409);

@@ -5,7 +5,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "@/core/config";
 import { seal, unseal } from "@/core/storage";
-import { AppError } from "@/core/errors";
+import { AppError, problemFor } from "@/core/errors";
 import { cloudStore, transaction } from "./store";
 import { rpc } from "./tasks";
 import type { Target } from "@/shared/remote";
@@ -23,7 +23,7 @@ export async function beginRemoteOAuth(target: Target, actor: string) {
   url.searchParams.set("state", state); return { url: url.toString(), state, cookie };
 }
 /** 一次性认领后转交原设备；响应未知不重复交换授权码，需重新发起授权。 */
-export async function finishRemoteOAuth(state: string, cookie: string, actor: string, code: string, user?: Member) {
+export async function finishRemoteOAuth(state: string, cookie: string, actor: string, code: string, user?: Member, cancelled = false) {
   oauthCookie(state); const store = cloudStore(); const name = "oauth-" + state + ".json";
   const transactionData = await transaction(store, async () => {
     const encrypted = await store.read<string>(name); if (!encrypted) throw new AppError("OAUTH", "授权已失效，请重新连接。");
@@ -32,7 +32,8 @@ export async function finishRemoteOAuth(state: string, cookie: string, actor: st
     if (user) await authorizeAgent(user, value.target.agentId);
     value.used = true; await store.write(name, seal(value)); return value;
   }, "oauth.lock");
-  try { await rpc(transactionData.target, actor, { kind: "oauth-finish", cookie: transactionData.cookie, state: transactionData.state, code }); }
-  finally { await store.remove(name); }
+  try { if(!cancelled) await rpc(transactionData.target, actor, { kind: "oauth-finish", cookie: transactionData.cookie, state: transactionData.state, code }); }
+  catch(e){const problem=problemFor(e,{target:transactionData.target,domain:"youtube",stage:"连接原频道"});throw new AppError(problem.code,problem.message,409,problem);}
+  finally { await store.remove(name).catch(()=>{ /* 已消费标记阻止重放；清理失败不覆盖授权结果。 */ }); }
   return transactionData.target;
 }

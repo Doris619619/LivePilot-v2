@@ -1,6 +1,7 @@
 /** 云端与 Agent 的版本化白名单协议；浏览器 DTO 不含密钥和绝对路径。 */
 import { z } from "zod";
 import type { Dashboard, InstanceDescriptor } from "./types";
+import { problemSchema } from "./problems";
 export const PROTOCOL = 1;
 export const HEARTBEAT_MS = 5_000;
 export const OFFLINE_MS = 20_000;
@@ -29,7 +30,7 @@ export type TaskPayload = z.infer<typeof taskPayloadSchema>;
 export const taskSchema = z.object({ protocol: z.literal(PROTOCOL), id: uuidSchema, agentId: idSchema, instanceId: idSchema, actor: z.string().regex(/^[A-Za-z0-9_]{2,32}$/), expiresAt: z.number(), payload: taskPayloadSchema });
 export type RemoteTask = z.infer<typeof taskSchema>;
 export type DeliveryState = "queued" | "delivering" | "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "expired" | "uncertain";
-export const reportSchema = z.object({ id: uuidSchema, status: z.enum(["accepted", "running", "succeeded", "failed", "interrupted", "expired"]), result: z.unknown().optional(), error: z.string().max(500).optional(), httpStatus: z.number().int().min(400).max(599).optional() }).strict();
+export const reportSchema = z.object({ problem: problemSchema.optional(), id: uuidSchema, status: z.enum(["accepted", "running", "succeeded", "failed", "interrupted", "expired"]), result: z.unknown().optional(), error: z.string().max(500).optional(), httpStatus: z.number().int().min(400).max(599).optional() }).strict();
 export type TaskReport = z.infer<typeof reportSchema>;
 export type AgentSnapshot = { instance: InstanceDescriptor; dashboard: Dashboard; observedAt: number };
 export type AgentDescriptor = { owner?: string; id: string; name: string; online: boolean; lastSeen: number; revoked: boolean; instances: InstanceDescriptor[]; paired?: boolean; maintenance?: boolean; pairedTo?: string };

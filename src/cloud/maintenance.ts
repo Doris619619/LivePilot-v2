@@ -1,4 +1,6 @@
 /** 设备维护与入队共用 tasks.lock，保留状态不明时的阻塞，不强行结束任何任务。 */
+import { unseal } from "@/core/storage";
+import type { TaskPayload } from "@/shared/remote";
 import { AppError } from "@/core/errors";
 import { OFFLINE_MS, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
@@ -44,10 +46,10 @@ export async function beginMaintenance(id: string, token: string) {
       return s && s.observedAt > Date.now() - OFFLINE_MS && d && !d.busy && d.obs.streaming === false && ["idle", "stopped"].includes(d.state.phase) && !d.youtube.error && (!d.state.broadcastId || ["complete", "revoked", "missing"].includes(d.youtube.lifecycle || ""));
     });
     const uploads = Object.keys(previous.activities).filter(k => k.startsWith("upload:"));
-    if (uploads.length) throw new AppError("BUSY", "仍有 " + uploads.length + " 个上传未确认结束，请在网页素材上传中查询或取消（" + uploads.map(k => k.slice(7, 15)).join("、") + "）。", 409);
+    if (uploads.length) throw new AppError("BUSY", "仍有 " + uploads.length + " 个上传未确认结束，请在网页素材上传中查询或取消（" + uploads.map(k=>{const entry=queue?.records.find(r=>{if(r.kind!=="upload-create")return false;const p=unseal<TaskPayload>(r.payload);return p.kind==="upload-create"&&p.uploadId===k.slice(7);});if(!entry)return "待确认文件（请在网页找回未完成上传）";const p=unseal<TaskPayload>(entry.payload);return (agent?.instances.find(i=>i.id===entry.instanceId)?.name||entry.instanceId)+" · "+(p.kind==="upload-create"?p.input.filename:"待确认文件");}).join("、") + "）。", 409);
     if (pending) throw new AppError("BUSY", "设备仍有执行中或结果待确认的任务，请等待 Agent 回报，不能强制结束。", 409);
-    if (Object.values(previous.activities).some(t => t > Date.now())) throw new AppError("BUSY", "频道授权尚未结束，请完成授权或等待授权失效后重试。", 409);
-    if (!safe) throw new AppError("BUSY", "直播、OBS 或频道状态尚未确认空闲，请检查设备连接及直播状态。", 409);
+    if (Object.values(previous.activities).some(t => t > Date.now())) throw new AppError("BUSY", "频道授权尚未结束，请返回发起授权的 OBS 卡片完成或取消；最迟等待至 "+new Date(Math.max(...Object.values(previous.activities))).toISOString()+" 后重新检查。", 409);
+    if (!safe) throw new AppError("BUSY", "尚未确认空闲："+(agent?.instances.filter(i=>{const s=beat?.snapshots.find(s=>s.instance.id===i.id);return !s || s.observedAt<=Date.now()-OFFLINE_MS || s.dashboard.busy || s.dashboard.obs.streaming!==false || !["idle","stopped"].includes(s.dashboard.state.phase) || !!s.dashboard.youtube.error;}).map(i=>i.name).join("、") || agent?.name || "此电脑")+"。请到网页对应实例查询推流和频道状态；未知状态不能强制结束。", 409);
     await store.write("maintenance.json", { token, activities: {} }); return { token };
   }, "tasks.lock");
 }

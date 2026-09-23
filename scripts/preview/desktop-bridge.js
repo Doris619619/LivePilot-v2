@@ -20,7 +20,7 @@
     state: async () => refresh(),
     act: async (action, input = {}) => {
       state.message = ''; state.activity = undefined;
-      if (action === 'web') { window.open('http://127.0.0.1:3021/workspace', '_blank'); return refresh(); }
+      if (action === 'web') { window.open('http://127.0.0.1:3021/workspace', '_blank'); return {ok:true,state:refresh()}; }
       if (action === 'scan') state.scan = { running: false, canceled: false, deep: !!input.deep, drives: ['C:\\', 'D:\\', 'E:\\'], completedDrives: ['C:\\', 'D:\\', 'E:\\'], visited: 248, inaccessible: ['E:\\受保护目录（无权访问，演示）'], results: [{ exe: 'C:\\Program Files\\obs-studio\\bin\\64bit\\obs64.exe', version: '32.2.2', running: false, attached: false }, { exe: 'D:\\直播工具\\OBS\\bin\\64bit\\obs64.exe', version: '32.2.2', running: false, attached: false }, { exe: 'E:\\便携OBS\\bin\\64bit\\obs64.exe', version: '27.2.4', running: false, attached: false, error: '版本较旧，请使用 OBS 28 或以上版本。' }] };
       if (action === 'scan-cancel' && state.scan) state.scan.canceled = true;
       if (['prepare', 'add', 'import-obs'].includes(action) && (action !== 'prepare' || !state.instances.length)) { const id = state.instances.length ? 'obs_' + (state.instances.length + 1) : 'main'; state.instances.push({ ...instance(id), ...(input.name ? { name: input.name } : {}) }); state.message = id === 'main' ? '演示：OBS 已准备，可以继续配对。' : '演示：第二路已准备。电脑无需重新配对，只需连接新频道并选择素材。'; }
@@ -31,7 +31,7 @@
       if (action === 'autostart') state.autoStart = !!input.enabled;
       if (['open-data', 'firewall'].includes(action)) state.message = '这是浏览器预览；安装版会打开对应的 Windows 窗口。';
       if (action.startsWith('update-')) state.message = '发布已暂停，等待界面确认。';
-      return refresh();
+      return {ok:true,state:refresh()};
     },
   };
 })();

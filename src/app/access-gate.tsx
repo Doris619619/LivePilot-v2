@@ -48,7 +48,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  useEffect(() => { if (!user) return; if (pathname === "/" || (pathname === "/admin" && user.role !== "admin")) router.replace(user.role === "admin" ? "/admin" : "/workspace"); }, [user, pathname, router]);
+  useEffect(() => { if (!user) return; if (pathname === "/" || (pathname === "/admin" && user.role !== "admin")) router.replace((user.role === "admin" ? "/admin" : "/workspace")+window.location.search+window.location.hash); }, [user, pathname, router]);
 
   /** 提交成员凭据，验证期间禁用重复提交；失败保留表单供修改。 */
   async function submit(event: FormEvent<HTMLFormElement>) {

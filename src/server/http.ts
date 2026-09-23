@@ -1,7 +1,7 @@
 /** 固定 Origin 的 HTTP 安全边界与统一错误响应。 */
 import "server-only";
 import { config } from "./config";
-import { AppError, safeError, isAppError } from "./errors";
+import { AppError, safeError, isAppError, problemFor } from "./errors";
 /** 只信任配置的 Host，写请求必须同源；不使用转发头推断可信地址。 */
 export function guard(request: Request, mutation = false) {
   const c = config();
@@ -12,4 +12,4 @@ export function guard(request: Request, mutation = false) {
   if (!mutation && origin && origin !== c.origin) throw new AppError("ORIGIN", "不允许跨站读取状态。", 403);
 }
 /** 将已登记的安全错误转为 HTTP 响应，保留跨模块错误状态码。 */
-export function failed(e: unknown) { return Response.json({ error: safeError(e) }, { status: isAppError(e) ? e.status : 500, headers: { "Cache-Control": "no-store" } }); }
+export function failed(e: unknown) { return Response.json({ error: safeError(e), problem: problemFor(e) }, { status: isAppError(e) ? (e.status === 401 && !["AUTH", "LOGIN", "AGENT_AUTH", "AGENT_SESSION"].includes(e.code) ? 409 : e.status) : 500, headers: { "Cache-Control": "no-store" } }); }

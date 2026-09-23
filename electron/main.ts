@@ -1,9 +1,11 @@
 /** LiveNest 桌面入口：本地静态界面、受限 IPC、托盘与用户确认的退出。 */
+import { AppError } from "../src/core/errors";
 import { app, net, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, session, Tray } from "electron";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
+import { problemFor, safeError } from "../src/core/errors";
 import { Manager } from "./manager";
 import { DesktopAuth } from "./auth";
 import { Shutdown } from "./shutdown";
@@ -29,7 +31,7 @@ async function serve(request: Request) {
   } catch { return new Response("Not found", { status: 404 }); }
 }
 /** 验证消息确实来自本地顶层窗口；子框架、远程页面都不能发起系统操作。 */
-function trusted(event: Electron.IpcMainInvokeEvent) { const url = new URL(event.senderFrame?.url || "about:blank"); if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || url.protocol !== "livenest:" || url.hostname !== "app") throw new Error("不受信任的桌面请求。"); }
+function trusted(event: Electron.IpcMainInvokeEvent) { const url = new URL(event.senderFrame?.url || "about:blank"); if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || url.protocol !== "livenest:" || url.hostname !== "app") throw new AppError("DESKTOP", "不受信任的桌面请求。"); }
 /** 明确退出统一进入本地排空流程；关窗仍维持设备在线，不创建维护锁。 */
 async function quit() {
   await shutdown?.request();
@@ -56,7 +58,12 @@ async function launch() {
   ipcMain.handle("desktop:logout", event => { trusted(event); return auth.logout(); });
   ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
   const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
-  ipcMain.handle("desktop:act", async (event, name, input) => { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });
+  ipcMain.handle("desktop:act", async (event, name, input) => {
+    try { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined);
+      const state=await manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(),z.unknown()).parse(input));
+      return {ok:true,state,cancelled:state.activity?.status==="cancelled"};
+    } catch(e) { return {ok:false,problem:problemFor(e), ...(e instanceof z.ZodError ? {fields:Object.fromEntries(e.issues.map(i=>[i.path.join("."),"请检查此字段的格式与范围"]))} : {})}; }
+  });
   const image = nativeImage.createFromPath(path.join(resources, "icon.png")); tray = new Tray(image); tray.setToolTip("LiveNest");
   tray.setContextMenu(Menu.buildFromTemplate([{ label: "打开 LiveNest", click: () => window?.show() }, { label: "网页工作台", click: () => { void manager.act("web"); } }, { type: "separator" }, { label: "退出", click: () => { void quit(); } }])); tray.on("double-click", () => window?.show());
   await window.loadURL("livenest://app/index.html"); if (!process.argv.includes("--hidden")) window.show();
@@ -67,4 +74,4 @@ async function launch() {
 app.on("second-instance", () => { window?.show(); window?.focus(); });
 /** 应用级退出复用托盘确认；更新器已获维护许可时通过 quitting 放行。 */
 app.on("before-quit", event => { if (!quitting && shutdown) { event.preventDefault(); void quit(); } });
-if (ownsLock) void app.whenReady().then(launch).catch(async error => { quitting = true; await dialog.showMessageBox({ type: "error", message: "LiveNest 未能加载数据。请检查原数据盘与 Windows 账户，原有文件没有删除。", detail: error instanceof Error ? error.message : "请保留原配置并重试。" }); app.quit(); });
+if (ownsLock) void app.whenReady().then(launch).catch(async error => { quitting = true; await dialog.showMessageBox({ type: "error", message: "LiveNest 未能加载数据。请检查原数据盘与 Windows 账户，原有文件没有删除。", detail: safeError(error) }); app.quit(); });

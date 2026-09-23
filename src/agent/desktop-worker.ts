@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { runAgent } from "./runner";
 import type { Transport } from "./transport";
-import { safeError } from "@/core/errors";
+import { safeError, problemFor } from "@/core/errors";
 const initSchema = z.object({ type: z.literal("init"), env: z.record(z.string(), z.string().optional()), identity: z.object({ agentId: z.string(), origin: z.string(), token: z.string() }) });
 let started = false; let stopped = false; let transport: Transport | undefined;
 /** 父进程通道失效时停止接收新任务，排空后退出。 */
@@ -17,7 +17,7 @@ process.on("message", async raw => {
     try {
       if (!transport || !["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new Error("设备尚未连接或操作无效。");
       send({ type: "reply", id: message.id, result: await transport.post("/api/agent/" + message.route, message.data) });
-    } catch (error) { send({ type: "reply", id: message.id, error: safeError(error) }); }
+    } catch (error) { send({ type: "reply", id: message.id, error: safeError(error), problem: problemFor(error) }); }
     return;
   }
   if (started) return;
@@ -27,6 +27,7 @@ process.on("message", async raw => {
     await runAgent(parsed.data.identity, {
       stopped: () => stopped,
       snapshots: snapshots => send({ type: "snapshots", snapshots }),
+      problems: problems => send({type:"problems", problems}),
       heartbeat: () => send({ type: "heartbeat", at: Date.now() }),
       error: (message, code) => { send({ type: "error", message, code }); },
       connected: async active => {

@@ -1,4 +1,6 @@
 /** Windows Agent 命令行入口；配置加载和任务运行均不依赖 Next.js。 */
+import { heartbeatFeedback, acknowledgeFeedback } from "./feedback";
+import { makeProblem, type Problem } from "../shared/problems";
 import path from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
@@ -37,15 +39,16 @@ async function main() {
   claimHost();
   const transport = new Transport(identity.origin, identity.agentId, identity.token); const executor = new Executor(transport);
   const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task));
+  const health = new Map<string, Problem>();
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let stopped = false; let connected = false;
   process.once("SIGINT", () => { stopped = true; }); process.once("SIGTERM", () => { stopped = true; });
   /** 每实例独立采样，慢 OBS 不影响其他实例和心跳。 */
-  const readers = instanceDescriptors().map(async instance => { while (!stopped) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); } catch { /* 保留旧快照及时间，云端显示过期。 */ } await sleep(HEARTBEAT_MS); } });
+  const readers = instanceDescriptors().map(async instance => { while (!stopped) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); health.delete(instance.id); } catch { health.set(instance.id, makeProblem("SNAPSHOT_READ", "此实例状态读取失败，保留最后一次成功快照供核对。", {source:"agent",target:{instanceId:instance.id},stage:"读取实例状态"})); } await sleep(HEARTBEAT_MS); } });
   /** 结果与心跳独立于长轮询；网络错误不会取消正在执行的任务。 */
   const heartbeat = (async () => { while (!stopped) {
     if (connected) try {
-      const result = await transport.post<{ acknowledged: string[] }>("/api/agent/heartbeat", { protocol: PROTOCOL, snapshots: [...snapshots.values()], reports: await worker.reports() });
-      await worker.acknowledge(result.acknowledged);
+      const result = await transport.post<{ acknowledged: string[] }>("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
+      await acknowledgeFeedback(worker, result.acknowledged, health);
     } catch (error) { if (error instanceof AppError && error.status === 401) connected = false; }
     await sleep(HEARTBEAT_MS);
   } })();
@@ -53,9 +56,9 @@ async function main() {
   while (!stopped) {
     try {
       if (!connected) {
-        const session = await transport.post<{ session: string; protocol: number }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors() });
-        transport.session = session.session; await executor.registerChannels(); connected = true;
-        await transport.post("/api/agent/heartbeat", { protocol: PROTOCOL, snapshots: [...snapshots.values()], reports: await worker.reports() });
+        const session = await transport.post<{ session: string; protocol: number; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors() });
+        transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
+        await transport.post("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
       }
       const response = await transport.request("/api/agent/poll"); const result = await response.json() as { tasks: unknown[] };
       for (const raw of result.tasks) { const task = taskSchema.parse(raw); if (task.agentId !== identity.agentId) throw new Error("Invalid target"); await worker.receive(task); }
