@@ -20,7 +20,7 @@ export async function POST(request: Request) {
  if(a.revoked) throw new AppError("AGENT", "请先恢复电脑连接，再分配归属。", 409);
  const token = randomBytes(32).toString("hex");
  if (a.paired) await beginMaintenance(a.id, token);
- try { await setAgentOwner(a.id, v.owner); await audit(user.username, "assign-device", a.id, "assigned", v.owner); }
+ try { await setAgentOwner(a.id, v.owner, !a.paired); await audit(user.username, "assign-device", a.id, "assigned", v.owner); }
  finally { if (a.paired) await changeMaintenance(a.id, token); }
  return Response.json({ ok: true });
  } catch(e) { return failed(e instanceof z.ZodError ? new AppError("INPUT", "请选择电脑和客户。") : e); }

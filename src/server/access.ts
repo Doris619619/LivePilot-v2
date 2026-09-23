@@ -31,7 +31,7 @@ export async function login(username: string, password: string, desktop = false)
   const store = accessStore();
   return store.exclusive(async () => {
     const state = await store.read<AccessState>("access.json") || emptyAccess();
-    // 追加一次的普通成员；已有同名账号的密码、禁用状态和会话保持不变。
+    // 追加一次的初始管理员；已有同名账号的密码、禁用状态和会话保持不变。
     if (!state.users.some(user => user.username === builtinMember.username)) {
       const { username, salt, hash } = builtinMember;
       state.users.push({ username, role: "admin", salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });

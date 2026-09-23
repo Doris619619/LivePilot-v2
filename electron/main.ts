@@ -53,7 +53,7 @@ async function launch() {
   window.on("close", e => { if (!quitting) { e.preventDefault(); window?.hide(); } });
   ipcMain.handle("desktop:session", event => { trusted(event); return auth.session(); });
   ipcMain.handle("desktop:login", (event, username, password) => { trusted(event); return auth.login(username, password); });
-  ipcMain.handle("desktop:logout", event => { trusted(event); auth.logout(); });
+  ipcMain.handle("desktop:logout", event => { trusted(event); return auth.logout(); });
   ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
   const action = z.enum(["scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
   ipcMain.handle("desktop:act", async (event, name, input) => { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });

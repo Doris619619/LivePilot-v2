@@ -170,7 +170,7 @@ export async function revokeAgent(id: string) {
 }
 
 /** 在已取得设备维护锁时分配归属；只改元数据，保留身份、频道和文件。 */
-export async function setAgentOwner(id: string, owner: string) {
+export async function setAgentOwner(id: string, owner: string, onlyUnpaired = false) {
   const store = cloudStore();
-  await transaction(store, async () => { const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id && !a.pairedTo); if (!agent) throw new AppError("AGENT", "设备不存在。", 404); agent.owner = owner; await store.write("agents.json", registry); });
+  await transaction(store, async () => { const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id && !a.pairedTo); if (!agent) throw new AppError("AGENT", "设备不存在。", 404); if (onlyUnpaired && agent.tokenHash) throw new AppError("BUSY", "电脑刚完成配对，请重新读取状态并在空闲时分配。", 409); agent.owner = owner; await store.write("agents.json", registry); });
 }
