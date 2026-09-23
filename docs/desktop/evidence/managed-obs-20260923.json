@@ -1,0 +1,28 @@
+{
+  "root": "D:\\Repo\\LivePilot-v2-data\\.data\\qa\\managed-tm1Th1",
+  "result": "passed",
+  "instances": [
+    {
+      "id": "main",
+      "port": 15455,
+      "validated": true,
+      "streaming": false,
+      "recording": false
+    },
+    {
+      "id": "obs_581ed1d295b3c174",
+      "port": 15456,
+      "validated": true,
+      "streaming": false,
+      "recording": false
+    },
+    {
+      "id": "obs_3f9e4e7c38faa4ae",
+      "port": 15457,
+      "validated": true,
+      "streaming": false,
+      "recording": false
+    }
+  ],
+  "closed": 3
+}

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, access, rm, readFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { prepareFiles } from "../electron/obs-setup";
+import { prepareFiles, newInstance } from "../electron/obs-setup";
 import type { DesktopInstance } from "../src/shared/desktop";
 const f = vi.hoisted(() => ({ exec: vi.fn() }));
 vi.mock("node:child_process", () => ({ execFile: f.exec }));
@@ -25,7 +25,7 @@ it("explains missing bundled OBS before creating any instance files", async () =
   await expect(access(obsRoot)).rejects.toThrow(); expect(f.exec).not.toHaveBeenCalled();
 });
 it("guides missing manual OBS to automatic preparation without extracting or taking over", async () => {
-  await expect(prepareFiles({ ...instance, managed: false }, root)).rejects.toThrow("自动准备 OBS"); expect(f.exec).not.toHaveBeenCalled();
+  await expect(prepareFiles({ ...instance, managed: false }, root)).rejects.toThrow("准备第一个 OBS"); expect(f.exec).not.toHaveBeenCalled();
 });
 it("does not mark a partial extraction as complete and allows the same candidate to retry", async () => {
   await bundle(); await expect(prepareFiles(instance, root)).rejects.toThrow("解压未完成"); await expect(access(path.join(obsRoot, ".extracted"))).rejects.toThrow();
@@ -36,4 +36,10 @@ it("does not mark a partial extraction as complete and allows the same candidate
 it("does not overwrite an initialized OBS whose executable has disappeared", async () => {
   await mkdir(obsRoot, { recursive: true }); await writeFile(path.join(obsRoot, ".extracted"), "32.2.2"); await writeFile(path.join(obsRoot, ".livenest-owner"), "main"); await writeFile(path.join(obsRoot, "existing-config.json"), "keep");
   await expect(prepareFiles({ ...instance, initialized: true }, root)).rejects.toThrow("没有覆盖已有 OBS"); expect(f.exec).not.toHaveBeenCalled(); expect(await readFile(path.join(obsRoot, "existing-config.json"), "utf8")).toBe("keep");
+});
+
+it("allocates a new name, ID and port without reusing a saved candidate",async()=>{
+ const first={...instance,name:"OBS 1",initialized:true};const failed={...instance,id:"obs_failed",name:"OBS 2",port:4456};
+ const next=await newInstance({dataRoot:root,encryptionKey:"a".repeat(64),instances:[first,failed]});
+ expect(next.name).toBe("OBS 3");expect(next.id).not.toBe(first.id);expect(next.id).not.toBe(failed.id);expect([first.port,failed.port]).not.toContain(next.port);expect(next.password).not.toBe(first.password);expect(next.sourceExe).toBeUndefined();
 });

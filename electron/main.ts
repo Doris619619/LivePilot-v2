@@ -55,7 +55,7 @@ async function launch() {
   ipcMain.handle("desktop:login", (event, username, password) => { trusted(event); return auth.login(username, password); });
   ipcMain.handle("desktop:logout", event => { trusted(event); return auth.logout(); });
   ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
-  const action = z.enum(["scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
+  const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install"]);
   ipcMain.handle("desktop:act", async (event, name, input) => { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined); return manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(), z.unknown()).parse(input)); });
   const image = nativeImage.createFromPath(path.join(resources, "icon.png")); tray = new Tray(image); tray.setToolTip("LiveNest");
   tray.setContextMenu(Menu.buildFromTemplate([{ label: "打开 LiveNest", click: () => window?.show() }, { label: "网页工作台", click: () => { void manager.act("web"); } }, { type: "separator" }, { label: "退出", click: () => { void quit(); } }])); tray.on("double-click", () => window?.show());
@@ -67,4 +67,4 @@ async function launch() {
 app.on("second-instance", () => { window?.show(); window?.focus(); });
 /** 应用级退出复用托盘确认；更新器已获维护许可时通过 quitting 放行。 */
 app.on("before-quit", event => { if (!quitting && shutdown) { event.preventDefault(); void quit(); } });
-if (ownsLock) void app.whenReady().then(launch).catch(async () => { quitting = true; await dialog.showMessageBox({ type: "error", message: "LiveNest 启动失败，请检查配置文件权限或重新安装。原有数据未删除。" }); app.quit(); });
+if (ownsLock) void app.whenReady().then(launch).catch(async error => { quitting = true; await dialog.showMessageBox({ type: "error", message: "LiveNest 未能加载数据。请检查原数据盘与 Windows 账户，原有文件没有删除。", detail: error instanceof Error ? error.message : "请保留原配置并重试。" }); app.quit(); });

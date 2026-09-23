@@ -10,6 +10,7 @@ import { ObsController } from "../src/core/obs/controller";
 import { ObsProcessManager } from "../src/core/obs/process";
 import { LocalObsRuntime } from "../src/core/obs/runtime";
 import type { DesktopInstance } from "../src/shared/desktop";
+import { ordinaryPath } from "./data-root";
 import { inspectObs } from "./obs-discovery";
 import { environment, type Settings } from "./settings";
 const exec = promisify(execFile);
@@ -17,7 +18,7 @@ const exec = promisify(execFile);
 export async function assertLocalIdle(settings: Settings) {
   configureCore(() => environment(settings));
   for (const instance of settings.instances) {
-    if (!await access(instance.exe).then(() => true, () => false)) { if (instance.initialized) throw new Error(instance.name + " 的运行文件缺失，无法确认状态。"); continue; }
+    if (!await access(instance.exe).then(() => true, error => {if(error.code==="ENOENT")return false;throw error;})) { if (instance.initialized) throw new Error(instance.name + " 的运行文件缺失，无法确认状态。"); continue; }
     const read = () => config(instance.id); const status = await new ObsProcessManager(read).inspect();
     if (status.portPid && status.portPid !== status.pid) throw new Error(instance.name + " 的端口被占用，无法确认状态，请处理后重试。");
     if (!status.pid) continue;
@@ -37,11 +38,16 @@ export async function freePort(excluded: number[], start = 4455): Promise<number
 }
 /** 生成身份后先持久化，解压失败仍可用相同密码继续。 */
 export async function newInstance(settings: Settings): Promise<DesktopInstance> {
-  const id = settings.instances.some(i => i.id === "main" && i.initialized) ? "obs_" + randomBytes(4).toString("hex") : "main";
-  return { id, name: settings.instances.length ? "OBS " + (settings.instances.length + 1) : "主 OBS", managed: true, exe: path.join(settings.dataRoot, "obs", id, "bin", "64bit", "obs64.exe"), port: await freePort(settings.instances.map(i => i.port)), password: randomBytes(24).toString("hex"), initialized: false };
+  let id = "main";
+  if(settings.instances.some(i=>i.id===id)) {
+    do { id="obs_"+randomBytes(8).toString("hex"); } while(settings.instances.some(i=>i.id===id) || await access(path.join(settings.dataRoot,"obs",id)).then(()=>true,()=>false));
+  } else if(await access(path.join(settings.dataRoot,"obs",id)).then(()=>true,()=>false)) throw new Error("首个 OBS 目录已经存在，请恢复原配置，未覆盖文件。");
+  let ordinal=settings.instances.filter(i=>i.initialized).length+1;
+  while(settings.instances.some(i=>i.name==="OBS "+ordinal))ordinal++;
+  return { id, name: "OBS " + ordinal, managed: true, exe: path.join(settings.dataRoot, "obs", id, "bin", "64bit", "obs64.exe"), port: await freePort(settings.instances.map(i => i.port)), password: randomBytes(24).toString("hex"), initialized: false };
 }
 /** 仅生成缺失的默认文件，已有配置保持不变。 */
-async function seed(filename: string, value: string) { await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, value, { flag: "wx" }).catch(e => { if (e.code !== "EEXIST") throw e; }); }
+async function seed(filename: string, value: string) { await ordinaryPath(path.dirname(filename)); await mkdir(path.dirname(filename), { recursive: true }); await writeFile(filename, value, { flag: "wx" }).catch(e => { if (e.code !== "EEXIST") throw e; }); }
 /** 区分安装包资源与手动 OBS 路径；提前报可操作错误，不等待 WebSocket 超时。 */
 export async function requireObsFile(filename: string, message: string) {
   try { if (!(await stat(filename)).isFile()) throw new Error(); await access(filename); }
@@ -49,9 +55,10 @@ export async function requireObsFile(filename: string, message: string) {
 }
 /** 解压固定官方包，便携配置不影响用户其他 OBS。 */
 export async function prepareFiles(instance: DesktopInstance, resources: string, report: (stage: string) => void = () => {}) {
-  if (!instance.managed) { await requireObsFile(instance.exe, "找不到手动选择的 obs64.exe，或没有读取权限。请恢复该专用 OBS；电脑未安装 OBS 时可撤销此候选，再点击“自动准备 OBS”，无需预装。"); return; }
+  if (!instance.managed) { await requireObsFile(instance.exe, "找不到手动选择的 obs64.exe，或没有读取权限。请恢复该专用 OBS；电脑未安装 OBS 时可撤销此候选，再点击“准备第一个 OBS”，无需预装。"); return; }
   report("正在准备独立 OBS 目录");
   const root = path.resolve(instance.exe, "../../..");
+  await ordinaryPath(root);
   const extracted = await access(path.join(root, ".extracted")).then(() => true, () => false);
   if (!extracted && !instance.sourceExe) await requireObsFile(path.join(resources, "vendor", "obs.zip"), "安装包内置 OBS 资源缺失或不可读，请重新安装完整 LiveNest 安装包后重试。无需另行安装 OBS，已有配置会保留。");
   await mkdir(root, { recursive: true });

@@ -1,28 +1,100 @@
-/** 数据位置选择与保留原目录的迁移；程序安装目录和用户数据分开。 */
-import { mkdir, writeFile, unlink, readdir, cp, lstat, realpath } from "node:fs/promises";
+/** 数据复制事务：校验后切换、只修正托管路径、源目录始终保留。 */
+import { mkdir, writeFile, unlink, readdir, cp, lstat, realpath, readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Settings } from "./settings";
-/** 验证目录可写，探针仅删除本次创建的随机文件。 */
-export async function writableDirectory(root:string){await mkdir(root,{recursive:true});const file=path.join(root,".livenest-probe-"+randomUUID());await writeFile(file,"ok",{flag:"wx"});await unlink(file);}
-/** 新安装优先 D 盘，失败明确告知回退；已有配置不调用此函数。 */
-export async function defaultDataLocation(fallback:string){try{await realpath("D:\\");const root="D:\\LiveNest";await writableDirectory(root);return {dataRoot:root};}catch{await writableDirectory(fallback);return {dataRoot:fallback,dataNotice:"D 盘不存在或不可写，已选择当前用户目录。可在准备 OBS 前选择其他位置。"};}}
-/** 复制到空目录后才返回新配置；拒绝嵌套、联接和覆盖，原数据保留。 */
-export async function copyDataLocation(settings:Settings,target:string,progress:(stage:string)=>void){
- await writableDirectory(target);const source=await realpath(settings.dataRoot);const destination=await realpath(target);
- const rel=path.relative(source,destination);const back=path.relative(destination,source);
- if(!rel||(!rel.startsWith("..")&&!path.isAbsolute(rel))||(!back.startsWith("..")&&!path.isAbsolute(back)))throw new Error("请选择原目录之外的独立空文件夹。");
- if((await readdir(destination)).length)throw new Error("目标文件夹不是空目录，请选择新的文件夹；没有覆盖任何文件。");
- progress("正在复制 OBS、素材与授权，原目录保留");
- for(const name of await readdir(source)) await cp(path.join(source,name),path.join(destination,name),{recursive:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new Error("数据目录中存在链接，无法安全自动迁移；原数据保留。");return true;}});
- /** 只更新托管实例的内部程序路径，外部手动 OBS 保持原路径。 */
- const relocate=async(items:Settings["instances"]|undefined)=>items&&Promise.all(items.map(async i=>{
-  if(!i.managed)return i;
-  // Windows 8.3 路径与联接可指向同一目录，不能混用真实根目录和未解析的 exe。
-  const original=await realpath(i.exe).catch(()=>path.join(source,path.relative(settings.dataRoot,i.exe)));
-  const relative=path.relative(source,original);
-  if(relative===".."||relative.startsWith(".."+path.sep)||path.isAbsolute(relative))throw new Error("托管 OBS 不在原数据目录内，原配置保留，请检查程序路径。");
-  return {...i,exe:path.join(destination,relative)};
- }));
- return {...settings,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:(await relocate(settings.instances))!,candidates:await relocate(settings.candidates),archivedCandidates:await relocate(settings.archivedCandidates)};
+import { checkRootPath, claimRoot, readRoot, ROOT_MARKER, within } from "./data-root";
+import { Store } from "../src/core/storage";
+export const MIGRATION_FILE = ".livenest-migration.json";
+/** 验证可写，探针只删除本次随机文件。 */
+export async function writableDirectory(root: string) { await mkdir(root, {recursive:true}); const probe=path.join(root,".livenest-probe-"+randomUUID()); await writeFile(probe,"ok",{flag:"wx"}); await unlink(probe); }
+/** 流式散列适用于大视频，不把整份素材加载到内存。 */
+async function checksum(file: string) { const hash=createHash("sha256"); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest("hex"); }
+/** 不跟随目录链接；完整列举相对路径、长度和摘要，包括授权密文。 */
+async function manifest(root: string) {
+  const files: Record<string, {size:number; sha256:string}> = {};
+  const dirs: string[] = [];
+  /** 深度检查每个目录项；排除仅属于本次事务的根标记和日志。 */
+  async function walk(dir: string) {
+    for (const name of (await readdir(dir)).sort()) {
+      const file=path.join(dir,name); const relative=path.relative(root,file);
+      if (relative===ROOT_MARKER || relative===MIGRATION_FILE) continue;
+      const info=await lstat(file);
+      if(info.isSymbolicLink() || (!info.isFile()&&!info.isDirectory())) throw new Error("数据目录中存在链接或特殊文件，无法安全迁移；原数据保留。");
+      if(info.isDirectory()) { dirs.push(relative); await walk(file); }
+      else files[relative]={size:info.size,sha256:await checksum(file)};
+    }
+  }
+  await walk(root); return { files, dirs: dirs.sort() };
+}
+/** 限定 OBS 场景的已知本地路径字段，绝不替换频道名、密钥或任意字符串。 */
+function relocateScene(value: unknown, source: string, target: string, field = ""): unknown {
+  if (typeof value === "string" && ["local_file", "file", "filename", "path"].includes(field) && path.isAbsolute(value) && within(source,value)) return path.join(target,path.relative(source,value));
+  if(Array.isArray(value)) return value.map(item=>relocateScene(item,source,target,field));
+  if(value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,relocateScene(item,source,target,key)]));
+  return value;
+}
+/** 停止 Agent 之前检查目标边界与占用，不创建或覆盖目标内容。 */
+export async function preflightDataLocation(settings: Settings,target: string,installation?: string) {
+  const source=await realpath(settings.dataRoot);const destination=await checkRootPath(target,installation);
+  if(settings.rootId && (await readRoot(source)).id!==settings.rootId)throw new Error("原数据目录归属已改变，未开始迁移。");
+  if(within(source,destination)||within(destination,source))throw new Error("请选择原目录之外的独立空文件夹。");
+  const names=await readdir(destination).catch(error=>{if(error.code==="ENOENT")return [];throw error;});
+  if(names.length)throw new Error("目标文件夹不是空目录，请选择新的文件夹；失败副本和原数据均保留。");
+  return {source,destination};
+}
+/** 迁移要求所有相关 OBS 关闭；调用方已取得维护并停止 Agent。 */
+export async function copyDataLocation(settings: Settings, target: string, progress: (stage: string)=>void | Promise<void>, installation?: string): Promise<Settings> {
+  const {source,destination}=await preflightDataLocation(settings,target,installation);
+  await mkdir(destination,{recursive:true});
+  if((await readdir(destination)).length) throw new Error("目标文件夹不是空目录，请选择新的文件夹；失败副本和原数据均保留。");
+  const items=[...settings.instances,...(settings.candidates||[]),...(settings.archivedCandidates||[])];
+  // 外部 OBS 若自身位于根内，复制后无法保证它保持独立管理，必须先人工处理。
+  for(const item of items.filter(i=>!i.managed)) {
+    if(within(source,path.resolve(item.exe))) throw new Error("手动 OBS 位于原数据根目录内，请先处理外部 OBS 路径再迁移。");
+    const sceneDir=path.resolve(item.exe,"../../../config/obs-studio/basic/scenes");
+    for(const name of await readdir(sceneDir).catch(e=>{if(e.code==="ENOENT")return [];throw e;})) {
+      if(!/\.json(?:\.bak)?$/i.test(name))continue;
+      const scene=JSON.parse(await readFile(path.join(sceneDir,name),"utf8"));
+      if(JSON.stringify(scene)!==JSON.stringify(relocateScene(scene,source,destination)))throw new Error("手动 OBS 的场景引用原数据目录，请先在 OBS 调整素材引用再迁移。");
+    }
+  }
+  await progress("正在校验源文件与磁盘空间");
+  const before=await manifest(source);
+  const fs=await import("node:fs/promises"); const disk=await fs.statfs(destination);
+  const bytes=Object.values(before.files).reduce((sum,f)=>sum+f.size,0);
+  if(disk.bavail*disk.bsize<bytes+512*1024**2)throw new Error("目标磁盘空间不足，原数据位置保持不变。");
+  const marker=await claimRoot(destination,installation); const journal=new Store(destination);
+  const record={version:1,source,destination,rootId:marker.id,stage:"copying",manifest:before};
+  await journal.write(MIGRATION_FILE,record);
+  try {
+    await progress("正在复制 OBS、素材与授权，原目录保留");
+    for(const name of await readdir(source)) {
+      if(name===ROOT_MARKER || name===MIGRATION_FILE)continue;
+      await cp(path.join(source,name),path.join(destination,name),{recursive:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new Error("数据目录含链接，复制已中止。");return true;}});
+    }
+    await progress("正在逐文件校验复制结果");
+    if(JSON.stringify(before)!==JSON.stringify(await manifest(destination)) || JSON.stringify(before)!==JSON.stringify(await manifest(source)))throw new Error("复制校验失败或源文件发生变化，没有切换数据位置。");
+    await journal.write(MIGRATION_FILE,{...record,stage:"verified"});
+    /** 所有实例种类共享相同的路径迁移，外部 OBS 保留。 */
+    const relocate=(list: Settings["instances"]|undefined)=>list?.map(item=>{
+      if(!item.managed)return {...item};
+      const relative=path.relative(settings.dataRoot,item.exe);
+      if(!within(settings.dataRoot,item.exe))throw new Error("托管 OBS 不在原数据目录内，原配置保留。");
+      return {...item,exe:path.join(destination,relative)};
+    });
+    for(const item of items.filter(i=>i.managed)) {
+      const sceneDir=path.join(destination,path.relative(settings.dataRoot,path.resolve(item.exe,"../../../config/obs-studio/basic/scenes")));
+      if(!within(destination,sceneDir))throw new Error("托管 OBS 路径超出数据目录。");
+      for(const name of await readdir(sceneDir).catch(e=>{if(e.code==="ENOENT")return [];throw e;})) {
+        if(!/\.json(?:\.bak)?$/i.test(name))continue;
+        const file=path.join(sceneDir,name); const original=JSON.parse(await readFile(file,"utf8"));
+        const updated=relocateScene(relocateScene(original,source,destination),settings.dataRoot,destination);
+        if(JSON.stringify(updated)!==JSON.stringify(original)) { await writeFile(file,JSON.stringify(updated)); if(JSON.stringify(JSON.parse(await readFile(file,"utf8")))!==JSON.stringify(updated))throw new Error("素材路径写入校验失败。"); }
+      }
+    }
+    await journal.write(MIGRATION_FILE,{...record,stage:"ready-to-switch"});
+    return {...settings,rootId:marker.id,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:relocate(settings.instances)!,candidates:relocate(settings.candidates),archivedCandidates:relocate(settings.archivedCandidates)};
+  } catch(error) { await journal.write(MIGRATION_FILE,{...record,stage:"failed"}).catch(()=>{}); throw error; }
 }

@@ -40,7 +40,7 @@ try {
   await page.waitForFunction(() => [...document.images].every(i => i.complete && i.naturalWidth > 0)); await page.screenshot({ path: path.join(output, "obs-help.png"), fullPage: true });
   await page.getByRole("button", { name: "设备配置", exact: true }).click();
   if (process.argv.includes("--obs")) {
-    await page.evaluate(() => window.liveNest.act("prepare"));
+    await page.evaluate(() => window.liveNest.act("add"));
     const initialized = await page.evaluate(() => window.liveNest.state()); if (!initialized.instances[0]?.initialized) throw new Error(initialized.message || "OBS setup incomplete: " + JSON.stringify(initialized));
     await page.evaluate(() => window.liveNest.act("prepare")); const repeated = await page.evaluate(() => window.liveNest.state()); if (repeated.instances.length !== 1) throw new Error("Repeated setup created another OBS");
     if (process.argv.includes("--multi")) { await page.evaluate(() => window.liveNest.act("add")); const multi = await page.evaluate(() => window.liveNest.state()); if (multi.instances.length !== 2 || multi.instances.some(i => !i.initialized) || new Set(multi.instances.map(i => i.port)).size !== 2) throw new Error("Multiple OBS isolation failed"); }

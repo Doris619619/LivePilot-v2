@@ -1,0 +1,33 @@
+/** 根归属与配置定位回归，所有文件及密钥均为临时合成数据。 */
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, afterEach, it, expect, vi } from "vitest";
+import { claimRoot, readRoot, checkRootPath, hasData, ROOT_MARKER } from "../electron/data-root";
+import { SettingsStore } from "../electron/settings";
+import { Store } from "../src/core/storage";
+const f=vi.hoisted(()=>({bootstrap:"", protect:vi.fn()}));
+vi.mock("electron",()=>({app:{isPackaged:false,getPath:()=>f.bootstrap},safeStorage:{decryptString:()=>{throw new Error("unsupported fixture");}}}));
+vi.mock("../electron/windows-credentials",()=>({protectWindows:f.protect}));
+let base:string; let target:string;
+/** 每例拥有自己的定位记录及数据根，禁止读取真实 AppData。 */
+beforeEach(async()=>{base=await mkdtemp(path.join(os.tmpdir(),"ln-root-"));target=path.join(base,"直播 空格","LiveNest");f.bootstrap=path.join(base,"bootstrap");f.protect.mockImplementation(async(bytes:Buffer)=>bytes);vi.stubEnv("LIVENEST_TEST_DATA","");});
+/** 仅清理创建的测试根。 */
+afterEach(async()=>{vi.unstubAllEnvs();vi.restoreAllMocks();if(path.dirname(base)!==os.tmpdir()||!path.basename(base).startsWith("ln-root-"))throw new Error("Unsafe cleanup");await rm(base,{recursive:true,force:true});});
+it("claims a Chinese path once and preserves a stable root ID",async()=>{const first=await claimRoot(target);expect(await claimRoot(target)).toEqual(first);expect(await readRoot(target)).toEqual(first);});
+it("refuses unknown nonempty and corrupt owned directories without changing bytes",async()=>{await mkdir(target,{recursive:true});await writeFile(path.join(target,"user.txt"),"keep");await expect(claimRoot(target)).rejects.toThrow("没有覆盖");expect(await readFile(path.join(target,"user.txt"),"utf8")).toBe("keep");await writeFile(path.join(target,ROOT_MARKER),"{}");await expect(claimRoot(target)).rejects.toThrow("标记无效");});
+it("rejects equal, ancestor, descendant and junction installation overlap",async()=>{const install=path.join(base,"program");await mkdir(install);for(const candidate of [install,path.join(install,"LiveNest"),base])await expect(checkRootPath(candidate,install)).rejects.toThrow("相互包含");const alias=path.join(base,"alias");await symlink(install,alias,process.platform==="win32"?"junction":"dir");await expect(checkRootPath(path.join(alias,"LiveNest"))).rejects.toThrow("链接");});
+it("does not create a default directory before an explicit selection",async()=>{const settings=await new SettingsStore().read();expect(settings.dataRoot).toBe("");expect(await readdir(base)).toEqual([]);});
+it("stores encrypted settings only in the root and a secret-free locator in AppData",async()=>{const store=new SettingsStore();const first=await store.select(target);const locator=await readFile(path.join(f.bootstrap,"data-location.json"),"utf8");expect(locator).not.toContain(first.encryptionKey);expect(await readdir(f.bootstrap)).toEqual(["data-location.json"]);expect(await store.read()).toEqual(first);const encrypted=JSON.parse(await readFile(path.join(target,"state/desktop/settings.json"),"utf8"));expect(encrypted).toMatch(/^dpapi:/);expect(await hasData(first)).toBe(false);await writeFile(path.join(target,"leftover.bin"),"business");expect(await hasData(first)).toBe(true);});
+it("fails closed when the selected disk disappears",async()=>{const store=new SettingsStore();await store.select(target);await import("node:fs/promises").then(fs=>fs.rename(target,target+"-offline"));await expect(store.read()).rejects.toThrow("没有创建新身份");expect(await readdir(path.dirname(target))).toEqual(["LiveNest-offline"]);});
+it("preserves legacy encrypted identity and commits its verified in-root copy",async()=>{await mkdir(target,{recursive:true});const settings={dataRoot:target,instances:[],encryptionKey:"a".repeat(64),identity:{agentId:"fixture",token:"synthetic",origin:"https://example.invalid"}};const original="dpapi:"+Buffer.from(JSON.stringify(settings)).toString("base64");await new Store(f.bootstrap).write("settings.json",original);const next=await new SettingsStore().read();expect(next.identity).toEqual(settings.identity);expect(next.rootId).toBeTruthy();expect(await new Store(f.bootstrap).read("settings.json")).toBe(original);expect(await new SettingsStore().read()).toEqual(next);});
+it("does not publish a new locator when encrypted writing fails",async()=>{f.protect.mockRejectedValue(new Error("fixture encryption failure"));await expect(new SettingsStore().select(target)).rejects.toThrow();expect(await new Store(f.bootstrap).read("data-location.json")).toBeNull();});
+it("keeps the old location when committing the new locator fails",async()=>{const store=new SettingsStore();const original=await store.select(target);const method=Store.prototype.write;vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name==="data-location.json")throw new Error("locator unavailable");return method.call(this,name,value);});await expect(store.select(path.join(base,"other"))).rejects.toThrow("locator unavailable");expect((await store.read()).rootId).toBe(original.rootId);});
+it("refuses missing, foreign or undecryptable settings without issuing a fresh identity",async()=>{const store=new SettingsStore();await store.select(target);await writeFile(path.join(target,"state/desktop/settings.json"),JSON.stringify("dpapi:"+Buffer.from("invalid").toString("base64")));await expect(store.read()).rejects.toThrow("无法解密");await expect(store.select(target)).rejects.toThrow("无法解密");});
+it("does not follow a replaced state directory junction",async()=>{await claimRoot(target);const elsewhere=path.join(base,"elsewhere");await mkdir(elsewhere);await symlink(elsewhere,path.join(target,"state"),process.platform==="win32"?"junction":"dir");await expect(new SettingsStore().select(target)).rejects.toThrow("链接");expect(await readdir(elsewhere)).toEqual([]);});
+
+it("does not overwrite newer root settings with the retained legacy backup after locator loss",async()=>{
+ const store=new SettingsStore();const current=await store.select(target);current.instances=[{id:"main",name:"New saved name",managed:true,exe:path.join(target,"obs/main/bin/64bit/obs64.exe"),port:4455,password:"fixture",initialized:true}];await store.write(current);
+ const legacy={...current,instances:[],rootId:undefined};await new Store(f.bootstrap).write("settings.json","dpapi:"+Buffer.from(JSON.stringify(legacy)).toString("base64"));await new Store(f.bootstrap).remove("data-location.json");
+ const recovered=await store.read();expect(recovered.instances[0].name).toBe("New saved name");expect(recovered.encryptionKey).toBe(current.encryptionKey);
+});
