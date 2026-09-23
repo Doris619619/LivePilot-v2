@@ -6,7 +6,7 @@ import { LiveNestLogo, DeviceIcon, ExternalLinkIcon } from "../components/icons"
 import "./download.css";
 
 export const metadata: Metadata = { title: "下载 LiveNest", description: "下载 LiveNest Windows 客户端，在网页管理 OBS 和 YouTube 直播。" };
-const version = "0.1.2";
+const version = "0.1.3";
 const installer = `/downloads/${version}/LiveNest_${version}_x64-setup.exe`;
 
 /** 未登录也能下载；首屏只保留产品、用途和动作，详细帮助按需展开。 */
@@ -29,16 +29,16 @@ export default function DownloadPage() {
       <section className="download-steps" id="getting-started" aria-labelledby="steps-title">
         <h2 id="steps-title">开始使用</h2>
         <ol>
-          <li><span className="download-step-number">01</span><h3>安装</h3><p>运行安装向导选择安装路径，再用客户账号登录；数据位置默认优先 D 盘，也可自行选择。</p></li>
-          <li><span className="download-step-number">02</span><h3>配对</h3><p>自动准备 OBS，再粘贴网页生成的配对码。</p></li>
+          <li><span className="download-step-number">01</span><h3>安装</h3><p>在安装向导中分别选择程序和数据位置，再用客户账号登录；升级沿用已有数据位置。</p></li>
+          <li><span className="download-step-number">02</span><h3>配对</h3><p>在客户端准备第一个 OBS，再粘贴网页生成的配对码。</p></li>
           <li><span className="download-step-number">03</span><h3>开播</h3><p>在网页连接频道、添加素材，即可开始。</p></li>
         </ol>
       </section>
       <section className="download-details" aria-labelledby="help-title">
         <h2 id="help-title">常见问题</h2>
         <div className="download-questions">
-          <details><summary>需要提前安装 OBS 吗？</summary><p>不需要，客户端内置独立便携 OBS；“自动准备 OBS”会保留你原有的 OBS。已有 OBS 可扫描或手选，复制为独立实例。</p></details>
-          <details><summary>一台电脑能连接多个 OBS 吗？</summary><p>可以。在客户端“本机 OBS”中选择新 OBS 的来源，每个实例连接不同频道。新增前，请完成这台电脑上的直播、上传和授权任务。</p></details>
+          <details><summary>需要提前安装 OBS 吗？</summary><p>不需要，客户端内置独立便携 OBS；“准备第一个 OBS”会创建独立实例并保留原有 OBS。高级选项也支持扫描、复制和手动接入。</p></details>
+          <details><summary>一台电脑能连接多个 OBS 吗？</summary><p>可以。在客户端“本机 OBS”中点击“添加 OBS”，每个独立实例连接不同频道。新增前，请完成这台电脑上的直播、上传和授权任务。</p></details>
           <details><summary>更新时需要重新配对吗？</summary><p>关闭 LiveNest 后安装新版，原有配置与配对信息会保留。安装前请完成正在进行的配置和上传。</p></details>
           <details><summary>如何核对安装包？</summary><p>安装包版本 {version}。构建清单包含文件大小、源码提交和 SHA-256 摘要。</p><a href={`/downloads/${version}/build-manifest.json`}>查看构建清单</a></details>
         </div>
