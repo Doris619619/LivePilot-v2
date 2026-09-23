@@ -1,6 +1,6 @@
 /** 管理员指标钻取与时区回归：包含没有 OBS 的电脑和未接入客户。 */
 import { describe, expect, it } from "vitest";
-import { groupOverview, updateTime, validTimeZone, type Overview } from "../src/app/admin/view-model";
+import { groupOverview, searchOverview, updateTime, validTimeZone, type Overview } from "../src/app/admin/view-model";
 /** 合成状态覆盖在线、离线、待分配及空设备；不读取运行数据。 */
 function fixture(): Overview {
   const agents: Overview["agents"] = [
@@ -16,6 +16,15 @@ function fixture(): Overview {
   return { at: 1, agents, rows, customers: ["Liang", "Demo", "New"].map(username => ({ username, role: "customer" })), totals: { live: 1, online: 2, offline: 1, customers: 3, errors: 1, unknown: 1 } };
 }
 describe("admin drilldowns", () => {
+  it("searches customers, computers and OBS without retaining a status filter", () => {
+    const data = fixture();
+    expect(searchOverview(data, " liang ")[0].devices[0].rows).toHaveLength(2);
+    expect(searchOverview(data, "电脑 B")[0].devices[0].agent.online).toBe(false);
+    expect(searchOverview(data, "音乐")[0].devices[0].rows.map(row => row.name)).toEqual(["音乐"]);
+    expect(searchOverview(data, "空电脑")[0].devices[0].rows).toEqual([]);
+    expect(searchOverview(data, "New")[0].devices).toEqual([]);
+    expect(searchOverview(data, "不存在")).toEqual([]);
+  });
   it("groups two OBS under one customer and one computer", () => {
     const groups = groupOverview(fixture(), "all", "Liang");
     expect(groups).toHaveLength(1); expect(groups[0].devices).toHaveLength(1); expect(groups[0].devices[0].rows).toHaveLength(2);

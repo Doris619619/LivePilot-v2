@@ -26,3 +26,14 @@ export function groupOverview(data: Overview, scope: Scope, customer = "", devic
 export function validTimeZone(value: string) { try { new Intl.DateTimeFormat("zh-CN", { timeZone: value }).format(0); return true; } catch { return false; } }
 /** 更新时间统一中文日期和 24 小时制，按所选 IANA 时区转换。 */
 export function updateTime(at: number, timeZone: string) { return at ? new Intl.DateTimeFormat("zh-CN", { timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }).format(at) : "未上线"; }
+/** 按名称查找完整电脑或单个 OBS；搜索不叠加统计卡片条件。 */
+export function searchOverview(data: Overview, query: string): Group[] {
+  const term = query.trim().toLocaleLowerCase();
+  const groups = groupOverview(data, "all");
+  if (!term) return groups;
+  return groups.map(group => {
+    if ((group.customer || "待分配设备").toLocaleLowerCase().includes(term)) return group;
+    const devices = group.devices.map(device => device.agent.name.toLocaleLowerCase().includes(term) ? device : { ...device, rows: device.rows.filter(row => row.name.toLocaleLowerCase().includes(term)) }).filter(device => device.agent.name.toLocaleLowerCase().includes(term) || device.rows.length > 0);
+    return { ...group, devices };
+  }).filter(group => (group.customer || "待分配设备").toLocaleLowerCase().includes(term) || group.devices.length > 0);
+}
