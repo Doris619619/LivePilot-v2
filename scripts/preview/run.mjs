@@ -1,0 +1,83 @@
+/** 仅监听 loopback 的前端验收服务；隔离数据、客户/管理员入口与模拟桌面桥。 */
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
+import { mkdir, mkdtemp, readFile, writeFile, access, open } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { randomBytes } from 'node:crypto';
+import { seed, refresh, control, password } from './fixtures.mjs';
+import { guardPreview, authorizePreviewControl } from './security.mjs';
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const repo = path.resolve(directory, '../..');
+process.chdir(repo);
+await access('.next/BUILD_ID'); await access('desktop/out/index.html');
+await mkdir('.data/preview', { recursive: true });
+const root = await mkdtemp(path.join(repo, '.data/preview/session-'));
+await seed(root);
+const origin = 'http://127.0.0.1:3022';
+const env = { ...process.env };
+for (const name of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_)/.test(name)) delete env[name];
+Object.assign(env, { LIVEPILOT_MODE: 'cloud', LIVEPILOT_ORIGIN: origin, LIVEPILOT_DATA_ROOT: root, LIVEPILOT_ENCRYPTION_KEY: randomBytes(32).toString('hex'), NEXT_TELEMETRY_DISABLED: '1' });
+const log = await open(path.join(root, 'web.log'), 'a');
+const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3022'], { cwd: repo, env, windowsHide: true, stdio: ['ignore', log.fd, log.fd] });
+await log.close();
+const servers = [];
+let timer;
+/** 只停止当前预览的子进程和端口，不触碰已安装 App 或其他服务。 */
+function stop() { clearInterval(timer); for (const server of servers) server.close(); child.kill(); }
+process.once('SIGINT', () => { stop(); process.exit(0); });
+process.once('SIGTERM', () => { stop(); process.exit(0); });
+process.on('exit', stop);
+/** 启动依赖完成后才建立已登录的独立预览入口。 */
+async function ready() { for (let n = 0; n < 100; n++) { if (child.exitCode !== null) throw new Error('Local Next server exited; see ' + root); try { if ((await fetch(origin)).ok) return; } catch { /* 等待本次子进程监听。 */ } await new Promise(resolve => setTimeout(resolve, 300)); } throw new Error('Local Next server did not start'); }
+/** JSON 错误仅用于本地预览，不转发任意外部 URL。 */
+function json(response, status, body) { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)); }
+/** 限制前端演示输入体积；大文件上传需要安装版真实环境验收。 */
+async function body(request) { let value = ''; for await (const chunk of request) { value += chunk; if (value.length > 65536) throw new Error('本地预览不接收实际素材文件'); } return value; }
+/** 每个端口持有独立演示会话，避免客户与管理员标签页相互覆盖角色。 */
+async function proxy(port, username) {
+  const session = await fetch(origin + '/api/session', { method: 'POST', headers: { Origin: origin, 'x-livepilot': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
+  if (!session.ok) throw new Error('Preview login failed');
+  let cookie = session.headers.get('set-cookie').split(';')[0];
+  const server = createServer(async (request, response) => {
+    try {
+      guardPreview(request, port);
+      const url = new URL(request.url, origin);
+      if (url.origin !== origin) return json(response, 400, { error: 'Invalid local preview URL' });
+      if (/^\/api\/(uploads|youtube)/.test(url.pathname)) return json(response, 409, { error: '本地界面预览：不上传真实素材或连接 YouTube。' });
+      const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
+      if (url.pathname === '/api/control' && request.method === 'POST') { const command = JSON.parse(input); const actor = await authorizePreviewControl(origin, cookie, command); return json(response, 200, await control(root, command, actor)); }
+      const headers = new Headers();
+      for (const [key, value] of Object.entries(request.headers)) if (value && !['host', 'connection', 'accept-encoding', 'content-length', 'cookie'].includes(key)) headers.set(key, String(value));
+      headers.set('Cookie', cookie); if (headers.has('origin')) headers.set('Origin', origin);
+      const upstream = await fetch(url, { method: request.method, headers, body: input, redirect: 'manual' });
+      if (url.pathname === '/api/session' && upstream.headers.has('set-cookie')) cookie = upstream.headers.get('set-cookie').split(';')[0];
+      for (const [key, value] of upstream.headers) if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie'].includes(key)) response.setHeader(key, value);
+      response.statusCode = upstream.status; response.end(Buffer.from(await upstream.arrayBuffer()));
+    } catch (error) { json(response, error.status || 500, { error: error.message }); }
+  });
+  servers.push(server); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+}
+/** 静态桌面页面仅注入此预览专用桥；路径约束阻止访问仓库与真实数据。 */
+async function staticPreview(request, response) {
+  try {
+    const url = new URL(request.url, 'http://127.0.0.1:3020');
+    if (request.method !== 'GET') return json(response, 405, { error: 'Read-only preview assets' });
+    let file;
+    if (url.pathname === '/') file = path.join(directory, 'index.html');
+    else if (url.pathname === '/preview-bridge.js') file = path.join(directory, 'desktop-bridge.js');
+    else { const output = path.join(repo, 'desktop/out'); file = path.resolve(output, url.pathname === '/desktop' ? 'index.html' : '.' + decodeURIComponent(url.pathname)); if (!file.startsWith(output + path.sep)) return json(response, 403, { error: 'Invalid preview asset' }); }
+    let data = await readFile(file);
+    if (url.pathname === '/desktop') data = Buffer.from(data.toString().replace('<head>', '<head><title>LiveNest App · 本地预览</title><script src="/preview-bridge.js"></script>'));
+    const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+    response.writeHead(200, { 'Content-Type': (mime[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(data);
+  } catch { json(response, 404, { error: 'Preview asset not found' }); }
+}
+try {
+  await ready(); await proxy(3021, 'Liang'); await proxy(3023, 'ULiang');
+  const server = createServer(staticPreview); servers.push(server); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(3020, '127.0.0.1', resolve); });
+  let refreshing = false;
+  timer = setInterval(async () => { if (refreshing) return; refreshing = true; try { await refresh(root); } catch (error) { console.error(error.message); } finally { refreshing = false; } }, 3000);
+  await writeFile('.data/preview/current.json', JSON.stringify({ pid: process.pid, child: child.pid, root, url: 'http://127.0.0.1:3020' }));
+  console.log('Local preview ready: http://127.0.0.1:3020');
+} catch (error) { console.error(error.message); stop(); process.exitCode = 1; }
