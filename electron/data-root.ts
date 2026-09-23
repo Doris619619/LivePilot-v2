@@ -59,7 +59,7 @@ export async function claimLegacyRoot(settings: Settings, installation?: string)
     if (!within(root, obs)) throw new Error("旧托管 OBS 位于数据目录之外，未更改配置。");
     await ordinaryPath(obs);
     try { if (await readFile(path.join(obs, ".livenest-owner"), "utf8") !== item.id) throw new Error("旧 OBS 归属不匹配。"); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" || item.initialized || (await readdir(obs).catch(() => ["unknown"])).length) throw e; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" || item.initialized || (await readdir(obs).catch(error => { if(error.code === "ENOENT") return []; throw error; })).length) throw e; }
   }
   const marker: RootMarker = { product: "LiveNest", version: 1, id: randomUUID() };
   await writeFile(path.join(root, ROOT_MARKER), JSON.stringify(marker), { flag: "wx" }); return marker;

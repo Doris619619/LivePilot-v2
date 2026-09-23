@@ -31,3 +31,15 @@ it("does not overwrite newer root settings with the retained legacy backup after
  const legacy={...current,instances:[],rootId:undefined};await new Store(f.bootstrap).write("settings.json","dpapi:"+Buffer.from(JSON.stringify(legacy)).toString("base64"));await new Store(f.bootstrap).remove("data-location.json");
  const recovered=await store.read();expect(recovered.instances[0].name).toBe("New saved name");expect(recovered.encryptionKey).toBe(current.encryptionKey);
 });
+
+/** 旧版可能先保存候选、尚未解压就退出；不能把缺失的候选目录当作外部文件。 */
+it("recovers an unextracted legacy candidate but rejects ownerless existing files",async()=>{
+ await mkdir(target,{recursive:true});
+ const candidate={id:"main",name:"OBS 1",managed:true,exe:path.join(target,"obs/main/bin/64bit/obs64.exe"),port:4455,password:"fixture-only",initialized:false};
+ const settings={dataRoot:target,instances:[],candidates:[candidate],encryptionKey:"a".repeat(64)};
+ await new Store(f.bootstrap).write("settings.json","dpapi:"+Buffer.from(JSON.stringify(settings)).toString("base64"));
+ const next=await new SettingsStore().read();expect(next.candidates).toEqual([candidate]);
+ await new Store(f.bootstrap).remove("data-location.json");await new Store(target).remove(ROOT_MARKER);
+ const obs=path.join(target,"obs/main");await mkdir(obs,{recursive:true});await writeFile(path.join(obs,"user.txt"),"keep");
+ await expect(new SettingsStore().read()).rejects.toThrow();expect(await readFile(path.join(obs,"user.txt"),"utf8")).toBe("keep");
+});
