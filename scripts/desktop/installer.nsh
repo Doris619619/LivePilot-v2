@@ -2,13 +2,13 @@
 !include nsDialogs.nsh
 !include LogicLib.nsh
 !ifndef BUILD_UNINSTALLER
-!include StrContains.nsh
 Var DataParent
 Var DataRoot
 Var DataInput
 Var DataPreview
 Var DataExisting
 Var DataError
+Var DataBootstrap
 !define LIVENEST_DATA_LOCATION_HELPER "${__FILEDIR__}\data-location.ps1"
 
 !macro customInit
@@ -21,7 +21,13 @@ Var DataError
 !macro customHeader
 ; 使用 -File 参数调用，不将用户路径拼入 PowerShell 代码。
 Function InspectDataLocation
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Inspect -Bootstrap "$APPDATA\LiveNest" -Result "$PLUGINSDIR\data-result.ini"'
+  ; 数据属于当前 Windows 账号；全用户程序安装也不能改用 ProgramData。
+  SetShellVarContext current
+  StrCpy $DataBootstrap "$APPDATA\LiveNest"
+  ${If} $installMode == "all"
+    SetShellVarContext all
+  ${EndIf}
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Inspect -Bootstrap "$DataBootstrap" -Result "$PLUGINSDIR\data-result.ini"'
   Pop $0
   Pop $1
   ReadINIStr $DataExisting "$PLUGINSDIR\data-result.ini" "location" "root"
@@ -100,7 +106,7 @@ Function ValidateDataLocation
   ${If} $0 == ""
     StrCpy $2 "$2\LiveNest"
   ${EndIf}
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Validate -Bootstrap "$APPDATA\LiveNest" -Target "$DataRoot" -Installation "$2" -Result "$PLUGINSDIR\data-result.ini"'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Validate -Bootstrap "$DataBootstrap" -Target "$DataRoot" -Installation "$2" -Result "$PLUGINSDIR\data-result.ini"'
   Pop $0
   Pop $1
   ${If} $0 != 0
@@ -126,7 +132,7 @@ FunctionEnd
     MessageBox MB_OK|MB_ICONSTOP "请运行交互安装向导选择 LiveNest 数据位置。" /SD IDOK
     Abort
   ${EndIf}
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Persist -Bootstrap "$APPDATA\LiveNest" -Target "$DataRoot" -Installation "$INSTDIR" -Result "$PLUGINSDIR\data-result.ini"'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\data-location.ps1" -Mode Persist -Bootstrap "$DataBootstrap" -Target "$DataRoot" -Installation "$INSTDIR" -Result "$PLUGINSDIR\data-result.ini"'
   Pop $0
   Pop $1
   ${If} $0 != 0
