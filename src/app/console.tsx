@@ -51,8 +51,10 @@ export default function Console() {
       try {
         const result = await api<{ instances: InstanceDescriptor[]; agents?: AgentDescriptor[] }>("/api/instances", { signal: abort.signal });
         if (abort.signal.aborted) return;
-        setInstances(result.instances);
-        setAgents(result.agents);
+        const chosen=new URLSearchParams(window.location.search).get("customer");
+        const visible=chosen?result.agents?.filter(a=>a.owner===chosen):result.agents;
+        setInstances(chosen?result.instances.filter(i=>visible?.some(a=>a.id===i.agentId)):result.instances);
+        setAgents(visible);
         setLoaded(true);
         setError("");
       } catch (e) {

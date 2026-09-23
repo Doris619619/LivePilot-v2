@@ -4,10 +4,12 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { net } from "electron";
 import type { Check } from "../src/shared/desktop";
-import type { Settings } from "./settings";
+import { environment, type Settings } from "./settings";
+import { configureCore } from "../src/core/config";
 import { checkObsNetwork } from "./obs-network";
 /** 每项独立返回修复说明，失败不会清空其他已完成配置。 */
 export async function diagnose(settings: Settings, resources: string): Promise<Check[]> {
+  configureCore(() => environment(settings));
   const checks: Check[] = [{ id: "system", label: "Windows x64", status: process.platform === "win32" && process.arch === "x64" ? "ready" : "error", ...(process.platform !== "win32" || process.arch !== "x64" ? { message: "此安装版需要 Windows x64。" } : {}) }];
   try { await mkdir(settings.dataRoot, { recursive: true }); const probe = path.join(settings.dataRoot, ".write-check-" + randomUUID()); await writeFile(probe, "ok", { flag: "wx" }); await unlink(probe); checks.push({ id: "directory", label: "数据目录", status: "ready" }); }
   catch { checks.push({ id: "directory", label: "数据目录", status: "error", message: "目录不可写，请在设置中选择有权限的文件夹。" }); }

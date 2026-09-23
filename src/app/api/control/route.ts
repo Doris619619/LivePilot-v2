@@ -4,7 +4,8 @@ import { controlSchema } from "@/shared/remote";
 import { after } from "next/server";
 import { z } from "zod";
 import { service } from "@/server/service";
-import { authenticate } from "@/server/access";
+import { authorizeAgent } from "@/server/ownership";
+import { authenticate, requireAdmin } from "@/server/access";
 import { guard, failed } from "@/server/http";
 import { readJson } from "@/server/request-body";
 import { AppError } from "@/server/errors";
@@ -22,11 +23,12 @@ const input = z.discriminatedUnion("action", [
 export async function POST(request: Request) {
   try {
     guard(request, true);
-    const user = await authenticate(request);
+    const user = await authenticate(request); if (!cloudMode()) requireAdmin(user);
     const parsed = input.safeParse(await readJson(request));
     if (!parsed.success) throw new AppError("INPUT", "请选择有效实例、媒体和操作，请求必须包含唯一标识。");
     if (cloudMode()) {
       const { agentId, instanceId, requestId, ...input } = parsed.data;
+      await authorizeAgent(user, target({ agentId, instanceId }).agentId);
       const result = await remoteControl(target({ agentId, instanceId }), user.username, { kind: "control", input: controlSchema.parse(input) }, requestId);
       return Response.json(result, { status: 202, headers: { "Cache-Control": "no-store" } });
     }

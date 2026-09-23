@@ -28,7 +28,7 @@ afterEach(async () => { vi.unstubAllEnvs(); if (path.dirname(root) !== path.reso
 function request(token: string) { return new Request("http://127.0.0.1:3010/api/instances", { headers: { host: "127.0.0.1:3010", cookie: SESSION_COOKIE + "=" + token } }); }
 it("stores only token digests, authenticates members and revokes logout", async () => {
   const result = await login("alice", "test-password-123");
-  expect(await authenticate(request(result.token))).toEqual({ username: "alice" });
+  expect(await authenticate(request(result.token))).toEqual({ username: "alice", role: "customer" });
   const saved = await accessStore().read("access.json");
   expect(JSON.stringify(saved)).not.toContain(result.token);
   expect(JSON.stringify(saved)).toContain(digest(result.token));
@@ -68,13 +68,13 @@ it("does not trust forwarded host to bypass origin checks", async () => {
 it("seeds Do once and accepts its case-sensitive HTTP login", async () => {
   const result = await session(new Request("http://127.0.0.1:3010/api/session", { method: "POST", headers: { host: "127.0.0.1:3010", origin: "http://127.0.0.1:3010", "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify({ username: "Do", password: builtinPassword }) }));
   expect(result.status).toBe(200);
-  expect(await result.json()).toEqual({ user: { username: "Do" } });
+  expect(await result.json()).toEqual({ user: { username: "Do", role: "admin" } });
   const state = (await accessStore().read<ReturnType<typeof emptyAccess>>("access.json"))!;
   expect(state.users.map(u => u.username)).toEqual(["alice", "Do"]);
   expect(JSON.stringify(state)).not.toContain(builtinPassword);
   const revision = state.users[1].revision;
   const next = await login("Do", builtinPassword);
-  expect(await authenticate(request(next.token))).toEqual({ username: "Do" });
+  expect(await authenticate(request(next.token))).toEqual({ username: "Do", role: "admin" });
   const saved = (await accessStore().read<ReturnType<typeof emptyAccess>>("access.json"))!;
   expect(saved.users).toHaveLength(2);
   expect(saved.users[1].revision).toBe(revision);
@@ -95,14 +95,14 @@ it("preserves an existing Do account and never restores the initial password", a
   await accessStore().write("access.json", state);
   await expect(login("Do", builtinPassword)).rejects.toMatchObject({ status: 401 });
   const result = await login("Do", "test-password-123");
-  expect(await authenticate(request(result.token))).toEqual({ username: "Do" });
+  expect(await authenticate(request(result.token))).toEqual({ username: "Do", role: "admin" });
   const saved = (await accessStore().read<ReturnType<typeof emptyAccess>>("access.json"))!;
   expect(saved.users.find(u => u.username === "Do")!.revision).toBe("existing");
 });
 it("initializes an empty installation without a separate member command", async () => {
   await accessStore().write("access.json", emptyAccess());
   const result = await login("Do", builtinPassword);
-  expect(await authenticate(request(result.token))).toEqual({ username: "Do" });
+  expect(await authenticate(request(result.token))).toEqual({ username: "Do", role: "admin" });
 });
 
 /** 真实管理 CLI 与 HTTP 共用账号格式，首次登录前也能停用内置成员。 */
@@ -115,5 +115,5 @@ it("supports listing and disabling Do through the real member CLI before its fir
   execFileSync(process.execPath, [...args, "disable", "Do"], { env, windowsHide: true });
   await expect(login("Do", builtinPassword)).rejects.toMatchObject({ status: 401 });
   const existing = await login("alice", "test-password-123");
-  expect(await authenticate(request(existing.token))).toEqual({ username: "alice" });
+  expect(await authenticate(request(existing.token))).toEqual({ username: "alice", role: "customer" });
 });

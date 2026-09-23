@@ -8,6 +8,12 @@ import { idSchema } from "../src/shared/remote";
 import { DESKTOP_ORIGIN, type DesktopAction, type DesktopState } from "../src/shared/desktop";
 import { SettingsStore, type Settings } from "./settings";
 import { AgentHost } from "./agent-host";
+import { copyDataLocation, writableDirectory } from "./data-location";
+import { configureCore, config } from "../src/core/config";
+import { environment } from "./settings";
+import { ObsProcessManager } from "../src/core/obs/process";
+import { ObsDiscovery, inspectObs } from "./obs-discovery";
+import { checkObsNetwork } from "./obs-network";
 import { diagnose } from "./diagnostics";
 import { assertLocalIdle, initializeObs, newInstance } from "./obs-setup";
 import { Updates } from "./updates";
@@ -18,10 +24,10 @@ import { repairManagedObs } from "./obs-repair";
 import { pairDesktop } from "./pairing";
 export class Manager {
   settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
-  readonly activity = new Activity();
+  readonly activity = new Activity(); readonly discovery = new ObsDiscovery();
   busy = false; message = ""; checks: DesktopState["checks"] = [];
   /** 用户数据与安装资源分离，更新不覆盖素材和 OBS 配置。 */
-  constructor(readonly resources: string, private allowQuit: () => void) {}
+  constructor(readonly resources: string, private allowQuit: () => void, private customerHeaders: () => Record<string, string> = () => ({})) {}
   /** 启动只连接 Agent，不启动推流，失败留在可恢复界面。 */
   async init() {
     this.settings = await this.store.read(); separateCandidates(this.settings); await this.store.write(this.settings); this.busy = true;
@@ -29,7 +35,7 @@ export class Manager {
   }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
-    return { activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
+    return { scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
   }
   /** 核心错误已过滤敏感字段，未知第三方异常使用固定提示。 */
   private error(e: unknown) { return isAppError(e) ? safeError(e) : e instanceof z.ZodError ? "输入无效，请检查填写内容。" : e instanceof Error ? e.message : "操作未完成，请查看帮助并重试。"; }
@@ -80,15 +86,19 @@ export class Manager {
   }
   /** 新邀请可恢复原电脑；只有云端确认结果且本机保存成功后才等待 Agent 上线。 */
   private async pair(invitation: unknown) {
-    await pairDesktop(this.settings, invitation, () => this.store.write(this.settings), (url, init) => net.fetch(url, init));
+    await pairDesktop(this.settings, invitation, () => this.store.write(this.settings), (url, init) => net.fetch(url, { ...init, headers: { ...init.headers, ...this.customerHeaders() } }));
     await this.start();
   }
   /** 全部写操作去重，失败保存配置并显示下一步提示。 */
   async act(action: DesktopAction, input: Record<string, unknown> = {}) {
-    if (action === "web") { await shell.openExternal(DESKTOP_ORIGIN + "/#" + (this.settings.identity ? "device-" + this.settings.identity.agentId : "workspace")); return this.state(); }
+    if (action === "web") { await shell.openExternal(DESKTOP_ORIGIN + "/workspace#" + (this.settings.identity ? (typeof input.id === "string" && this.settings.instances.some(i=>i.id===input.id) ? "instance-"+this.settings.identity.agentId+"-"+input.id : "device-" + this.settings.identity.agentId) : "workspace")); return this.state(); }
+    if(action === "scan-cancel"){this.discovery.cancel();return this.state();}
+    if(action === "scan"){this.discovery.start(input.deep===true,this.settings.instances.map(i=>i.exe));return this.state();}
+    if(action === "firewall"){await shell.openExternal("ms-settings:windowsdefender");return this.state();}
     if (this.busy) throw new Error("上一步仍在处理，请稍候。"); this.busy = true; this.message = ""; this.activity.begin(action);
     try {
       if (action === "check") this.checks = await diagnose(this.settings, this.resources);
+      else if (action === "diagnose-obs") { const item=this.settings.instances.find(i=>i.id===input.id);if(!item)throw new Error("请选择 OBS。");const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new Error("请先完成 OBS 配置。"); await this.pair(input.invitation); }
       else if (action === "start") await this.start();
       else if (action === "repair") await this.repair(input);
@@ -101,16 +111,30 @@ export class Manager {
         Object.assign(item, candidate); await this.store.write(this.settings);
         await this.configure("prepare", { id: item.id });
       }
-      else if (["prepare", "add", "attach", "rename"].includes(action)) await this.configure(action, input);
+      else if (["prepare", "add", "attach", "rename", "import-obs"].includes(action)) await this.configure(action, input);
       else if (action === "open-data") { if (await shell.openPath(this.settings.dataRoot)) throw new Error("无法打开数据目录，请检查文件夹是否存在及访问权限。"); }
       else if (action === "directory") {
-        if (this.settings.instances.length || this.settings.candidates?.length || this.settings.archivedCandidates?.length || this.settings.identity) throw new Error("配置 OBS 后不能直接更换数据目录。");
-        const result = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); if (!result.canceled) { this.settings.dataRoot = path.join(result.filePaths[0], "LiveNest"); await this.store.write(this.settings); }
+        const result = await dialog.showOpenDialog({ title:"选择数据位置（OBS、素材和授权）", properties: ["openDirectory", "createDirectory"] });
+        if(!result.canceled){
+          const target=path.join(result.filePaths[0],"LiveNest");
+          if(path.resolve(target).toLowerCase()===path.resolve(this.settings.dataRoot).toLowerCase()){this.activity.complete();return this.state();}
+          if(!this.settings.instances.length&&!this.settings.candidates?.length&&!this.settings.archivedCandidates?.length&&!this.settings.identity){await writableDirectory(target);this.settings.dataRoot=target;delete this.settings.dataNotice;await this.store.write(this.settings);}
+          else {
+            configureCore(()=>environment(this.settings));
+            for(const item of this.settings.instances){if((await new ObsProcessManager(()=>config(item.id)).inspect()).pid)throw new Error("迁移数据前，请结束直播和录制，并关闭所有 OBS 窗口。原路径保持不变。");}
+            const answer=await dialog.showMessageBox({type:"question",message:"将数据复制到 "+target+"，成功后改用新目录。原数据保留，设备身份和频道无需重新配对。",buttons:["取消","复制并切换"],defaultId:0,cancelId:0});
+            if(answer.response!==1){this.activity.complete();return this.state();}
+            await this.maintenance();await this.agent.stop();
+            try{const next=await copyDataLocation(this.settings,target,stage=>this.activity.progress(stage));await this.store.write(next);this.settings=next;}
+            finally{if(this.settings.paired){this.activity.progress("正在恢复网页连接");await new Promise(r=>setTimeout(r,21000));await this.start();}}
+          }
+        }
       } else if (action === "autostart") app.setLoginItemSettings({ openAtLogin: z.boolean().parse(input.enabled), path: app.getPath("exe"), args: ["--hidden"] });
       else if (action === "update-check") await this.updates.check();
       else if (action === "update-download") await this.updates.download();
       else if (action === "update-install") await this.updates.install(async () => { await this.maintenance(); await this.agent.stop(); }, this.allowQuit);
       else throw new Error("操作不受支持。");
+      if (["prepare","add","import-obs","repair-managed"].includes(action)) this.checks = await diagnose(this.settings, this.resources);
       this.activity.complete();
     } catch (e) { this.message = this.error(e); this.activity.fail(this.message); throw new Error(this.message); } finally { this.busy = false; }
     return this.state();
@@ -134,6 +158,16 @@ export class Manager {
   /** 仅在维护窗口改变实例；取消文件选择不留下维护锁。 */
   private async configure(action: string, input: Record<string, unknown>) {
     if (this.settings.inventoryPending) await this.start();
+    let sourceExe:string|undefined;
+    let instanceName:string|undefined;
+    if(action === "import-obs" || action === "add") {
+      instanceName=z.string().trim().min(1).max(80).parse(input.name || "OBS " + (this.settings.instances.length+1));
+      if(action === "import-obs") {
+        let selected=typeof input.exe === "string" ? input.exe : undefined;
+        if(!selected){const result=await dialog.showOpenDialog({title:"选择已有 OBS（将复制为独立实例）",properties:["openFile"],filters:[{name:"OBS obs64.exe",extensions:["exe"]}]});if(result.canceled)return;selected=result.filePaths[0];}
+        const candidate=await inspectObs(selected);if(candidate.running)throw new Error("请先关闭来源 OBS 再复制。原程序和配置将保留。");sourceExe=candidate.exe;
+      }
+    }
     let external: { exe: string; port: number; password: string } | undefined;
     if (action === "attach") {
       const value = z.object({ port: z.number().int().min(1024).max(65535), password: z.string().min(1).max(256) }).parse(input);
@@ -150,7 +184,7 @@ export class Manager {
         let item = [...this.settings.instances, ...(this.settings.candidates || [])].find(i => i.id === input.id)
           || this.settings.candidates?.[0] || (action === "prepare" ? this.settings.instances[0] : undefined);
         if (input.id && ![...this.settings.instances, ...(this.settings.candidates || [])].some(i => i.id === input.id)) throw new Error("OBS 不存在。");
-        if (external && this.settings.candidates?.length) throw new Error("请先修正或撤销现有待配置 OBS，再接入新的 OBS。");
+        if ((external || sourceExe) && this.settings.candidates?.length) throw new Error("请先修正或撤销现有待配置 OBS，再接入新的 OBS。");
         if (!item && !this.settings.instances.some(i => i.id === "main")) {
           item = this.settings.archivedCandidates?.find(i => i.id === "main");
           if (item && !external) {
@@ -158,10 +192,12 @@ export class Manager {
             (this.settings.candidates ||= []).push(item);
           }
         }
-        if (external || !item) {
+        if (sourceExe || external || !item) {
           if (this.settings.instances.length + (this.settings.candidates?.length || 0) >= 64) throw new Error("同机最多 64 个实例。");
           item = await newInstance({ ...this.settings, instances: all });
           if (external) Object.assign(item, { managed: false, ...external });
+          if(sourceExe)item.sourceExe=sourceExe;
+          if(instanceName)item.name=instanceName;
           (this.settings.candidates ||= []).push(item); await this.store.write(this.settings);
         }
         const candidateSettings = { ...this.settings, instances: [...this.settings.instances.filter(i => i.id !== item.id), item] };

@@ -25,7 +25,7 @@ try {
   // 与服务端使用相同的首次追加规则，允许首次登录前直接禁用或重置内置成员。
   const { username: builtinName, salt, hash } = JSON.parse(await readFile(new URL("../src/server/builtin-member.json", import.meta.url), "utf8"));
   if (!state.users.some(user => user.username === builtinName)) {
-    state.users.push({ username: builtinName, salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });
+    state.users.push({ username: builtinName, role: "admin", salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });
     const temp = file + "." + randomBytes(8).toString("hex") + ".tmp";
     await writeFile(temp, JSON.stringify(state), { mode: 0o600 }); await rename(temp, file);
   }
@@ -43,11 +43,11 @@ try {
       /** 隐藏密码回显，结束后恢复正常终端输出。 */
       async function secret(label) { process.stdout.write(label); muted = true; const value = await rl.question(""); muted = false; process.stdout.write("\n"); return value; }
       let password, confirm;
-      try { password = await secret("密码（12–256 位）："); confirm = await secret("再次输入："); } finally { rl.close(); }
-      if (password.length < 12 || password.length > 256 || password !== confirm) throw new Error("密码长度不符或两次输入不一致");
+      try { password = await secret("密码（8–256 位）："); confirm = await secret("再次输入："); } finally { rl.close(); }
+      if (password.length < 8 || password.length > 256 || password !== confirm) throw new Error("密码长度不符或两次输入不一致");
       const salt = randomBytes(16).toString("hex");
       const hash = (await promisify(derive)(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })).toString("hex");
-      if (!user) { user = { username }; state.users.push(user); }
+      if (!user) { user = { username, role: "customer" }; state.users.push(user); }
       Object.assign(user, { salt, hash, disabled: false });
     }
     user.revision = randomBytes(16).toString("hex");

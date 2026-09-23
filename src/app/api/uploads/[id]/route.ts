@@ -1,7 +1,8 @@
 /** 上传续传、查询与取消；每次请求都验证成员和实例归属。 */
 import { cloudMode, queryTarget, uploadRpc } from "@/server/remote";
 import { relayChunk } from "@/cloud/relay";
-import { authenticate } from "@/server/access";
+import { authorizeAgent } from "@/server/ownership";
+import { authenticate, requireAdmin } from "@/server/access";
 import { guard, failed } from "@/server/http";
 import { uploadStatus, uploadChunk, cancelUpload } from "@/server/uploads";
 import { AppError } from "@/server/errors";
@@ -10,7 +11,7 @@ export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
 /** 验证请求后提取固定上传身份，禁止浏览器传入磁盘路径。 */
 async function identity(request: Request, context: Context, mutation = false) {
-  guard(request, mutation); const actor = (await authenticate(request)).username;
+  guard(request, mutation); const user = await authenticate(request); const actor = user.username; if (cloudMode()) await authorizeAgent(user, queryTarget(request).agentId); else requireAdmin(user);
   return { actor, id: (await context.params).id, instanceId: new URL(request.url).searchParams.get("instanceId") || "" };
 }
 /** 返回已确认字节，未登录不暴露素材名称。 */

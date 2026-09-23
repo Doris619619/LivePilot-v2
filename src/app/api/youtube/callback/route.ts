@@ -1,7 +1,7 @@
 /** 将 OAuth 回调交还发起实例；state、Cookie、磁盘事务三者必须匹配。 */
 import { cloudMode } from "@/server/remote";
 import { finishRemoteOAuth, oauthCookie } from "@/cloud/oauth";
-import { authenticate } from "@/server/access";
+import { authenticate, requireAdmin } from "@/server/access";
 import { audit } from "@/server/audit";
 import { NextRequest, NextResponse } from "next/server";
 import { guard } from "@/server/http";
@@ -15,11 +15,11 @@ export async function GET(request: NextRequest) {
   let id: string | undefined;
   try {
     guard(request);
-    const user = await authenticate(request);
+    const user = await authenticate(request); if (!cloudMode()) requireAdmin(user);
     const oauthState = request.nextUrl.searchParams.get("state") || "";
     if (cloudMode()) {
       const cookieName = oauthCookie(oauthState);
-      const destination = await finishRemoteOAuth(oauthState, request.cookies.get(cookieName)?.value || "", user.username, request.nextUrl.searchParams.get("code") || "");
+      const destination = await finishRemoteOAuth(oauthState, request.cookies.get(cookieName)?.value || "", user.username, request.nextUrl.searchParams.get("code") || "", user);
       const response = NextResponse.redirect(config().origin + "/?oauth=connected#instance-" + destination.agentId + "-" + destination.instanceId, 303);
       response.cookies.set(cookieName, "", { path: "/api/youtube", maxAge: 0, secure: true, httpOnly: true, sameSite: "lax" }); return response;
     }

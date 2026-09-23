@@ -4,8 +4,9 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { Store } from "../src/core/storage";
 import type { DesktopInstance } from "../src/shared/desktop";
+import { defaultDataLocation } from "./data-location";
 import { protectWindows } from "./windows-credentials";
-export type Settings = { dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
+export type Settings = { dataNotice?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
 /** 原子替换密文；解密失败保留原文件，不重置身份。 */
 export class SettingsStore {
   private store = new Store(app.getPath("userData"));
@@ -13,7 +14,7 @@ export class SettingsStore {
   /** 首次安装建立独立数据目录及随机加密密钥。 */
   async read(): Promise<Settings> {
     const encrypted = await this.store.read<string>("settings.json");
-    if (!encrypted) return { dataRoot: !app.isPackaged && process.env.LIVENEST_TEST_DATA ? path.join(app.getPath("userData"), "data") : path.join(process.env.LOCALAPPDATA || app.getPath("appData"), "LiveNest"), instances: [], encryptionKey: randomBytes(32).toString("hex") };
+    if (!encrypted) return { ...(!app.isPackaged && process.env.LIVENEST_TEST_DATA ? {dataRoot:path.join(app.getPath("userData"), "data")} : await defaultDataLocation(path.join(process.env.LOCALAPPDATA || app.getPath("appData"), "LiveNest"))), instances: [], encryptionKey: randomBytes(32).toString("hex") };
     try { return JSON.parse(encrypted.startsWith("dpapi:") ? (await protectWindows(Buffer.from(encrypted.slice(6), "base64"), false)).toString("utf8") : safeStorage.decryptString(Buffer.from(encrypted, "base64"))) as Settings; }
     catch { throw new Error("无法解密本机配置，请使用原 Windows 账户打开；不要删除配置文件。"); }
   }

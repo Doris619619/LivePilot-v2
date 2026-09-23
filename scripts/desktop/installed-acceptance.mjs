@@ -22,11 +22,11 @@ try {
   if (!page) throw new Error("Local UI missing");
   await page.getByRole("heading", { name: "登录 LiveNest" }).waitFor();
   const exposed = await page.evaluate(() => typeof window.require !== "undefined" || typeof window.process !== "undefined"); if (exposed) throw new Error("Node leaked into Renderer");
-  await page.getByLabel("账号", { exact: true }).fill("Do"); await page.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await page.getByRole("button", { name: "登录", exact: true }).click();
+  await page.getByLabel("账号", { exact: true }).fill(process.env.LIVENEST_TEST_USERNAME || "Liang"); await page.getByLabel("密码", { exact: true }).fill(process.env.LIVENEST_TEST_PASSWORD); await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("heading", { name: "设备配置", exact: true }).waitFor(); const readyDeadline = Date.now() + 30_000;
   while ((await page.evaluate(() => window.liveNest.state())).busy) { if (Date.now() > readyDeadline) throw new Error("Startup checks timed out"); await new Promise(resolve => setTimeout(resolve, 200)); }
   const state = await page.evaluate(() => window.liveNest.state()); if (state.paired || state.agentRunning || state.instances.length) throw new Error("Installed acceptance requires fresh unpaired state");
-  if (state.dataRoot.toLowerCase() !== path.join(process.env.LOCALAPPDATA, "LiveNest").toLowerCase()) throw new Error("Unexpected default data directory");
+  if (!path.isAbsolute(state.dataRoot)) throw new Error("Default data path must be absolute");
   if (state.checks.length < 7 || state.checks.some(c => c.id !== "cloud" && c.status !== "ready")) throw new Error("Installed resources check failed");
   // 主进程检查完成后，继续等待两秒轮询将结果渲染到真实窗口，避免截到旧状态。
   await page.getByText("正常", { exact: true }).first().waitFor();
