@@ -1,0 +1,24 @@
+{
+  "version": "0.1.2",
+  "commit": "6a0e55547c7e74bd1197413be0198f5b20258dd6",
+  "workingTree": "clean",
+  "mode": "package",
+  "createdAt": "2026-09-23T06:40:35.694Z",
+  "artifacts": [
+    {
+      "name": "latest.yml",
+      "size": 353,
+      "sha256": "abde675eba4881d2524be55f7d07a9a2a3a2a87440410f71cdf251abfbb7f020"
+    },
+    {
+      "name": "LiveNest_0.1.2_x64-setup.exe",
+      "size": 396883310,
+      "sha256": "f5279705627be54e7ce61f607cc2592bbd4f0b83d22063122b92b72dd1e18d60"
+    },
+    {
+      "name": "LiveNest_0.1.2_x64-setup.exe.blockmap",
+      "size": 412236,
+      "sha256": "e4ef4982f4f710fef9211a202f4ca732d600a2e82860971740388ef79fbfd80d"
+    }
+  ]
+}

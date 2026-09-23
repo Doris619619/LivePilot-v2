@@ -74,7 +74,7 @@ OBS 自身日志保留在对应 portable OBS 内，仍位于根目录下。AppDa
 - Manager 测试覆盖运行中归档 OBS 阻止迁移、目标冲突前置拒绝、复制／提交失败恢复旧位置、已切换后 Agent 恢复失败保留维护状态。
 - `desktop:renderer` 和静态 UI 验收通过：首次创建、连续新增、高级折叠、目标候选重试、设置按钮、800 px 无横向溢出。已有进度／重试／重登录／更新反馈脚本通过；素材与账号为合成状态。
 - 真实 Windows OBS 32.2.2：顺序创建 3 个独立实例，端口 15455／15456／15457，分别通过 WebSocket 与标准源验证；OBS 1 自定义场景保持，合成授权文件不变，三个实例均未推流、未录制。最终脚本退出码 0，三个测试进程已清理。[原始结果](evidence/managed-obs-20260923.json)。
-- NSIS 完整编译及 ASAR／安装资源、Node 版本、OBS ZIP 摘要和 Electron fuse 检查已通过；最终提交的重建与产物摘要完成后补录。
+- `npm.cmd run desktop:build` 从干净提交 `6a0e555` 完整通过：Renderer、Electron、NSIS、ASAR 隔离、Node 版本、OBS ZIP 摘要、Electron fuse。测试安装包 `LiveNest_0.1.2_x64-setup.exe`，396,883,310 字节，SHA-256 `f5279705627be54e7ce61f607cc2592bbd4f0b83d22063122b92b72dd1e18d60`。[构建证据](evidence/build-20260923.json)。版本沿用 0.1.2，仅为本地验收产物，未发布；后续提交只补文档和证据，不改变包内代码。
 
 首次构建曾因 node_modules 联接超出 Turbopack 根目录失败，改为工作区独立依赖后完整 verify 通过；NSIS 卸载器的未引用安装函数警告，以及插件注册之前编译自定义函数的时序和重复包含问题也已修正，完整 NSIS 编译通过。首次真实 OBS 检查成功但隐藏窗口未优雅退出，清理逻辑限定到已确认无输出且路径归属精确匹配的测试 PID 后，完整重跑通过。以上测试清理不改变生产退出／更新策略。
 
@@ -83,3 +83,48 @@ OBS 自身日志保留在对应 portable OBS 内，仍位于根目录下。AppDa
 ![数据位置设置，合成数据](screenshots/data-obs/data-location-synthetic.png)
 
 仍待真人验证：干净 Windows 双路径向导、真实安装／覆盖升级／卸载／重装保留；跨盘迁移实际 OBS 素材与授权恢复；已配对生产设备追加 inventory；真实 Google OAuth 与直播音画。单元、合成 UI、本机真实 OBS 检查不替代这些项目。
+
+## 实际修改文件清单
+
+以下 38 个文件相对审计基准发生变化，含测试与可复核证据。
+
+```text
+README.md
+desktop/app/obs-picker.tsx
+desktop/app/page.tsx
+desktop/app/settings-panel.tsx
+docs/desktop/evidence/build-20260923.json
+docs/desktop/evidence/managed-obs-20260923.json
+docs/desktop/screenshots/data-obs/data-location-synthetic.png
+docs/desktop/screenshots/data-obs/first-obs-synthetic.png
+docs/desktop/screenshots/data-obs/three-obs-narrow-synthetic.png
+docs/desktop/screenshots/data-obs/three-obs-synthetic.png
+docs/desktop/本地数据与独立OBS.md
+docs/desktop/验证记录.md
+docs/客户权限与OBS接入.md
+docs/工程协作规范.md
+docs/桌面安装与发布.md
+docs/桌面配置与网页协作.md
+electron/data-location.ts
+electron/data-root.ts
+electron/diagnostics.ts
+electron/main.ts
+electron/manager.ts
+electron/obs-setup.ts
+electron/settings.ts
+scripts/desktop/acceptance.mjs
+scripts/desktop/data-location.ps1
+scripts/desktop/data-obs-ui-acceptance.mjs
+scripts/desktop/feedback-acceptance.mjs
+scripts/desktop/installer.nsh
+scripts/desktop/managed-obs-acceptance.ts
+scripts/desktop/recovery-acceptance.mjs
+src/shared/desktop.ts
+tests/data-location.test.ts
+tests/data-migration.test.ts
+tests/desktop-candidates.test.ts
+tests/desktop-data-migration.test.ts
+tests/desktop-data-root.test.ts
+tests/desktop-installer-location.test.ts
+tests/desktop-obs-files.test.ts
+```
