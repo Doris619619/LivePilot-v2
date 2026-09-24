@@ -1,14 +1,6 @@
 ﻿# 文件用途：安装器数据位置校验与非敏感定位记录；不读取或复制直播素材。
 param([ValidateSet('Inspect','Validate','Persist')][string]$Mode, [string]$Bootstrap, [string]$Target, [string]$Installation, [string]$Result)
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Security
-Add-Type -TypeDefinition @"
-using System; using System.Text; using System.Runtime.InteropServices;
-public static class LiveNestNativePath {
- [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
- public static extern uint GetLongPathName(string input, StringBuilder output, uint size);
-}
-"@
 $script:PendingSelection = $false
 # 将结果写为 UTF-16 INI，避免 NSIS 管道对中文路径的编码差异。
 function ResultFile([string]$Root, [string]$ErrorText = '') {
@@ -59,6 +51,16 @@ function ExistingRoot {
   return ''
 }
 try {
+  # NSIS 的插件目录含原生 System.dll；不能让 Add-Type 将其当作 .NET 引用。
+  [Environment]::CurrentDirectory = $PSHOME
+  Add-Type -AssemblyName System.Security
+  Add-Type -TypeDefinition @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public static class LiveNestNativePath {
+ [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+ public static extern uint GetLongPathName(string input, StringBuilder output, uint size);
+}
+"@
   $existing = ExistingRoot
   if ($Mode -eq 'Inspect') { ResultFile $existing; exit 0 }
   $root = Ordinary $Target; $installed = Ordinary $Installation

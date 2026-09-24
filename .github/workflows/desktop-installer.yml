@@ -1,0 +1,18 @@
+# 文件用途：在一次性 Windows 用户中验证真实安装器，避免只通过编译却无法安装的版本合并。
+name: Windows installer
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - run: npm ci
+      - run: npm run desktop:build
+      - run: node scripts/desktop/installer-smoke.mjs
