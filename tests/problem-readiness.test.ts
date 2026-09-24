@@ -21,6 +21,7 @@ it("separates preparation and stale status by instance", () => {
   const now = Date.now(); const item = { id: "main", name: "OBS 1", managed: true, initialized: true, port: 4455, exe: "test" };
   const snapshot = { instance: { id: "main", name: "OBS 1" }, observedAt: now, dashboard };
   expect(obsReadiness(item, undefined, snapshot, now)).toMatchObject({ ready: true, label: "准备完成" });
+  expect(obsReadiness({ ...item, id: "second" }, { id: "network-main", instanceId: "main", label: "OBS 1", status: "ready", checkedAt: now, controlReady: true }, snapshot, now)).toMatchObject({ ready: false, control: false, channel: false, media: false });
   expect(obsReadiness({ ...item, id: "second" }, undefined, { ...snapshot, dashboard: { ...dashboard, youtube: { connected: false } } }, now).channel).toBe(false);
   expect(obsReadiness(item, undefined, snapshot, now + 21_000)).toMatchObject({ ready: false, label: "待检查" });
   expect(blocksStart(makeProblem("CANCELLED", "停止等待，任务结果未确认", { outcome: "unknown" }))).toBe(true);

@@ -57,3 +57,19 @@ it("migration is idempotent, revokes only demoted sessions and preserves passwor
   expect((await authenticate(request())).role).toBe("admin");
   expect((await login("Do", "synthetic-password", true)).user.role).toBe("customer");
 });
+it("refuses role migration without an enabled U administrator and preserves all accounts", async () => {
+  const before = (await accessStore().read<ReturnType<typeof emptyAccess>>("access.json"))!;
+  before.users.find(user => user.username === "UAdmin")!.disabled = true;
+  await accessStore().write("access.json", before);
+  const envFile = path.join(root, "empty.env"); await writeFile(envFile, "");
+  expect(() => execFileSync(process.execPath, ["scripts/migrate-account-roles.mjs"], { env: { ...process.env, LIVEPILOT_ENV_FILE: envFile }, stdio: "pipe", windowsHide: true })).toThrow();
+  expect(await accessStore().read("access.json")).toEqual(before);
+});
+it("serializes duplicate customer creation without losing the winning account", async () => {
+  const body = { action: "create", username: "Concurrent", password: "new-password" };
+  const replies = await Promise.all([POST(request(body)), POST(request(body))]);
+  expect(replies.map(reply => reply.status).sort()).toEqual([200, 409]);
+  const state = (await accessStore().read<ReturnType<typeof emptyAccess>>("access.json"))!;
+  expect(state.users.filter(user => user.username === "Concurrent")).toHaveLength(1);
+  expect((await login("Concurrent", "new-password", true)).user.role).toBe("customer");
+});

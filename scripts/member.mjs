@@ -41,8 +41,8 @@ try {
       if (password.length < 8 || password.length > 256 || password !== confirm) throw new Error("密码长度不符或两次输入不一致");
       const salt = randomBytes(16).toString("hex");
       const hash = (await promisify(derive)(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 })).toString("hex");
-      if (!user) { user = { username, role: "customer" }; state.users.push(user); }
-      Object.assign(user, { salt, hash, disabled: false });
+      if (!user) { user = { username, role: "customer", disabled: false }; state.users.push(user); }
+      Object.assign(user, { salt, hash });
     }
     user.revision = randomBytes(16).toString("hex");
     state.sessions = Object.fromEntries(Object.entries(state.sessions).filter(([, s]) => s.username !== username));
