@@ -64,3 +64,14 @@
   .admin-assignment-row { grid-template-columns: minmax(0,1fr) 90px; gap: 12px; padding: 16px 0; }
   .admin-assignment-device { grid-column: 1 / -1; }
 }
+
+/* 客户列表与独立密码表单，避免在密集设备表格里暴露密码输入。 */
+.account-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 420px); gap: 40px; margin-top: 32px; }
+.account-list { list-style: none; padding: 0; }
+.account-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--border-color, #e2e7ef); }
+.account-list li > div { display: flex; align-items: center; gap: 12px; overflow-wrap: anywhere; }
+.account-form { display: flex; flex-direction: column; gap: 18px; padding: 24px; border: 1px solid var(--border-color, #e2e7ef); border-radius: 12px; align-self: start; }
+.account-form h2 { font-size: 19px; }
+.account-form input { width: 100%; min-height: 44px; }
+.account-form [aria-invalid=true] { border-color: var(--danger, #b42318); }
+@media (max-width: 850px) { .account-workspace { grid-template-columns: 1fr; gap: 24px; } .account-form { grid-row: 1; } }

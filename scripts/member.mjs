@@ -22,17 +22,11 @@ try {
   await handle.writeFile(String(process.pid));
   let state;
   try { state = JSON.parse(await readFile(file, "utf8")); } catch (e) { if (e.code !== "ENOENT") throw e; state = { users: [], sessions: {}, attempts: {} }; }
-  // 与服务端使用相同的首次追加规则，允许首次登录前直接禁用或重置内置成员。
-  const { username: builtinName, salt, hash } = JSON.parse(await readFile(new URL("../src/server/builtin-member.json", import.meta.url), "utf8"));
-  if (!state.users.some(user => user.username === builtinName)) {
-    state.users.push({ username: builtinName, role: "admin", salt, hash, revision: randomBytes(16).toString("hex"), disabled: false });
-    const temp = file + "." + randomBytes(8).toString("hex") + ".tmp";
-    await writeFile(temp, JSON.stringify(state), { mode: 0o600 }); await rename(temp, file);
-  }
   if (action === "list") console.log(state.users.map(u => u.username + (u.disabled ? "（已禁用）" : "（启用）")).join("\n") || "尚无成员");
   else {
     let user = state.users.find(u => u.username === username);
     if (action === "create" && user) throw new Error("账号已存在");
+    if (action === "create" && username.startsWith("U")) throw new Error("U 开头的管理员请使用受控初始化流程创建。");
     if (action !== "create" && !user) throw new Error("账号不存在");
     if (action === "disable") user.disabled = true;
     else {

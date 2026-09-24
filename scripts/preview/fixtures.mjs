@@ -24,7 +24,7 @@ async function json(filename, value) { await mkdir(path.dirname(filename), { rec
 /** 初始化仅用于本地的账号；这些合成密码与线上账号无关。 */
 export async function seed(root) {
   const salt = randomBytes(16).toString('hex'); const hash = scryptSync(password, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 }).toString('hex');
-  await json(path.join(root, 'access/access.json'), { users: [['Do', 'admin'], ['ULiang', 'admin'], ['UDo', 'admin'], ['Liang', 'customer'], ['Demo', 'customer'], ['Kai', 'customer']].map(([username, role]) => ({ username, role, salt, hash, revision: 'local-preview', disabled: false })), sessions: {}, attempts: {} });
+  await json(path.join(root, 'access/access.json'), { users: [['Do', 'customer'], ['ULiang', 'admin'], ['UDo', 'admin'], ['Liang', 'customer'], ['Demo', 'customer'], ['Kai', 'customer']].map(([username, role]) => ({ username, role, salt, hash, revision: 'local-preview', disabled: false })), sessions: {}, attempts: {} });
   await json(path.join(root, 'cloud/agents.json'), { agents: agents.map(a => ({ ...a, revoked: false, session: 'preview', tokenHash: randomBytes(32).toString('hex') })) });
   await refresh(root);
 }
