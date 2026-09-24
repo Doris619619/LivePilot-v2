@@ -17,6 +17,11 @@ type Guidance = { title: string; steps: string[]; actions: ProblemAction[] };
 const obsSettings = "在对应直播电脑的 OBS 中打开“工具 → WebSocket 服务器设置”，核对启用状态、端口和密码，再重新检查。";
 const network = "在直播电脑检查系统网络与代理是否能访问该服务；网页能打开不代表直播电脑能访问。处理后重新查询。";
 const catalog: Record<string, Guidance> = {
+  AUTH: {title:"需要重新登录",steps:["使用客户账号重新登录。登录状态变化不会停止 OBS。"],actions:["login"]},
+  FORBIDDEN: {title:"当前账号无权访问这台电脑",steps:["核对当前登录账号。仍绑定其他客户的设备需要使用对应客户账号，或由管理员确认归属。"],actions:["login","refresh"]},
+  AGENT_DELETED: {title:"设备已删除，需要重新配对",steps:["在网页添加直播电脑并生成新配对码，然后在本机粘贴连接。"],actions:["refresh"]},
+  DESKTOP_IPC: {title:"本机状态暂未读取",steps:["点击重新读取；仍失败时正常退出并重新打开客户端。不能据此判断云端或 OBS 故障。"],actions:["refresh","help"]},
+  DESKTOP_BUSY: {title:"正在等待当前操作结束",steps:["当前操作结束后重新读取，程序不会强行停止 OBS。"],actions:["refresh"]},
   CONFIG: {title:"配置尚未完成",steps:["在对应直播电脑检查客户端的数据位置和 OBS 连接设置。频道应用配置缺失时联系管理员；不要在安装目录修改源码或密钥。"],actions:["refresh","help","support"]},
   PAIR_CODE: {title:"配对码不可用",steps:["在网页为当前客户生成新配对码，回到原电脑粘贴；保留原设备身份。"],actions:["help"]},
   PAIR_IDENTITY: {title:"原电脑身份未确认",steps:["请使用原电脑的原 Windows 账户打开客户端。原身份仍无法确认时联系管理员，保留数据目录。"],actions:["support"]},
@@ -34,8 +39,6 @@ const catalog: Record<string, Guidance> = {
   YOUTUBE_AUTH: { title: "频道授权已失效", steps: ["重新授权原频道，然后重新查询。"], actions: ["authorize", "help"] },
   GOOGLE_CONFIG: { title: "频道连接配置需要管理员处理", steps: ["联系管理员核对 Google 应用配置。重新输入客户密码不能解决此问题。"], actions: ["support"] },
   YOUTUBE_QUOTA: { title: "YouTube 请求额度暂不可用", steps: ["等待额度恢复；持续失败请联系管理员核对配额，不需要反复授权。"], actions: ["refresh", "support"] },
-  AUTH: { title: "客户登录已失效", steps: ["重新登录客户账号；已有直播不会因此停止。"], actions: ["login"] },
-  FORBIDDEN: { title: "当前账号没有操作权限", steps: ["联系管理员确认这台电脑的客户分配，处理后刷新。"], actions: ["refresh", "support"] },
   STORAGE_PERMISSION: { title: "本机文件访问被拒绝", steps: ["在直播电脑使用原 Windows 账户，检查数据目录的读写权限；保留原文件。"], actions: ["refresh", "support"] },
   STORAGE_SPACE: { title: "存储空间不足", steps: ["在对应电脑检查数据盘剩余空间；整理与本应用无关的文件后重试，不要删除授权或直播状态。"], actions: ["refresh", "support"] },
   STORAGE_MISSING: { title: "所需文件暂不可访问", steps: ["连接原数据盘并核对对应目录是否存在；不要以新目录代替原身份。"], actions: ["refresh", "support"] },
@@ -64,7 +67,7 @@ export function guidance(problem: Pick<Problem, "code" | "domain" | "outcome">):
 export function makeProblem(code: string, message: string, meta: ProblemMeta = {}): Problem {
   meta = Object.fromEntries(Object.entries(meta).filter(([, value]) => value !== undefined));
   const domain = meta.domain || (/^OBS/.test(code) ? "obs" : /^(GOOGLE|YOUTUBE|CHANNEL|OAUTH)/.test(code) ? "youtube" : /^(MEDIA|UPLOAD|HASH|OFFSET)/.test(code) ? "media" : /^(STORAGE|HOST_BUSY|DATA|RESULT_SAVE|SNAPSHOT)/.test(code) ? "storage" : /^(AUTH|LOGIN|FORBIDDEN|OWNER)/.test(code) ? "account" : /^UPDATE/.test(code) ? "update" : /^(AGENT|CLOUD|PAIR)/.test(code) ? "device" : "operation");
-  const base = { version: 1 as const, source: "core" as const, code, domain, target: meta.target || {}, severity: ["CANCELLED","OBS_NOT_RUNNING"].includes(code) ? "info" as const : "error" as const, stage: meta.stage || "读取或执行操作", outcome: meta.outcome || "unknown" as const, observedAt: Date.now(), message: message.slice(0, 500), ...meta };
+  const base = { version: 1 as const, source: "core" as const, code, domain, target: meta.target || {}, severity: ["CANCELLED","OBS_NOT_RUNNING","DESKTOP_BUSY","AGENT_DELETED"].includes(code) ? "info" as const : "error" as const, stage: meta.stage || "读取或执行操作", outcome: meta.outcome || "unknown" as const, observedAt: Date.now(), message: message.slice(0, 500), ...meta };
   return { ...base, actions: guidance(base).actions };
 }
 /** 摘要仅使用公开字段，不复制表单、请求体或系统路径。 */

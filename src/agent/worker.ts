@@ -12,7 +12,7 @@ export class Worker {
   private accepting: Promise<unknown> = Promise.resolve();
   private running = new Map<string, Promise<void>>();
   /** 注入执行器便于验证网络断开时任务仍可独立完成。 */
-  constructor(readonly store: Store, private execute: (task: RemoteTask) => Promise<unknown>) {}
+  constructor(readonly store: Store, private execute: (task: RemoteTask) => Promise<unknown>, private agentId?: string) {}
   /** 加密内部日志，OAuth code/cookie 不以明文持久化。 */
   private async write(entry: Entry) { await this.store.write(entry.task.id + ".json", seal(entry)); this.problems.delete(entry.task.id); }
   /** 只解密属于本机的协议记录。 */
@@ -48,7 +48,7 @@ export class Worker {
     const reports: TaskReport[] = [];
     const files = await readdir(this.store.dir).catch(e => { if (e.code === "ENOENT") return []; throw e; });
     for (const name of files.filter(n => /^[a-f0-9-]{36}\.json$/.test(n))) {
-      const entry = await this.read(name.slice(0, -5)); if (!entry || entry.acknowledged) continue;
+      const entry = await this.read(name.slice(0, -5)); if (!entry || entry.acknowledged || (this.agentId && entry.task.agentId !== this.agentId)) continue;
       if (entry.owner !== this.owner && ["accepted", "running"].includes(entry.report.status)) { entry.report = { id: entry.task.id, status: "interrupted", error: "Agent 曾重启，请核对 OBS 和 YouTube 后恢复。", httpStatus: 409 }; await this.write(entry); }
       reports.push(entry.report); if (reports.length >= 32) break;
     }

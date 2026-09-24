@@ -7,7 +7,7 @@ import { cloudStore, transaction } from "./store";
 import { releaseAgentChannels } from "./bindings";
 import { idSchema, OFFLINE_MS, PROTOCOL, type AgentDescriptor, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
-type Agent = { owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
+type Agent = { deleted?: boolean; owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
 type Registry = { agents: Agent[] };
 import type { Problem } from "../shared/problems";
 type Heartbeat = { problems?: Problem[]; at: number; session: string; snapshots: AgentSnapshot[] };
@@ -49,6 +49,7 @@ export async function pairAgent(id: string, code: string, token: string, current
         current = known[0] || current;
       }
     }
+    if (agent.deleted || current?.deleted) throw new AppError("AGENT_DELETED", "设备已删除，请在新版客户端重新检查后使用新配对码。", 409);
     // 配对 HTTP 入口必传客户；旧内部工具不授予客户归属。恢复也不得跨客户迁移。
     if (customer && (agent.owner !== customer || (current?.tokenHash && current.owner !== customer))) throw new AppError("FORBIDDEN", "配对码和原电脑必须属于当前客户；旧电脑请先由管理员分配。", 403);
     // 新邀请只授权这次连接；持有旧凭据的客户端继续使用原设备，单次写入完成消费与恢复。
@@ -156,11 +157,15 @@ export async function assertAgentActive(id: string) {
   if (!registry?.agents.some(a => a.id === id && !a.revoked)) throw new AppError("AGENT_AUTH", "设备已移除，请从网页恢复配对。", 401);
 }
 /** 撤销与派发互斥并释放频道归属；已送达任务、本机授权与文件保留待核对。 */
-export async function revokeAgent(id: string) {
+export async function revokeAgent(id: string, deletion?: { owner?: string; token?: string }) {
   const local = agentStore(id); const store = cloudStore(); await transaction(local, async () => {
     await transaction(store, async () => {
       const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
       if (!agent) throw new AppError("AGENT", "设备不存在。", 404);
+      if (deletion) {
+        if ((deletion.owner && agent.owner !== deletion.owner) || (deletion.token && !matches(deletion.token, agent.tokenHash))) throw new AppError("FORBIDDEN", "设备归属已变化，请重新读取后确认。", 403);
+        agent.deleted = true;
+      }
       delete agent.pairingHash; delete agent.pairingExpires; delete agent.pairingReceiptHash;
       agent.revoked = true; await store.write("agents.json", registry);
       await releaseAgentChannels(store, id);
@@ -178,3 +183,17 @@ export async function setAgentOwner(id: string, owner: string, onlyUnpaired = fa
 
 /** 独立于快照的内存健康回报，按原实例过滤。 */
 export async function problemsFor(agentId: string, instanceId: string) { return ((await agentStore(agentId).read<Heartbeat>("heartbeat.json"))?.problems || []).filter(p=>!p.target.instanceId || p.target.instanceId===instanceId); }
+
+/** 用户删除不可复活旧身份；墓碑只用于拒绝旧凭据，不再展示给客户。 */
+export async function deleteAgent(id: string, owner?: string, token?: string) { await revokeAgent(id, { owner, token }); }
+/** 只有持有原凭据的桌面能确认撤销；网络失败或错误凭据不代表设备已删除。 */
+export async function inspectBinding(id: string, token: string, owner: string): Promise<"active" | "deleted"> {
+  const registry = await cloudStore().read<Registry>("agents.json");
+  if (!registry) throw new AppError("CLOUD_UNAVAILABLE", "设备目录暂不可读取，原绑定已保留。", 503);
+  const agent = registry.agents.find(a => a.id === id);
+  if (!agent) return "deleted";
+  if (!matches(token, agent.tokenHash)) throw new AppError("PAIR_IDENTITY", "本机设备凭据无法核对，请保留配置并联系管理员。", 403);
+  if (agent.revoked || agent.deleted) return "deleted";
+  if (agent.owner !== owner) throw new AppError("FORBIDDEN", "这台电脑属于其他客户或尚未分配，请使用对应客户账号登录，或由管理员确认归属。", 403);
+  return "active";
+}

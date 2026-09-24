@@ -7,7 +7,7 @@ import { problemFor } from "@/core/errors";
 import { remoteDashboard } from "@/server/remote";
 /** 每个实例独立返回公开状态，不传输素材列表或凭据。 */
 export async function overview() {
- const agents = (await listAgents()).filter(a => !a.pairedTo);
+ const agents = (await listAgents()).filter(a => !a.pairedTo && !a.revoked);
  const rows = await Promise.all(agents.filter(a => !a.revoked).flatMap(a => a.instances.map(async i => {
    const d:Dashboard = await remoteDashboard({ agentId: a.id, instanceId: i.id }).catch(e=>({state:initialState(),busy:false,obs:{ready:false,running:false,streaming:null,processKnown:false,message:"此实例状态暂不可读取"},youtube:{connected:false},media:{videos:[],music:[]},configuration:{missing:[],privacy:"unlisted",madeForKids:false},problems:[problemFor(e,{target:{agentId:a.id,instanceId:i.id},stage:"读取实例状态"})]}));
    return { agentId: a.id, instanceId: i.id, customer: a.owner, device: a.name, name: i.name, online: !!d.device?.online, streaming: d.obs.streaming, durationMs: d.obs.durationMs, channel: d.youtube.channel, lifecycle: d.youtube.lifecycle, lastSeen: a.lastSeen, error: [...(d.problems||[]).map(p=>p.message),d.operation && ["failed","interrupted","uncertain","expired"].includes(d.operation.status) ? d.operation.message : undefined,d.state.error,d.obs.problem || d.obs.processKnown===false || (d.obs.running&&!d.obs.ready) ? d.obs.message : undefined,d.youtube.error,d.media.error].filter(Boolean).join("；") || undefined, actor: d.operation?.actor };

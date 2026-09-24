@@ -8,7 +8,7 @@
 .setup-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
 .setup-content { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; align-items: start; }
 .setup-content > .field-group { width: 100%; max-width: 620px; }
-.setup-content textarea { width: 100%; min-height: 88px; padding: 12px; border: 1px solid var(--border-default); border-radius: 6px; resize: vertical; font: inherit; }
+.setup-content textarea, .pairing-recovery textarea { width: 100%; min-height: 88px; padding: 12px; border: 1px solid var(--border-default); border-radius: 6px; resize: vertical; font: inherit; }
 .setup-state { font-size: 14px; color: var(--text-muted); background: var(--bg-subtle); border-radius: 4px; padding: 3px 8px; white-space: nowrap; }
 .setup-state.ready { color: var(--success-green); background: var(--success-green-subtle); }
 .setup-state.error { color: var(--error-rose); background: var(--error-rose-subtle); }
@@ -66,3 +66,8 @@
 
 /* 登录前更新与登录表单分隔，长错误在窄窗口中换行。 */
 .login-update{border-top:1px solid var(--border-color,#e5e7eb);margin-top:24px;padding-top:20px;overflow-wrap:anywhere}.login-update h2{font-size:16px}.login-update p{font-size:14px;margin:10px 0}.login-update [role=alert]{color:var(--text-danger,#b42342)}
+
+/* 登录主次操作保持独立间距，小窗口允许自然换行。 */
+.login-secondary-actions { margin-top: 16px; align-items: stretch; gap: 12px; }
+.login-secondary-actions > button { min-height: 44px; flex: 1 1 auto; }
+.pairing-recovery { margin-bottom: 24px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
