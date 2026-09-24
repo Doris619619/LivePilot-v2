@@ -16,3 +16,5 @@ jobs:
       - run: npm ci
       - run: npm run desktop:build
       - run: node scripts/desktop/installer-smoke.mjs
+      - name: Validate scoped OBS firewall helper
+        run: powershell.exe -NoProfile -File scripts/desktop/firewall-smoke.ps1

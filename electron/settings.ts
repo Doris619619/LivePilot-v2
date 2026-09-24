@@ -8,7 +8,7 @@ import type { DesktopInstance } from "../src/shared/desktop";
 import { claimRoot, claimLegacyRoot, readRoot, checkRootPath, ordinaryPath } from "./data-root";
 import { access } from "node:fs/promises";
 import { protectWindows } from "./windows-credentials";
-export type Settings = { dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
+export type Settings = { firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
 /** AppData 只保存位置；身份与业务配置由目标目录中的 DPAPI 密文持有。 */
 export class SettingsStore {
   private locator = new Store(app.getPath("userData"));

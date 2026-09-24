@@ -9,7 +9,7 @@ vi.mock("node:fs/promises", () => ({ mkdir: vi.fn() }));
 vi.mock("electron", () => ({ app: { getVersion: () => "test", getLoginItemSettings: () => ({ openAtLogin: false }) }, dialog: {}, net: { fetch: f.fetch }, shell: {} }));
 vi.mock("../electron/settings", () => ({ SettingsStore: class { write = f.write; } }));
 vi.mock("../electron/agent-host", () => ({ AgentHost: class { child = {}; snapshots = []; lastHeartbeat = 0; rpc = f.rpc; start = f.start; stop = f.stop; ready = f.ready; } }));
-vi.mock("../electron/diagnostics", () => ({ diagnose: vi.fn() }));
+vi.mock("../electron/diagnostics", () => ({ diagnose: vi.fn().mockResolvedValue([]) }));
 vi.mock("../electron/updates", () => ({ Updates: class { state = {}; } }));
 vi.mock("../electron/obs-repair", () => ({ repairManagedObs: vi.fn() }));
 vi.mock("../electron/obs-setup", () => ({ assertLocalIdle: f.idle, initializeObs: f.initialize, newInstance: async () => ({ id: ++f.sequence===1 ? "candidate" : "candidate"+f.sequence, name: "Candidate", managed: true, exe: "fixture", port: 4455+f.sequence, password: "secret"+f.sequence, initialized: false }) }));
