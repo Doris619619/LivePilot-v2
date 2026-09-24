@@ -29,6 +29,11 @@ function Run-Helper {
   & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/desktop/obs-firewall.ps1 -Root64 ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($fixtureDirectory))) -RootId $rootId
   if ($LASTEXITCODE -ne 0) {
     # 一次性 CI 的合成路径不含凭据；逐个核对地址，避免不明确的原生参数错误。
+    try { New-NetFirewallRule -Name ($group+'-baseline') -DisplayName 'LiveNest CI baseline' -Group $group -Direction Inbound -Action Block -Protocol TCP -LocalPort 14455 | Out-Null; Write-Output 'Baseline port rule passed' }
+    catch { Write-Output ('Baseline port rule failed: '+$_.Exception.Message) }
+    try { New-NetFirewallRule -Name ($group+'-program') -DisplayName 'LiveNest CI program' -Group $group -Direction Inbound -Action Block -Program $items[0].exe -Protocol TCP -LocalPort 14455 | Out-Null; Write-Output 'Program port rule passed' }
+    catch { Write-Output ('Program port rule failed: '+$_.Exception.Message) }
+    Write-Output ('Synthetic program path: '+$items[0].exe)
     $probe=0
     foreach ($address in @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')) {
       try { New-NetFirewallRule -Name ($group+'-probe-'+$probe) -DisplayName 'LiveNest CI rule probe' -Group $group -Direction Inbound -Action Block -Enabled True -Profile Any -Program $items[0].exe -Protocol TCP -LocalPort 14455 -RemoteAddress $address | Out-Null; Write-Output ('Address probe '+$probe+' passed') }
