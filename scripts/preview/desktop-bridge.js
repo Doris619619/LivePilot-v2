@@ -15,7 +15,7 @@
   /** 配置交互只在当前标签内模拟，刷新可恢复，不访问生产服务。 */
   window.liveNest = {
     session: async () => ({ authenticated, username: authenticated ? 'Liang' : undefined }),
-    login: async username => { if (['Do', 'ULiang', 'UDo'].includes(username)) return { ok: false, message: '管理员请使用管理员网页端。' }; authenticated = true; return { ok: true }; },
+    login: async username => { if (['ULiang', 'UDo'].includes(username)) return { ok: false, message: '管理员请使用管理员网页端。' }; authenticated = true; return { ok: true }; },
     logout: async () => { authenticated = false; },
     state: async () => refresh(),
     act: async (action, input = {}) => {

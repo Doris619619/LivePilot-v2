@@ -40,7 +40,7 @@ export function useInstance(instance: InstanceDescriptor) {
     try {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
       setReadAt(Date.now()); synchronize(result);
-      if (result.operation?.id === failedRequest.current && result.operation?.status === "succeeded") { setError(""); setProblem(undefined); failedRequest.current = undefined; }
+      if (result.operation?.id === failedRequest.current && ["succeeded", "failed"].includes(result.operation?.status || "")) { setError(""); setProblem(undefined); failedRequest.current = undefined; }
       setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
@@ -111,6 +111,7 @@ export function useInstance(instance: InstanceDescriptor) {
   const live = !stale && data?.youtube.lifecycle === "live" && data.obs.streaming === true && data.youtube.ingest === "active";
   const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
   const locked = busy || live || pending;
-  const blocker = startBlocker(data, selection, busy, stale, live);
+  const uncertain = problem?.outcome === "unknown" && !!problem.attemptId;
+  const blocker = uncertain ? "上次操作结果尚未确认，请先查询原任务。" : data?.operation && data.operation.status === "uncertain" ? "原任务状态尚未确认，请先查询。" : startBlocker(data, selection, busy, stale, live);
   return { problem: stale ? makeProblem("CLOUD_UNAVAILABLE",readError || "实例状态已过期，实际推流状态未知。",{target:{agentId,instanceId},stage:"读取实例状态"}) : problem || (data?.operation && ["failed","interrupted","uncertain","expired"].includes(data.operation.status) ? data.operation.problem : undefined), data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
 }

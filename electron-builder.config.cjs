@@ -4,6 +4,7 @@ module.exports = {
   directories: { app: 'build/desktop-app', output: 'release', buildResources: 'desktop-resources' },
   files: ['package.json', 'dist-electron/**/*', 'desktop/out/**/*'], asar: true,
   extraResources: [
+    { from: 'scripts/desktop/obs-firewall.ps1', to: 'helpers/obs-firewall.ps1' },
     { from: 'desktop-resources/agent', to: 'agent' },
     { from: 'desktop-resources/vendor', to: 'vendor', filter: ['node.exe', 'obs.zip', 'manifest.json', 'NODE-LICENSE.txt', 'OBS-COPYING.txt'] },
     { from: 'desktop-resources/icon.png', to: 'icon.png' },

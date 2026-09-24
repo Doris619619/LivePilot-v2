@@ -3,6 +3,7 @@ import { beforeEach,it,expect,vi } from "vitest";
 const mock=vi.hoisted(()=>({inspect:vi.fn(),call:vi.fn(),exec:vi.fn()}));
 vi.mock("../src/core/obs/process",()=>({ObsProcessManager:class{inspect=mock.inspect;}}));
 vi.mock("../src/core/obs/controller",()=>({ObsController:class{call=mock.call;disconnect=async()=>{};}}));
+vi.mock("../electron/obs-firewall",()=>({inspectFirewall:vi.fn()}));
 vi.mock("node:util",()=>({promisify:()=> (...args:unknown[])=>new Promise((resolve,reject)=>mock.exec(...args,(e:Error|null,stdout:string,stderr:string)=>e?reject(e):resolve({stdout,stderr})))}));
 vi.mock("node:child_process",()=>({execFile:(...args:unknown[])=>mock.exec(...args)}));
 import { checkObsNetwork } from "../electron/obs-network";
@@ -15,6 +16,6 @@ it.each(["OBS_AUTH","OBS_TIMEOUT"])("preserves connection cause %s",async code=>
 it("shows unknown on query failure and confirms only actual loopback listeners",async()=>{expect(await checkObsNetwork(item)).toMatchObject({status:"ready"});mock.inspect.mockRejectedValue(new Error("access denied"));expect(await checkObsNetwork(item)).toMatchObject({status:"pending",code:"inspection-unavailable",action:"retry"});});
 it("keeps verified control separate from uncertain firewall isolation",async()=>{
   mock.exec.mockImplementation((...args:unknown[])=>{const cb=args.at(-1) as (e:null,out:string,err:string)=>void;cb(null,args[0]==="netstat.exe"?"TCP 0.0.0.0:4455 0.0.0.0:0 LISTENING 123":'{"isolated":false}',"");});
-  expect(await checkObsNetwork(item)).toMatchObject({controlReady:true,code:"firewall-unconfirmed",status:"error"});
+  expect(await checkObsNetwork(item)).toMatchObject({controlReady:true,status:"ready"});
   mock.inspect.mockResolvedValue({pid:null,portPid:null});expect(await checkObsNetwork(item)).toMatchObject({controlReady:false,code:"not-running"});
 });

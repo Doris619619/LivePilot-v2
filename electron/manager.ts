@@ -17,6 +17,7 @@ import { environment } from "./settings";
 import { ObsProcessManager } from "../src/core/obs/process";
 import { ObsDiscovery, inspectObs } from "./obs-discovery";
 import { checkObsNetwork } from "./obs-network";
+import { firewallChecks, firewallFingerprint, protectObs } from "./obs-firewall";
 import { diagnose } from "./diagnostics";
 import { assertLocalIdle, initializeObs, newInstance } from "./obs-setup";
 import { Updates } from "./updates";
@@ -55,7 +56,7 @@ export class Manager {
   }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
-    return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
+    return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: [...this.checks, ...firewallChecks(this.settings.instances)], update: this.updates.state };
   }
   /** 核心错误已过滤敏感字段，未知第三方异常使用固定提示。 */
   private error(e: unknown) { return isAppError(e) ? safeError(e) : e instanceof z.ZodError ? "输入无效，请检查填写内容。" : safeError(e); }
@@ -116,11 +117,11 @@ export class Manager {
     if (action === "web") { await shell.openExternal(DESKTOP_ORIGIN + "/workspace#" + (this.settings.identity ? (typeof input.id === "string" && this.settings.instances.some(i=>i.id===input.id) ? "instance-"+this.settings.identity.agentId+"-"+input.id : "device-" + this.settings.identity.agentId) : "workspace")); return this.state(); }
     if(action === "scan-cancel"){this.discovery.cancel();return this.state();}
     if(action === "scan"){this.discovery.start(input.deep===true,this.settings.instances.map(i=>i.exe));return this.state();}
-    if(action === "firewall"){await shell.openExternal("ms-settings:windowsdefender");return this.state();}
     if (this.busy) throw new AppError("DESKTOP", "上一步仍在处理，请稍候。"); this.busy = true; this.message = ""; this.activity.begin(action, typeof input.id === "string" ? input.id : undefined);
     try {
       if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download", "update-install", "update-apply"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
-      if (action === "check") this.checks = await diagnose(this.settings, this.resources);
+      if (action === "firewall") await protectObs(this.settings, this.resources);
+      else if (action === "check") this.checks = await diagnose(this.settings, this.resources);
       else if (action === "launch-obs") { const result = await launchObs(this.settings, idSchema.parse(input.id), stage => this.activity.progress(stage)); this.checks = [...this.checks.filter(check => check.id !== result.id), result]; }
       else if (action === "diagnose-obs") { const item=[...this.settings.instances,...(this.settings.candidates||[])].find(i=>i.id===input.id);if(!item)throw new AppError("DESKTOP", "请选择 OBS。");configureCore(()=>environment({...this.settings,instances:[...this.settings.instances.filter(i=>i.id!==item.id),item]}));const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
@@ -156,6 +157,14 @@ export class Manager {
       }
       else throw new AppError("DESKTOP", "操作不受支持。");
       if (["prepare","add","import-obs","repair-managed","repair","attach","directory","restore-candidate"].includes(action)) this.checks = await diagnose(this.settings, this.resources);
+      if (["prepare","add","import-obs","repair-managed","repair","directory","restore-candidate"].includes(action) && this.settings.instances.some(i=>i.managed && i.initialized)) {
+        const fingerprint = firewallFingerprint(this.settings);
+        if (this.settings.firewallAttempt !== fingerprint) {
+          this.settings.firewallAttempt = fingerprint; await this.store.write(this.settings);
+          this.activity.progress("正在配置 OBS 本机保护，Windows 可能请求一次系统授权");
+          await protectObs(this.settings, this.resources);
+        }
+      }
       this.activity.complete();
     } catch (e) { this.message = this.error(e); const problem = problemFor(e,{source:"desktop",target:{instanceId:this.activity.value?.instanceId},stage:isAppError(e) && e.problem ? e.problem.stage : this.activity.value?.stage,attemptId:this.activity.value?.attemptId}); this.activity.fail(this.message,problem); if(e instanceof z.ZodError)throw e; throw new AppError(problem.code,this.message,400,problem); } finally { this.busy = false; }
     return this.state();
@@ -263,7 +272,7 @@ export class Manager {
         await initializeObs(candidateSettings, item, this.resources, stage => this.activity.progress(item!.name + " · " + stage));
         const next = { ...this.settings, instances: [...this.settings.instances], candidates: [...(this.settings.candidates || [])] };
         acceptCandidate(next, { ...item, initialized: true });
-        await this.store.write(next); this.settings = next;
+        delete next.dataNotice; await this.store.write(next); this.settings = next;
       }
       await this.store.write(this.settings);
     } catch (error) { return this.recoverConfiguration(error); }
