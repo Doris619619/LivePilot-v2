@@ -25,5 +25,5 @@ if (mode !== "renderer") {
   const dirty = execFileSync("git", ["-c", "safe.directory=" + process.cwd().replaceAll("\\", "/"), "status", "--porcelain"], { encoding: "utf8" }).trim();
   await writeFile(output + "/build-manifest.json", JSON.stringify({ version: pkg.version, commit, workingTree: dirty ? "dirty" : "clean", mode, createdAt: new Date().toISOString(), artifacts }, null, 2));
   node("scripts/desktop/smoke.mjs", output + "/win-unpacked");
-  if (mode === "release") await publish();
+  if (mode === "release") { node("scripts/desktop/installer-smoke.mjs"); await publish(); }
 }

@@ -9,8 +9,11 @@ it.skipIf(process.platform!=="win32")("validates paths, persists only the locato
  try {
   const bootstrap=path.join(base,"profile"); const target=path.join(base,"中文 空格","LiveNest");const installed=path.join(base,"program");const result=path.join(base,"result.ini");
   await mkdir(path.dirname(target));const canonicalTarget=path.join(await realpath(path.dirname(target)),"LiveNest");
+  // NSIS 会把工作目录设为含原生 System.dll 的插件目录；必须在此环境运行真实脚本。
+  await writeFile(path.join(base,"System.dll"),Buffer.from("MZ native NSIS plugin, not a managed assembly"));
   /** 参数使用 execFile 数组，不通过 shell 拼接。 */
-  const run=(mode:string,selected=target,install=installed)=>exec("powershell.exe",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.resolve("scripts/desktop/data-location.ps1"),"-Mode",mode,"-Bootstrap",bootstrap,"-Target",selected,"-Installation",install,"-Result",result],{windowsHide:true});
+  const run=(mode:string,selected=target,install=installed)=>exec("powershell.exe",["-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",path.resolve("scripts/desktop/data-location.ps1"),"-Mode",mode,"-Bootstrap",bootstrap,"-Target",selected,"-Installation",install,"-Result",result],{windowsHide:true,cwd:base});
+  await run("Inspect");expect(await readFile(result,"utf16le")).toContain("error=\r\n");
   await run("Validate");expect(await readFile(result,"utf16le")).toContain(canonicalTarget);
   await expect(run("Validate",target,target)).rejects.toThrow();
   const unknown=path.join(base,"unknown");await mkdir(unknown);await writeFile(path.join(unknown,"keep.txt"),"user");await expect(run("Validate",unknown)).rejects.toThrow();expect(await readFile(path.join(unknown,"keep.txt"),"utf8")).toBe("user");

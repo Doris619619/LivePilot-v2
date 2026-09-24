@@ -33,6 +33,9 @@ Function InspectDataLocation
   ReadINIStr $DataExisting "$PLUGINSDIR\data-result.ini" "location" "root"
   ReadINIStr $DataError "$PLUGINSDIR\data-result.ini" "location" "error"
   ${If} $0 != 0
+    ${If} $DataError == ""
+      StrCpy $DataError "无法启动数据位置检查（返回码：$0）。请重新下载安装包后重试；原配置与文件保留。"
+    ${EndIf}
     MessageBox MB_OK|MB_ICONSTOP "$DataError" /SD IDOK
     Abort
   ${EndIf}
@@ -111,6 +114,9 @@ Function ValidateDataLocation
   Pop $1
   ${If} $0 != 0
     ReadINIStr $DataError "$PLUGINSDIR\data-result.ini" "location" "error"
+    ${If} $DataError == ""
+      StrCpy $DataError "无法完成数据位置校验（返回码：$0）。请重新下载安装包后重试；原配置与文件保留。"
+    ${EndIf}
     MessageBox MB_OK|MB_ICONSTOP "$DataError" /SD IDOK
     Abort
   ${EndIf}
@@ -137,6 +143,9 @@ FunctionEnd
   Pop $1
   ${If} $0 != 0
     ReadINIStr $DataError "$PLUGINSDIR\data-result.ini" "location" "error"
+    ${If} $DataError == ""
+      StrCpy $DataError "无法保存数据位置（返回码：$0）。请重新运行安装包；原配置与文件保留。"
+    ${EndIf}
     MessageBox MB_OK|MB_ICONSTOP "$DataError" /SD IDOK
     Abort
   ${EndIf}

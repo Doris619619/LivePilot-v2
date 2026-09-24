@@ -7,7 +7,7 @@
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要预装 OBS，也不需要另装 Node、Git 或 Docker；点击“准备第一个 OBS”即可。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
 
-0.1.4 修复配对失效、云端离线或尚未选择数据目录时无法重启更新的问题。登录页也可一键更新：点击“更新并重启”后自动下载、静默安装并重新打开，无需重复确认；安装准备失败显示具体原因并重试原安装步骤。发布状态以[公开发行页](https://github.com/Doris619619/LiveNest-Releases/releases/latest)为准，版本范围及验证边界见 [0.1.4 发布记录](docs/desktop/0.1.4发布.md)。
+0.1.5 修复安装时出现空白错误框、无法继续的问题。旧版遇到此错误请使用新版安装包，保留原数据目录。客户端继续支持一键更新：点击“更新并重启”后自动下载、静默安装并重新打开，无需重复确认。发布状态以[公开发行页](https://github.com/Doris619619/LiveNest-Releases/releases/latest)为准，证据与边界见 [0.1.5 发布记录](docs/desktop/0.1.5发布.md)。
 
 | 需要做什么 | 文档 |
 | --- | --- |
