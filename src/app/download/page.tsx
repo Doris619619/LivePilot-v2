@@ -6,7 +6,7 @@ import { LiveNestLogo, DeviceIcon, ExternalLinkIcon } from "../components/icons"
 import "./download.css";
 
 export const metadata: Metadata = { title: "下载 LiveNest", description: "下载 LiveNest Windows 客户端，在网页管理 OBS 和 YouTube 直播。" };
-const version = "0.1.6";
+const version = "0.1.7";
 const installer = `/downloads/${version}/LiveNest_${version}_x64-setup.exe`;
 
 /** 未登录也能下载；首屏只保留产品、用途和动作，详细帮助按需展开。 */

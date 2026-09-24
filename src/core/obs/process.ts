@@ -48,7 +48,7 @@ export class ObsProcessManager {
     try {
       const [processResult, networkResult] = await Promise.all([
         exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", obsProcessQuery], { windowsHide: true, timeout: 15_000, env: { ...process.env, LIVEPILOT_TARGET_EXE: exe } }),
-        exec("netstat.exe", ["-ano", "-p", "tcp"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }),
+        exec("netstat.exe", ["-ano"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }),
       ]);
       processOutput = processResult.stdout; networkOutput = networkResult.stdout;
     } catch (error) {

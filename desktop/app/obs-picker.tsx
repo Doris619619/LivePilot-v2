@@ -6,12 +6,14 @@ export default function ObsPicker({state,busy,act}:{state:DesktopState;busy:bool
  const [name,setName]=useState("OBS "+(state.instances.length+1));const scan=state.scan;
  const [port,setPort]=useState("4455"); const [password,setPassword]=useState("");
  const firstPending=!state.instances.length && [...(state.candidates||[]),...(state.archivedCandidates||[])].some(i=>i.id==="main");
- const unavailable=busy || state.dataLocationReady===false || firstPending;
+ const pendingNames=(state.candidates||[]).map(i=>i.name);
+ const unavailable=busy || state.dataLocationReady===false || firstPending || pendingNames.length>0;
  const blocked=state.snapshots.filter(s=>s.dashboard.obs.streaming!==false||s.dashboard.busy||["starting","stopping"].includes(s.dashboard.state.phase));
- return <section className="desktop-form"><p>创建 LiveNest 独立 OBS。每个 OBS 使用独立目录、连接和素材。</p>
- <button className="btn-primary" disabled={unavailable} onClick={()=>void act("add")}>{state.instances.length?"+ 添加 OBS":"准备第一个 OBS"}</button>
- {state.paired&&<p>这台电脑已配对，添加 OBS 无需重新配对。</p>}
+ return <section className="desktop-form obs-add"><h3>{state.instances.length ? "添加另一个 OBS" : "添加第一个 OBS"}</h3><p>自动创建独立 OBS，并准备连接和视频、音乐场景。每个 OBS 使用独立目录；随后分别选择频道和素材。</p>
+ <button className="btn-primary" disabled={unavailable} onClick={()=>void act("add")}>{state.instances.length===1?"+ 添加第二个 OBS":state.instances.length?"+ 添加 OBS":"准备第一个 OBS"}</button>
+ <p>{state.paired?"这台电脑已配对，添加 OBS 无需重新配对。":"一台电脑只需配对一次，所有 OBS 都会显示在这台电脑下。"}</p>
  {firstPending&&<p>请在待配置或已撤销区域继续准备第一个 OBS。</p>}
+ {!!pendingNames.length && !firstPending && <p role="status">{pendingNames.join("、")} 尚未配置完成，请先在上方重试配置或撤销新增，再添加其他 OBS。</p>}
  {!!blocked.length&&<p role="status">添加前需确认空闲：{blocked.map(s=>s.instance.name).join("、")}。请先结束直播、录制、上传与授权。</p>}
  <details><summary>高级选项 / 接入已有 OBS</summary>
  <label className="field-group">新 OBS 名称<input value={name} maxLength={80} onChange={e=>setName(e.target.value)}/></label>

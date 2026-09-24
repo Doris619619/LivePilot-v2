@@ -1,7 +1,6 @@
 /** 初始化自有便携 OBS；重复操作保留已有场景和设置，绝不自动推流。 */
 import { AppError } from "../src/core/errors";
 import { mkdir, readFile, writeFile, access, readdir, stat, cp } from "node:fs/promises";
-import { createServer } from "node:net";
 import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -14,6 +13,8 @@ import type { DesktopInstance } from "../src/shared/desktop";
 import { ordinaryPath } from "./data-root";
 import { inspectObs } from "./obs-discovery";
 import { environment, type Settings } from "./settings";
+import { freePort } from "./obs-ports";
+export { freePort } from "./obs-ports";
 const exec = promisify(execFile);
 /** 即使尚未配对云端，也必须确认本机实例没有推流/录制后才能维护。 */
 export async function assertLocalIdle(settings: Settings) {
@@ -27,15 +28,6 @@ export async function assertLocalIdle(settings: Settings) {
     try { if ((await controller.call("GetStreamStatus")).outputActive || (await controller.call("GetRecordStatus")).outputActive) throw new AppError("OBS_MAINTENANCE", instance.name + " 正在推流或录制，请结束后重试。"); }
     finally { await controller.disconnect(); }
   }
-}
-/** 寻找实际空闲端口，不停止占用端口的程序。 */
-export async function freePort(excluded: number[], start = 4455): Promise<number> {
-  for (let port = start; port < start + 200; port++) {
-    if (excluded.includes(port)) continue;
-    const free = await new Promise<boolean>(resolve => { const server = createServer(); server.once("error", () => resolve(false)); server.listen({ host: "127.0.0.1", port, exclusive: true }, () => server.close(() => resolve(true))); });
-    if (free) return port;
-  }
-  throw new AppError("OBS_CONFIG", "没有找到空闲 OBS 端口，请处理端口占用后重试。");
 }
 /** 生成身份后先持久化，解压失败仍可用相同密码继续。 */
 export async function newInstance(settings: Settings): Promise<DesktopInstance> {

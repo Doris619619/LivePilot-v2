@@ -35,7 +35,7 @@ foreach($rule in @(Get-NetFirewallRule -PolicyStore ActiveStore -Enabled True -D
 @{isolated=($blocked -and $allows.Count -eq 0)}|ConvertTo-Json -Compress`;
 /** 权限不足、策略含糊或开放接口均显式报待核查，不将它们解释为安全。 */
 export async function checkObsNetwork(item: DesktopInstance): Promise<Check> {
-  const base = { id: "network-" + item.id, instanceId: item.id, checkedAt: Date.now(), label: item.name + " 连接与网络" };
+  const base = { id: "network-" + item.id, instanceId: item.id, checkedAt: Date.now(), label: item.name + " 连接与网络", controlReady: false };
   try {
     const read=()=>config(item.id);const proc=await new ObsProcessManager(read).inspect();
     if(proc.portPid && proc.portPid!==proc.pid)return {...base,status:"error",code:"port-conflict",action:item.managed?"repair":"help",message:`端口 ${item.port} 被其他进程（PID ${proc.portPid}）占用。请先关闭 ${item.name}，再修复连接；不会结束占用端口的程序。`};
@@ -43,7 +43,9 @@ export async function checkObsNetwork(item: DesktopInstance): Promise<Check> {
     if(!proc.portPid)return {...base,status:"error",code:"not-listening",action:item.managed?"repair":"help",message:`${item.name} 已运行，但端口 ${item.port} 未监听。在该 OBS 的“工具 → WebSocket 服务器设置”检查是否启用。自动修复前请先关闭此 OBS。`};
     const controller=new ObsController(read);
     try {await controller.call("GetVersion");} catch(e){return {...base,status:"error",code:isAppError(e)?e.code:"connection-unknown",action:item.managed?"repair":"help",message:safeError(e)+" 请在对应 OBS 的“工具 → WebSocket 服务器设置”核对；自动修复前先关闭 OBS。"};} finally {await controller.disconnect();}
-    const network = await exec("netstat.exe", ["-ano", "-p", "tcp"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
+    // 已验证的控制连接独立于后续隔离检查，未配对时也能展示本机检查结果。
+    base.controlReady = true; base.checkedAt = Date.now();
+    const network = await exec("netstat.exe", ["-ano"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 });
     const addresses = listeningAddresses(network.stdout, item.port);
     if (!addresses.length) return { ...base, status: "pending", code: "listener-changed", action: "retry", message: "检查期间监听状态发生变化，请重新检查。" };
     if (loopbackOnly(addresses)) return { ...base, status: "ready", message: "实际监听仅限本机：" + addresses.join("、") };

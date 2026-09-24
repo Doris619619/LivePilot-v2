@@ -13,3 +13,8 @@ it("offers launch for stopped OBS without reporting firewall failure",async()=>{
 it("distinguishes another process and absent listener",async()=>{mock.inspect.mockResolvedValue({pid:123,portPid:456});expect(await checkObsNetwork(item)).toMatchObject({code:"port-conflict",action:"repair"});mock.inspect.mockResolvedValue({pid:123,portPid:null});expect(await checkObsNetwork(item)).toMatchObject({code:"not-listening"});});
 it.each(["OBS_AUTH","OBS_TIMEOUT"])("preserves connection cause %s",async code=>{mock.call.mockRejectedValue(new AppError(code,"安全提示"));expect(await checkObsNetwork(item)).toMatchObject({code,status:"error"});});
 it("shows unknown on query failure and confirms only actual loopback listeners",async()=>{expect(await checkObsNetwork(item)).toMatchObject({status:"ready"});mock.inspect.mockRejectedValue(new Error("access denied"));expect(await checkObsNetwork(item)).toMatchObject({status:"pending",code:"inspection-unavailable",action:"retry"});});
+it("keeps verified control separate from uncertain firewall isolation",async()=>{
+  mock.exec.mockImplementation((...args:unknown[])=>{const cb=args.at(-1) as (e:null,out:string,err:string)=>void;cb(null,args[0]==="netstat.exe"?"TCP 0.0.0.0:4455 0.0.0.0:0 LISTENING 123":'{"isolated":false}',"");});
+  expect(await checkObsNetwork(item)).toMatchObject({controlReady:true,code:"firewall-unconfirmed",status:"error"});
+  mock.inspect.mockResolvedValue({pid:null,portPid:null});expect(await checkObsNetwork(item)).toMatchObject({controlReady:false,code:"not-running"});
+});

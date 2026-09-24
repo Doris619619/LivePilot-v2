@@ -71,3 +71,19 @@
 .login-secondary-actions { margin-top: 16px; align-items: stretch; gap: 12px; }
 .login-secondary-actions > button { min-height: 44px; flex: 1 1 auto; }
 .pairing-recovery { margin-bottom: 24px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
+
+/* 指定 OBS 的常驻操作保持可见，窄窗口按目标分组换行。 */
+.obs-setup-instance { padding: 16px 0; border-bottom: 1px solid var(--border-subtle); }
+.obs-instance-controls { margin: 12px 0 16px; }
+.obs-control-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; }
+.obs-control-row .desktop-actions { gap: 12px; flex-wrap: wrap; }
+.obs-control-row button { min-height: 44px; }
+.obs-instance-controls > p { margin: 12px 0; overflow-wrap: anywhere; }
+/* 配置统一按实例排列，新增入口与已配置列表分开，窄窗口自然换行。 */
+.obs-setup-instance { display: flex; flex-direction: column; gap: 16px; scroll-margin-top: 100px; }
+.obs-setup-instance h3, .obs-add h3 { font-size: 18px; margin: 0; }
+.obs-setup-instance > button, .obs-add > button { align-self: flex-start; }
+.obs-config-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 24px; padding-block: 12px; }
+.obs-config-row p { margin: 6px 0; }
+.obs-add { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border-subtle); }
+#obs-setup { scroll-margin-top: 100px; }
