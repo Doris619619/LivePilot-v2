@@ -38,6 +38,25 @@ try {
     $remote = @(($rule | Get-NetFirewallAddressFilter).RemoteAddress)
     if ($remote.Count -ne 3 -or $remote -contains 'Any' -or $remote -contains '::1' -or $remote -contains '127.0.0.1') { throw 'Loopback exclusion missing' }
   }
+  # 用已受规则约束的测试程序检查 IPv4/IPv6 本机控制与独立出站 HTTPS。
+  $networkProbe=Join-Path $fixtureDirectory 'network-probe.cjs'
+  $networkSource=@'
+const net=require('node:net'),https=require('node:https');
+async function loopback(host){
+ const server=net.createServer(socket=>socket.end('ok'));
+ await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(14455,host,resolve)});
+ try {await new Promise((resolve,reject)=>{const socket=net.connect({host,port:14455});let received='';socket.setTimeout(5000,()=>socket.destroy(new Error('timeout')));socket.on('data',chunk=>received+=chunk);socket.once('error',reject);socket.once('end',()=>received==='ok'?resolve():reject(new Error('response')))});}
+ finally {await new Promise(resolve=>server.close(resolve))}
+}
+(async()=>{
+ await loopback('127.0.0.1');await loopback('::1');
+ await new Promise((resolve,reject)=>{const request=https.request('https://api.github.com/',{method:'HEAD',headers:{'User-Agent':'LiveNest-CI'}},response=>{response.resume();response.once('end',resolve)});request.setTimeout(15000,()=>request.destroy(new Error('timeout')));request.once('error',reject);request.end()});
+ console.log('PASS IPv4/IPv6 loopback control and outbound HTTPS');
+})().catch(()=>{console.error('Isolated firewall network acceptance failed');process.exitCode=1});
+'@
+  [IO.File]::WriteAllText($networkProbe,$networkSource,$utf8)
+  & $items[0].exe $networkProbe
+  if($LASTEXITCODE -ne 0){throw 'Loopback or outbound acceptance failed'}
   $items[1].port=14457; Save-Fixture; Run-Helper
   if ((Get-NetFirewallRule -Name ($group+'-second') | Get-NetFirewallPortFilter).LocalPort -ne '14457') { throw 'Port reconciliation failed' }
   $items = @($items[0]); Save-Fixture; Run-Helper
