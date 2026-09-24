@@ -26,6 +26,7 @@ import { Activity } from "./activity";
 import { separateCandidates, acceptCandidate, archiveCandidate } from "./candidates";
 import { repairManagedObs } from "./obs-repair";
 import { pairDesktop } from "./pairing";
+import { launchObs } from "./obs-launch";
 export class Manager {
   settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
   readonly activity = new Activity(); readonly discovery = new ObsDiscovery();
@@ -120,6 +121,7 @@ export class Manager {
     try {
       if (!this.settings.dataRoot && !["directory", "check", "autostart", "update-check", "update-download", "update-install", "update-apply"].includes(action)) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
       if (action === "check") this.checks = await diagnose(this.settings, this.resources);
+      else if (action === "launch-obs") { const result = await launchObs(this.settings, idSchema.parse(input.id), stage => this.activity.progress(stage)); this.checks = [...this.checks.filter(check => check.id !== result.id), result]; }
       else if (action === "diagnose-obs") { const item=[...this.settings.instances,...(this.settings.candidates||[])].find(i=>i.id===input.id);if(!item)throw new AppError("DESKTOP", "请选择 OBS。");configureCore(()=>environment({...this.settings,instances:[...this.settings.instances.filter(i=>i.id!==item.id),item]}));const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
       else if (action === "start") await this.start();
