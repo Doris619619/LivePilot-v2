@@ -57,6 +57,9 @@ try {
   assert.deepEqual(await page.evaluate(()=>window.launchFixture.calls.slice(-2)),[{action:'add'},{action:'web',id:'second'}]);
   await page.waitForFunction(() => !document.querySelector('[aria-label="启动并检查 OBS 1"]').disabled);
   await capture(page,'configured-two-1280');
+  await page.evaluate(()=>{window.launchFixture.state.candidates=[{id:'third',name:'OBS 3',managed:true}];});
+  await page.getByText('OBS 3 尚未配置完成，请先在上方重试配置或撤销新增，再添加其他 OBS。',{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'+ 添加 OBS',exact:true}).isDisabled(),true);
   assert.deepEqual(errors, []); console.log('PASS OBS UI: visible target buttons, unpaired verified control, disabled duplicate input, target-bound failure, keyboard, 780/1280px');
 } finally { await browser.close(); server.close(); }
 /** 验收截图明确为模拟数据，并检查页面和按钮尺寸。 */
