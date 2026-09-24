@@ -1,4 +1,4 @@
-# 文件用途：仅在一次性 GitHub Windows 环境验证真实防火墙辅助程序与规则生命周期。
+﻿# 文件用途：仅在一次性 GitHub Windows 环境验证真实防火墙辅助程序与规则生命周期。
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted') { throw 'Disposable Windows runner required' }
 Add-Type -AssemblyName System.Security
@@ -27,7 +27,16 @@ function Save-Fixture {
 # 子进程执行固定辅助文件；失败不能被父进程默认为成功。
 function Run-Helper {
   & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/desktop/obs-firewall.ps1 -Root64 ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($fixtureDirectory))) -RootId $rootId
-  if ($LASTEXITCODE -ne 0) { throw 'Helper failed' }
+  if ($LASTEXITCODE -ne 0) {
+    # 一次性 CI 的合成路径不含凭据；逐个核对地址，避免不明确的原生参数错误。
+    $probe=0
+    foreach ($address in @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff')) {
+      try { New-NetFirewallRule -Name ($group+'-probe-'+$probe) -DisplayName 'LiveNest CI rule probe' -Group $group -Direction Inbound -Action Block -Enabled True -Profile Any -Program $items[0].exe -Protocol TCP -LocalPort 14455 -RemoteAddress $address | Out-Null; Write-Output ('Address probe '+$probe+' passed') }
+      catch { Write-Output ('Address probe '+$probe+' failed: '+$_.Exception.Message) }
+      $probe++
+    }
+    throw 'Helper failed'
+  }
 }
 try {
   Save-Fixture; Run-Helper; Run-Helper

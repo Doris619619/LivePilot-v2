@@ -1,4 +1,4 @@
-# 文件用途：固定的提权防火墙辅助程序，仅读取原 Windows 用户加密配置并限制自有 OBS 控制端口。
+﻿# 文件用途：固定的提权防火墙辅助程序，仅读取原 Windows 用户加密配置并限制自有 OBS 控制端口。
 param([Parameter(Mandatory=$true)][string]$Root64, [Parameter(Mandatory=$true)][string]$RootId)
 $ErrorActionPreference = 'Stop'
 $phase = 'root-validation'
@@ -16,11 +16,11 @@ try {
   }
   Assert-Ordinary $dataDirectory
   $markerFile = Join-Path $dataDirectory '.livenest-root.json'; Assert-Ordinary $markerFile
-  $marker = Get-Content -LiteralPath $markerFile -Raw | ConvertFrom-Json
+  $marker = Get-Content -Encoding UTF8 -LiteralPath $markerFile -Raw | ConvertFrom-Json
   if ($marker.product -ne 'LiveNest' -or $marker.version -ne 1 -or $marker.id -cne $RootId -or $RootId -notmatch '^[a-f0-9-]{36}$') { throw 'Ownership mismatch' }
   $settingsFile = Join-Path $dataDirectory 'state\desktop\settings.json'; Assert-Ordinary $settingsFile
   $phase = 'settings-decryption'
-  $encrypted = Get-Content -LiteralPath $settingsFile -Raw | ConvertFrom-Json
+  $encrypted = Get-Content -Encoding UTF8 -LiteralPath $settingsFile -Raw | ConvertFrom-Json
   if (-not $encrypted.StartsWith('dpapi:')) { throw 'Unsupported credentials' }
   $plain = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($encrypted.Substring(6)), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
   $settings = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
@@ -38,7 +38,7 @@ try {
     $exe = Join-Path $base 'bin\64bit\obs64.exe'
     Assert-Ordinary $exe
     $ownerFile = Join-Path $base '.livenest-owner'; Assert-Ordinary $ownerFile
-    if ([IO.Path]::GetFullPath($target.exe) -ine [IO.Path]::GetFullPath($exe) -or (Get-Content -LiteralPath $ownerFile -Raw) -cne $target.id) { throw 'OBS ownership mismatch' }
+    if ([IO.Path]::GetFullPath($target.exe) -ine [IO.Path]::GetFullPath($exe) -or (Get-Content -Encoding UTF8 -LiteralPath $ownerFile -Raw) -cne $target.id) { throw 'OBS ownership mismatch' }
     $name = $group + '-' + $target.id
     $wanted += $name
     $phase = 'rule-read'
