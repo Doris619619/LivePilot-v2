@@ -46,8 +46,8 @@ try {
   console.log(JSON.stringify({ passed: true, data, instances: ready.instances.map(({ name, port }) => ({ name, port })), realObs: true, productionPairing: false }));
 } finally {
   if (path.dirname(data) !== base || !path.basename(data).startsWith('two-obs-016-')) throw new Error('Unsafe cleanup');
-  // 只正常关闭本次测试目录内的 OBS；绝不结束用户原 OBS，也不删除任何配置。
-  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$target=[IO.Path]::GetFullPath($env:LN_OBS_TEST_ROOT); Get-CimInstance Win32_Process -Filter "Name = \'obs64.exe\'" | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($target+"\\",[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $owned=Get-Process -Id $_.ProcessId; [void]$owned.CloseMainWindow(); [void]$owned.WaitForExit(10000) }'], { windowsHide: true, env: { ...process.env, LN_OBS_TEST_ROOT: data }, stdio: 'ignore' });
+  // 仅清理本次隔离目录内的测试 OBS；正常关闭超时后结束测试进程，绝不操作用户原 OBS。
+  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '$target=[IO.Path]::GetFullPath($env:LN_OBS_TEST_ROOT); Get-CimInstance Win32_Process -Filter "Name = \'obs64.exe\'" | Where-Object { $_.ExecutablePath -and [IO.Path]::GetFullPath($_.ExecutablePath).StartsWith($target+"\\",[StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { $owned=Get-Process -Id $_.ProcessId; [void]$owned.CloseMainWindow(); if (!$owned.WaitForExit(10000)) { $owned.Kill(); [void]$owned.WaitForExit(3000) } }'], { windowsHide: true, env: { ...process.env, LN_OBS_TEST_ROOT: data }, stdio: 'ignore' });
   await application.evaluate(({ app, BrowserWindow }) => { app.removeAllListeners('before-quit'); for (const window of BrowserWindow.getAllWindows()) window.removeAllListeners('close'); });
   await application.close();
 }
