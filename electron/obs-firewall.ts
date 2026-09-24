@@ -32,7 +32,7 @@ foreach($rule in $rules){
  }
 }
 @{isolated=($valid -and $found)}|ConvertTo-Json -Compress`;
-  void exec(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 25_000, maxBuffer: 1024 * 1024, env: { ...process.env, LN_OBS_EXE: item.exe, LN_OBS_PORT: String(item.port) } }).then(result => {
+  void ordinaryEntry(item.exe).then(exe => exec(powershell, ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true, timeout: 25_000, maxBuffer: 1024 * 1024, env: { ...process.env, LN_OBS_EXE: exe, LN_OBS_PORT: String(item.port) } })).then(result => {
     const isolated = JSON.parse(result.stdout).isolated === true;
     entry.check = report(item, isolated ? "已核对有效的本机控制端口保护规则。" : "本机保护策略尚未确认；此项不代表控制连接或推流失败。", isolated);
   }).catch(() => { entry.check = report(item, "防火墙技术检查暂不可用；控制连接单独检查。"); }).finally(() => { entry.running = false; entry.at = Date.now(); });

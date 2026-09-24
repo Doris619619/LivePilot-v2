@@ -13,7 +13,7 @@ beforeEach(() => { mock.exec.mockReset(); mock.ordinary.mockImplementation(async
 it("returns immediately while security query remains pending and merges duplicate reads", async () => {
   const item = settings("slow").instances[0]; let finish!: (value: unknown) => void;
   mock.exec.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  expect(inspectFirewall(item)).toBeUndefined(); inspectFirewall(item); expect(mock.exec).toHaveBeenCalledOnce();
+  expect(inspectFirewall(item)).toBeUndefined(); inspectFirewall(item); await Promise.resolve(); expect(mock.exec).toHaveBeenCalledOnce();
   finish({ stdout: '{"isolated":false}' }); await new Promise(resolve => setTimeout(resolve, 0));
   expect(firewallChecks([item])[0]).toMatchObject({ code: "firewall-unconfirmed", status: "pending" });
 });

@@ -4,6 +4,14 @@ $ErrorActionPreference = 'Stop'
 $phase = 'root-validation'
 try {
   Add-Type -AssemblyName System.Security
+  Add-Type -TypeDefinition 'using System; using System.Text; using System.Runtime.InteropServices; public static class LiveNestLongPath { [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint GetLongPathName(string path, StringBuilder buffer, uint size); }'
+  # Windows 防火墙拒绝 8.3 程序路径；配置和归属比较也使用同一规范路径。
+  function Expand-CanonicalPath([string]$value) {
+    $buffer=New-Object Text.StringBuilder 32768
+    $length=[LiveNestLongPath]::GetLongPathName([IO.Path]::GetFullPath($value),$buffer,32768)
+    if ($length -eq 0 -or $length -ge 32768) { throw 'Cannot canonicalize existing path' }
+    return $buffer.ToString()
+  }
   $dataDirectory = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Root64))
   if (-not [IO.Path]::IsPathRooted($dataDirectory) -or $dataDirectory.StartsWith('\\')) { throw 'Invalid root' }
   # 检查每级路径，拒绝 junction 和符号链接，不跟随外部程序路径。
@@ -15,6 +23,7 @@ try {
     }
   }
   Assert-Ordinary $dataDirectory
+  $dataDirectory=Expand-CanonicalPath $dataDirectory
   $markerFile = Join-Path $dataDirectory '.livenest-root.json'; Assert-Ordinary $markerFile
   $marker = Get-Content -Encoding UTF8 -LiteralPath $markerFile -Raw | ConvertFrom-Json
   if ($marker.product -ne 'LiveNest' -or $marker.version -ne 1 -or $marker.id -cne $RootId -or $RootId -notmatch '^[a-f0-9-]{36}$') { throw 'Ownership mismatch' }
@@ -24,7 +33,8 @@ try {
   if (-not $encrypted.StartsWith('dpapi:')) { throw 'Unsupported credentials' }
   $plain = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($encrypted.Substring(6)), $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
   $settings = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json
-  if ($settings.rootId -cne $RootId -or [IO.Path]::GetFullPath($settings.dataRoot) -ine [IO.Path]::GetFullPath($dataDirectory)) { throw 'Configuration mismatch' }
+  Assert-Ordinary $settings.dataRoot
+  if ($settings.rootId -cne $RootId -or (Expand-CanonicalPath $settings.dataRoot) -ine $dataDirectory) { throw 'Configuration mismatch' }
   $targets = @($settings.instances | Where-Object { $_.managed -eq $true -and $_.initialized -eq $true })
   if ($targets.Count -gt 64) { throw 'Too many targets' }
   # IPv4 排除整个 127/8；IPv6 排除 ::1，不创建会覆盖回环的全范围阻止规则。
@@ -37,8 +47,9 @@ try {
     $base = Join-Path $dataDirectory ('obs\' + $target.id)
     $exe = Join-Path $base 'bin\64bit\obs64.exe'
     Assert-Ordinary $exe
+    Assert-Ordinary $target.exe
     $ownerFile = Join-Path $base '.livenest-owner'; Assert-Ordinary $ownerFile
-    if ([IO.Path]::GetFullPath($target.exe) -ine [IO.Path]::GetFullPath($exe) -or (Get-Content -Encoding UTF8 -LiteralPath $ownerFile -Raw) -cne $target.id) { throw 'OBS ownership mismatch' }
+    if ((Expand-CanonicalPath $target.exe) -ine (Expand-CanonicalPath $exe) -or (Get-Content -Encoding UTF8 -LiteralPath $ownerFile -Raw) -cne $target.id) { throw 'OBS ownership mismatch' }
     $name = $group + '-' + $target.id
     $wanted += $name
     $phase = 'rule-read'
