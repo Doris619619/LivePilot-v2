@@ -1,6 +1,6 @@
 /** LiveNest 桌面入口：本地静态界面、受限 IPC、托盘与用户确认的退出。 */
 import { AppError } from "../src/core/errors";
-import { app, net, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, session, Tray } from "electron";
+import { app, net, clipboard, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, protocol, session, Tray } from "electron";
 import { readFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -9,6 +9,8 @@ import { problemFor, safeError } from "../src/core/errors";
 import { Manager } from "./manager";
 import { DesktopAuth } from "./auth";
 import { Shutdown } from "./shutdown";
+import { DesktopAccess } from "./desktop-access";
+import { problemSchema, problemSummary } from "../src/shared/problems";
 import { UpdateAccess } from "./update-access";
 const auth = new DesktopAuth((url, init) => net.fetch(url, init));
 protocol.registerSchemesAsPrivileged([{ scheme: "livenest", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -60,10 +62,17 @@ async function launch() {
   const updates = new UpdateAccess(manager, () => app.getVersion());
   ipcMain.handle("desktop:update-state", event => { trusted(event); return updates.state(); });
   ipcMain.handle("desktop:update", (event, name) => { trusted(event); return updates.act(name); });
-  ipcMain.handle("desktop:state", async event => { trusted(event); await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined, false); return manager.state(); });
+  const access = new DesktopAccess(auth, manager);
+  ipcMain.handle("desktop:state", async event => { trusted(event); await access.require(false); return manager.state(); });
+  ipcMain.handle("desktop:read-state", event => { trusted(event); return access.read(); });
+  ipcMain.handle("desktop:copy-problem", (event, value) => { trusted(event); clipboard.writeText(problemSummary(problemSchema.parse(value))); return true; });
   const action = z.enum(["restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
-    try { trusted(event); if (name !== "web") await auth.require(manager.settings.paired ? manager.settings.identity?.agentId : undefined);
+    try { trusted(event); if (name === "unpair") {
+        if (input?.confirmed !== true) throw new AppError("INPUT", "请确认删除这台设备绑定。");
+        await access.remove(); return { ok: true, state: manager.state() };
+      }
+      if (name !== "web") await access.require();
       const state=await manager.act(action.parse(name), input === undefined ? {} : z.record(z.string(),z.unknown()).parse(input));
       return {ok:true,state,cancelled:state.activity?.status==="cancelled"};
     } catch(e) { return {ok:false,problem:problemFor(e), ...(e instanceof z.ZodError ? {fields:Object.fromEntries(e.issues.map(i=>[i.path.join("."),"请检查此字段的格式与范围"]))} : {})}; }

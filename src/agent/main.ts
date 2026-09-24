@@ -38,7 +38,7 @@ async function main() {
   if (identity.origin !== config().origin) throw new AppError("CONFIG", "控制端地址与配对记录不一致，请恢复原配置。");
   claimHost();
   const transport = new Transport(identity.origin, identity.agentId, identity.token); const executor = new Executor(transport);
-  const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task));
+  const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task), identity.agentId);
   const health = new Map<string, Problem>();
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let stopped = false; let connected = false;
   process.once("SIGINT", () => { stopped = true; }); process.once("SIGTERM", () => { stopped = true; });

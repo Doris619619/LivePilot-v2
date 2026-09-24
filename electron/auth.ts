@@ -1,5 +1,7 @@
 /** 桌面账号统一在云端校验；客户会话仅驻留主进程，不保存密码。 */
 import { AppError } from "../src/core/errors";
+import type { Settings } from "./settings";
+import { problemSchema } from "../src/shared/problems";
 import { DESKTOP_ORIGIN } from "../src/shared/desktop";
 type Customer = { username: string; role: "customer" };
 type Requester = (url: string, init?: RequestInit) => Promise<Response>;
@@ -23,10 +25,10 @@ export class DesktopAuth {
  async logout() { const token=this.token;this.clear(); if(token) await this.request(DESKTOP_ORIGIN+"/api/desktop/session",{method:"DELETE",headers:{Authorization:"Bearer "+token},signal:AbortSignal.timeout(10000)}).catch(()=>{}); }
  /** 每次敏感操作重查角色及设备归属，状态轮询最多缓存 10 秒。 */
  async require(agentId?:string, fresh=true) {
-  if(!this.session().authenticated) throw new AppError("DESKTOP", "登录已失效，请重新登录。已有直播继续运行。");
+  if(!this.session().authenticated) throw new AppError("AUTH", "登录已失效，请重新登录。已有直播继续运行。");
   if(!fresh && this.checkedAgent===agentId && Date.now()-this.checked<10000)return;
   let response:Response;
-  try { response=await this.request(DESKTOP_ORIGIN+"/api/desktop/session"+(agentId?"?agentId="+encodeURIComponent(agentId):""),{headers:{Authorization:"Bearer "+this.token},redirect:"error",signal:AbortSignal.timeout(10000)}); }catch{throw new AppError("DESKTOP", "无法验证客户会话，请检查网络；已有直播继续运行。");}
+  try { response=await this.request(DESKTOP_ORIGIN+"/api/desktop/session"+(agentId?"?agentId="+encodeURIComponent(agentId):""),{headers:{Authorization:"Bearer "+this.token},redirect:"error",signal:AbortSignal.timeout(10000)}); }catch{throw new AppError("CLOUD_NETWORK", "无法验证客户会话，请检查网络；已有直播继续运行。");}
   if(!response.ok){
    await response.body?.cancel();
    if(response.status===401){this.clear();throw new AppError("AUTH","登录已失效，请重新登录。",401);}
@@ -35,8 +37,26 @@ export class DesktopAuth {
   }
   await response.body?.cancel();this.checked=Date.now();this.checkedAgent=agentId;
  }
+ /** 核对当前客户和原设备证明；只接受明确的删除响应，不从 401/403 推断删除。 */
+ async binding(identity: NonNullable<Settings["identity"]>, remove = false): Promise<"active" | "deleted"> {
+  const token = this.token;
+  const headers = this.headers();
+  let response: Response;
+  try { response = await this.request(DESKTOP_ORIGIN + "/api/desktop/binding", { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ agentId: identity.agentId, token: identity.token, remove }), redirect: "error", signal: AbortSignal.timeout(15000) }); }
+  catch { throw new AppError("CLOUD_NETWORK", "暂时无法核对设备绑定，原配置已保留。请检查网络后重新读取。"); }
+  if (this.token !== token || !this.session().authenticated) throw new AppError("AUTH", "登录已变化，请重新读取状态。", 401);
+  const body = await response.json().catch(() => null);
+  if (response.status === 401) { this.clear(); throw new AppError("AUTH", "登录已失效，请重新登录。", 401); }
+  if (!response.ok) {
+   const parsed = problemSchema.safeParse(body?.problem);
+   if (parsed.success) throw new AppError(parsed.data.code, parsed.data.message, response.status, parsed.data);
+   throw new AppError(response.status === 403 ? "FORBIDDEN" : "CLOUD_UNAVAILABLE", response.status === 403 ? "当前客户无权访问这台电脑，请核对登录账号。" : "云端暂时无法核对设备绑定，请稍后重新读取；原配置已保留。", response.status);
+  }
+  if (body?.status !== "active" && body?.status !== "deleted") throw new AppError("DESKTOP_IPC", "设备绑定响应无效，原配置已保留。请重新读取。");
+  return body.status;
+ }
  /** 配对请求携带客户会话，禁止 UI 接触原始令牌。 */
- headers() { if(!this.session().authenticated)throw new AppError("DESKTOP", "请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
+ headers() { if(!this.session().authenticated)throw new AppError("AUTH", "请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
  /** 会话清理不触碰设备身份。 */
  private clear(){this.token="";this.user=undefined;this.expires=0;this.checked=0;this.checkedAgent=undefined;}
 }

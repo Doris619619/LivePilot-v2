@@ -14,7 +14,7 @@ export default function DevicePairing({ agents }: { agents: AgentDescriptor[] })
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const submitting = useRef(false);
   const invitationRecord = agents.find(a => a.id === agentId);
   const selected = agents.find(a => a.id === (invitationRecord?.pairedTo || agentId)); const paired = !!selected?.paired && !selected.revoked;
-  const recoverable = agents.filter(a => !a.pairedTo && (a.revoked || !a.paired));
+  const recoverable = agents.filter(a => !a.pairedTo && !a.revoked && !a.paired);
   /** 重试复用未使用邀请的设备 ID，已配对时服务器拒绝覆盖。 */
   async function create() {
     if (submitting.current || !listReady) return; submitting.current = true; setBusy(true); setMessage("");
@@ -27,8 +27,8 @@ export default function DevicePairing({ agents }: { agents: AgentDescriptor[] })
     {paired ? <><p role="status">{selected.online ? "连接成功" : "配对成功，等待电脑上线"}：{selected.name}</p><a href={"#device-" + selected.id} onClick={() => setOpen(false)}>查看电脑</a></> : <>
       {!invitation && <>{customers && <label className="field-group">所属客户<select value={selected?.owner || owner} disabled={!!selected?.owner} onChange={e=>setOwner(e.target.value)}><option value="">选择客户</option>{customers.map(c=><option key={c}>{c}</option>)}</select></label>}
         <label className="field-group">电脑名称<input disabled={!listReady || busy || !!agentId} value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="给这台电脑起个名字" /></label>
-        {!!recoverable.length && <details><summary>恢复或继续配对已有电脑</summary><label className="field-group">选择原电脑<select disabled={!listReady || busy} value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setMessage(""); }}><option value="">添加新电脑</option>{recoverable.map(a => <option key={a.id} value={a.id}>{a.name} · {a.id.slice(-6)}{a.revoked ? "（已移除）" : "（待配对）"}</option>)}</select></label></details>}
-        {selected?.revoked && <p>在原电脑的 LiveNest 中粘贴配对码，原配置会保留。</p>}
+        {!!recoverable.length && <details><summary>继续配对尚未连接的电脑</summary><label className="field-group">选择原电脑<select disabled={!listReady || busy} value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setMessage(""); }}><option value="">添加新电脑</option>{recoverable.map(a => <option key={a.id} value={a.id}>{a.name} · {a.id.slice(-6)}{a.revoked ? "（已移除）" : "（待配对）"}</option>)}</select></label></details>}
+
       </>}
       {invitation ? <>
         <p>将配对码粘贴到这台电脑的 LiveNest，点击“连接”。</p>

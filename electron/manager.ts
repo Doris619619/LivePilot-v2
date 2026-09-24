@@ -37,6 +37,21 @@ export class Manager {
     this.settings = await this.store.read(); separateCandidates(this.settings); await this.store.write(this.settings); this.busy = true;
     void (async () => { try { this.checks = await diagnose(this.settings, this.resources); if (this.settings.paired) { this.activity.begin("start"); await this.start(); this.activity.complete(); } } catch (e) { this.message = this.error(e); this.activity.fail(this.message); } finally { this.busy = false; } })();
   }
+  /** 确认云端删除后排空 Agent，再原子保存未配对状态；保留 OBS、素材和密钥。 */
+  async forgetBinding(agentId: string, confirm?: () => Promise<unknown>) {
+    if (this.settings.identity?.agentId !== agentId) return;
+    if (this.busy) throw new AppError("DESKTOP_BUSY", "设备已删除，正在等待当前操作结束后解除本机绑定。");
+    this.busy = true;
+    try {
+      await confirm?.();
+      await this.agent.stop();
+      const next = { ...this.settings, paired: false, dataNotice: "设备绑定已删除。请在网页添加直播电脑，然后粘贴新配对码；本机 OBS 和素材已保留。" };
+      delete next.identity; delete next.maintenance; delete next.inventoryPending;
+      await this.store.write(next); this.settings = next;
+      this.agent.snapshots = []; this.agent.problems = []; this.agent.lastHeartbeat = 0; this.agent.errorCode = undefined; this.agent.message = "";
+      this.activity.value = undefined; this.message = "";
+    } finally { this.busy = false; }
+  }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
     return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: this.checks, update: this.updates.state };
@@ -92,6 +107,7 @@ export class Manager {
   /** 新邀请可恢复原电脑；只有云端确认结果且本机保存成功后才等待 Agent 上线。 */
   private async pair(invitation: unknown) {
     await pairDesktop(this.settings, invitation, () => this.store.write(this.settings), (url, init) => net.fetch(url, { ...init, headers: { ...init.headers, ...this.customerHeaders() } }));
+    if (this.settings.dataNotice?.startsWith("设备绑定已删除")) { delete this.settings.dataNotice; await this.store.write(this.settings); }
     await this.start();
   }
   /** 全部写操作去重，失败保存配置并显示下一步提示。 */

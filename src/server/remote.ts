@@ -16,7 +16,11 @@ export function target(value: unknown): Target { const result = targetSchema.saf
 export function queryTarget(request: Request) { const url = new URL(request.url); return target({ agentId: url.searchParams.get("agentId"), instanceId: url.searchParams.get("instanceId") }); }
 /** 云端只公开实例、设备名称及在线状态，不接触 Windows 配置。 */
 export async function remoteInstances(user?: Member) {
-  const agents = (await listAgents()).filter(a => !user || user.role === "admin" || a.owner === user.username); return { agents, instances: agents.filter(a => !a.revoked).flatMap(a => a.instances.map(i => ({ ...i, agentId: a.id, agentName: a.name }))) };
+  const visible = (await listAgents()).filter(a => !user || user.role === "admin" || a.owner === user.username);
+  const active = new Set(visible.filter(a => !a.revoked && !a.pairedTo).map(a => a.id));
+  // 已消费邀请仅用于确认原配对结果；目标删除后一起隐藏，不显示为电脑卡片。
+  const agents = visible.filter(a => !a.revoked || (a.pairedTo && active.has(a.pairedTo)));
+  return { agents, instances: agents.filter(a => !a.revoked).flatMap(a => a.instances.map(i => ({ ...i, agentId: a.id, agentName: a.name }))) };
 }
 /** 过期状态不表示停止推流；保留场次信息但禁用基于旧状态的操作。 */
 export async function remoteDashboard(destination: Target): Promise<Dashboard> {

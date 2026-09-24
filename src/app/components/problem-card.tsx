@@ -2,15 +2,15 @@
 "use client";
 import { useState } from "react";
 import { guidance, problemSummary, type Problem, type ProblemAction } from "../../shared/problems";
-type Props = { problem: Problem; objectName?: string; disabled?: boolean; onRefresh?: () => void; onAuthorize?: () => void; onSettings?: () => void; onHelp?: () => void };
+type Props = { problem: Problem; objectName?: string; disabled?: boolean; onRefresh?: () => void; onLogin?: () => void; onAuthorize?: () => void; onSettings?: () => void; onHelp?: () => void };
 /** 客户步骤始终可见，技术摘要可复制，远程设置入口只显示本机操作说明。 */
-export default function ProblemCard({ problem, objectName, disabled, onRefresh, onAuthorize, onSettings, onHelp }: Props) {
+export default function ProblemCard({ problem, objectName, disabled, onRefresh, onLogin, onAuthorize, onSettings, onHelp }: Props) {
   const [copied, setCopied] = useState("");
   const info = guidance(problem);
-  const handlers: Partial<Record<ProblemAction, (() => void) | undefined>> = { refresh:onRefresh, authorize:onAuthorize, settings:onSettings, help:onHelp };
-  const labels: Partial<Record<ProblemAction,string>> = { refresh:problem.attemptId ? "查询本次操作" : "重新检查", authorize:"重新授权原频道", settings:"查看连接设置", help:"查看对应步骤" };
+  const handlers: Partial<Record<ProblemAction, (() => void) | undefined>> = { login:onLogin, refresh:onRefresh, authorize:onAuthorize, settings:onSettings, help:onHelp };
+  const labels: Partial<Record<ProblemAction,string>> = { login:"重新登录", refresh:problem.stage === "读取本机状态" ? "重新读取" : problem.attemptId ? "查询本次操作" : "重新检查", authorize:"重新授权原频道", settings:"查看连接设置", help:"查看对应步骤" };
   /** 复制失败只影响复制提示，不覆盖原故障。 */
-  async function copy() { try { await navigator.clipboard.writeText(problemSummary(problem)); setCopied("摘要已复制，请交给管理员"); } catch { setCopied("无法自动复制，请复制下方诊断信息"); } }
+  async function copy() { try { if (window.liveNest?.copyProblem) { if (!await window.liveNest.copyProblem(problem)) throw new Error(); } else await navigator.clipboard.writeText(problemSummary(problem)); setCopied("摘要已复制，请交给管理员"); } catch { setCopied("无法自动复制，请复制下方诊断信息"); } }
   return <section className={"problem-card " + problem.severity} role={problem.severity === "info" ? "status" : "alert"}>
     <strong>{objectName && objectName + " · "}{info.title}</strong>
     <p>{problem.message}</p>

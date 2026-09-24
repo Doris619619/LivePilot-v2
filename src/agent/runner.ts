@@ -17,7 +17,7 @@ export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]
 export async function runAgent(identity: Identity, hooks: AgentHooks) {
   if (identity.origin !== config().origin) throw new AppError("CONFIG", "控制端地址与配对记录不一致。");
   claimHost(); const transport = new Transport(identity.origin, identity.agentId, identity.token);
-  const executor = new Executor(transport); const worker = new Worker(new Store(path.join(dataRoot(), "agent", "tasks")), task => executor.execute(task));
+  const executor = new Executor(transport); const worker = new Worker(new Store(path.join(dataRoot(), "agent", "tasks")), task => executor.execute(task), identity.agentId);
   const health = new Map<string, Problem>();
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let connected = false;
   const readers = instanceDescriptors().map(async instance => { while (!hooks.stopped()) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); health.delete(instance.id); hooks.snapshots?.([...snapshots.values()]); } catch { health.set(instance.id, makeProblem("SNAPSHOT_READ", "此实例状态读取失败，保留最后一次成功快照供核对。", {source:"agent",target:{instanceId:instance.id},stage:"读取实例状态"})); } await sleep(HEARTBEAT_MS); } });
