@@ -1,4 +1,4 @@
-/** 指定 OBS 启动按钮的隔离界面验收，涵盖未配对、目标绑定、运行反馈和窄窗口。 */
+/** 指定 OBS 常驻操作的隔离界面验收，涵盖未配对、控制成功后的入口、目标绑定、运行反馈和窄窗口。 */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -75,7 +75,7 @@ try {
     s.snapshots=s.instances.map((instance,index)=>({instance,observedAt:Date.now(),dashboard:{busy:false,state:{phase:'idle',stage:'等待',updatedAt:new Date().toISOString()},obs:{ready:true,running:true,streaming:false},youtube:{connected:index===0,channel:index===0?'示例频道':''},media:{videos:index===0?['示例视频.mp4']:[],music:index===0?['示例音乐.mp3']:[]},configuration:{missing:[],privacy:'private',madeForKids:false}}}));
   });
   await page.locator('#setup-obs-main').getByText('准备完成',{exact:true}).waitFor();
-  assert.equal(await page.locator('#setup-obs-second .obs-config-row .setup-state').getByText('待完成',{exact:true}).count(),2);
+  for (const name of ['启动并检查 OBS 2', '重新检查 OBS 2']) assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name, exact: true }).isVisible(), true);
   assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),1);
   assert.equal(await page.locator('#setup-obs-second').getByText('3 / 5 已完成',{exact:true}).count(),1);
   await page.getByRole('navigation',{name:'OBS 1 配置步骤'}).getByRole('button',{name:/2.*连接网页/}).click();
