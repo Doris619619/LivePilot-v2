@@ -321,7 +321,7 @@ progress { accent-color: var(--accent-primary); }
 .studio-connections > summary span { font-size: 12px; font-weight: 400; color: var(--text-secondary); }
 .studio-connections .instance-workflow { display: block; margin-top: 12px; }
 .studio-tabs { display: flex; padding: 0 20px; gap: 20px; border-bottom: 1px solid var(--border-subtle); }
-.studio-tabs button { padding: 16px 0; min-height: 52px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 14px; white-space: nowrap; }
+.studio-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 16px 0; min-height: 52px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-secondary); font-size: 14px; white-space: nowrap; }
 .studio-tabs button[aria-selected="true"] { color: var(--accent-primary); border-bottom-color: var(--accent-primary); }
 .studio-panel { padding: 24px; }
 .studio-panel[hidden] { display: none; }
@@ -338,4 +338,14 @@ progress { accent-color: var(--accent-primary); }
   .studio-tabs { padding-inline: 14px; gap: 16px; }
   .studio-tabs button { font-size: 13px; }
   .broadcast-preview, .broadcast-control-row { padding: 16px; }
+}
+
+/* 数字步骤与下一步入口补足页签的操作顺序，窄屏保持三个入口完整可见。 */
+.studio-tabs button:not([aria-selected="true"]) .step-number { background: var(--bg-subtle); color: var(--text-secondary); }
+.studio-step-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding: 16px 24px; border-top: 1px solid var(--border-subtle); font-size: 13px; color: var(--text-secondary); }
+.studio-step-footer button { font-size: 13px; }
+@media (max-width: 600px) {
+  .studio-tabs { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+  .studio-tabs button { flex-direction: column; gap: 6px; padding-block: 12px; }
+  .studio-step-footer { padding: 16px 14px; }
 }

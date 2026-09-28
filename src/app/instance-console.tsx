@@ -200,7 +200,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
           </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`}>直播控制</h3>
+            <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
             <div className="broadcast-actions">{broadcastControls}</div>
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
