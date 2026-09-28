@@ -1,8 +1,9 @@
-/* 文件用途：按四个步骤组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
+/* 文件用途：按内容、素材、发布设置与控制区组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
 
 "use client";
 
 import { useEffect, useState } from "react";
+import BroadcastSettings from "./components/broadcast-settings";
 import OAuthFeedback from "./oauth-feedback";
 import ProblemCard from "./components/problem-card";
 import { makeProblem, configurationLabel, type Problem } from "../shared/problems";
@@ -57,6 +58,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
     select,
   } = model;
 
+  const [detailsBusy, setDetailsBusy] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
@@ -102,7 +104,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
     unlisted: "不公开列出",
     private: "私密",
     public: "公开",
-  }[data?.configuration.privacy || "unlisted"];
+  }[selection.broadcast?.privacy || data?.configuration.privacy || "public"];
 
   const issues: Problem[] = [model.problem, data?.obs.problem, data?.youtube.problem, ...(data?.media.problems || []), ...(data?.problems || [])].filter((p): p is NonNullable<typeof p>=>!!p).map(p=>({...p,target:{...p.target,agentId:instance.agentId,instanceId:instance.id}}));
   if (!issues.length && (error || data?.state.error)) issues.push(makeProblem("CONTROL",error || data!.state.error!,{target:{agentId:instance.agentId,instanceId:instance.id},attemptId:data?.operation?.id,stage:"直播操作"}));
@@ -110,7 +112,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
   const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
 
   const broadcastControls = <>
-          <button type="button" className="btn-primary" disabled={!!blocker} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+          <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
           </button>
           <button type="button" className="btn-danger" disabled={busy || stale || !data} onClick={() => void act("stop")}>
@@ -145,9 +147,9 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
       {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
-        <div className="instance-workflow">
+        <details className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
-            <h3 id={`step-1-${id}`}><span className="step-number">1</span>设备与频道</h3>
+            <h3 className="visually-hidden" id={`step-1-${id}`}>设备与频道</h3>
             <div className="connections-grid">
               <div className="conn-box">
                 <div className="conn-info"><ObsIcon /><span>{name}</span><span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.obs.ready ? "已连接" : data?.obs.processKnown === false ? "状态未知" : data?.obs.running ? "控制未连接" : "未启动"}</span></div>
@@ -161,8 +163,10 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
             {data?.youtube.channelId && <a className="channel-link" href={`https://www.youtube.com/channel/${encodeURIComponent(data.youtube.channelId)}`} target="_blank" rel="noopener noreferrer">打开已绑定频道<ExternalLinkIcon /></a>}
           </section>
-          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
-            <h3 id={`step-2-${id}`}><span className="step-number">2</span>音视频编排</h3>
+
+          </div></details>
+          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} broadcastId={data?.state.broadcastId} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
+            <h3 id={`step-2-${id}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">
             <label htmlFor={`video-${id}`} className="field-label">循环视频</label>
@@ -194,20 +198,20 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
         </div>
 
 
-          </section>
+          </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`}><span className="step-number">3</span>直播控制</h3>
+            <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
             <div className="broadcast-actions">{broadcastControls}</div>
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
-            <h3 id={`step-4-${id}`}><span className="step-number">4</span>运行状态</h3>
+            <h3 id={`step-4-${id}`}>运行状态</h3>
             <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
             <dl className="runtime-values">
               <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
               <div><dt>YouTube</dt><dd>{stale ? "未知" : data?.youtube.lifecycle || "—"}</dd></div>
             </dl>
           </section>
-        </div>
+        </div>} />
 
         <details className="instance-diagnostics">
           <summary>连接与诊断</summary>
@@ -218,7 +222,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             <dl className="diagnostic-values">
               <div><dt>频道 ID</dt><dd>{data?.youtube.channelId || "—"}</dd></div>
               <div><dt>当前步骤</dt><dd>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</dd></div>
-              <div><dt>可见范围</dt><dd>{privacyText} · {data?.configuration.madeForKids ? "面向儿童" : "常规内容"}</dd></div>
+              <div><dt>可见范围</dt><dd>{privacyText} · {(selection.broadcast?.madeForKids ?? data?.configuration.madeForKids) ? "面向儿童" : "常规内容"}</dd></div>
               <div><dt>实例</dt><dd>{instance.agentName || "本机"} / {instance.id}</dd></div>
               <div><dt>Broadcast ID</dt><dd>{data?.state.broadcastId || "—"}</dd></div>
               <div><dt>Stream ID</dt><dd>{data?.state.streamId || "—"}</dd></div>

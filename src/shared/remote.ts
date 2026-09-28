@@ -1,5 +1,7 @@
 /** 云端与 Agent 的版本化白名单协议；浏览器 DTO 不含密钥和绝对路径。 */
 import { z } from "zod";
+import { aiBriefSchema, aiKeySchema } from "./broadcast-ai";
+import { broadcastSchema, thumbnailInputSchema } from "./broadcast";
 import type { Dashboard, InstanceDescriptor } from "./types";
 import { problemSchema } from "./problems";
 export const PROTOCOL = 1;
@@ -11,12 +13,17 @@ export const uuidSchema = z.string().uuid();
 export const targetSchema = z.object({ agentId: idSchema, instanceId: idSchema });
 export type Target = z.infer<typeof targetSchema>;
 export const controlSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("start"), video: z.string().min(1).max(255), music: z.string().min(1).max(255), videoAudio: z.boolean() }).strict(),
+  z.object({ action: z.literal("start"), video: z.string().min(1).max(255), music: z.string().min(1).max(255), videoAudio: z.boolean(), broadcast: broadcastSchema.optional() }).strict(),
   z.object({ action: z.literal("stop") }).strict(), z.object({ action: z.literal("launch") }).strict(),
   z.object({ action: z.literal("clear-uncertain"), confirmed: z.literal(true) }).strict(),
 ]);
 export const uploadInputSchema = z.object({ kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive().max(20 * 1024 ** 3), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const taskPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("broadcast-ai-status") }).strict(),
+  z.object({ kind: z.literal("broadcast-ai-key"), apiKey: aiKeySchema }).strict(),
+  z.object({ kind: z.literal("broadcast-ai-generate"), brief: aiBriefSchema }).strict(),
+  z.object({ kind: z.literal("broadcast-playlists") }).strict(),
+  z.object({ kind: z.literal("broadcast-thumbnail"), input: thumbnailInputSchema }).strict(),
   z.object({ kind: z.literal("control"), input: controlSchema }).strict(),
   z.object({ kind: z.literal("oauth-begin") }).strict(),
   z.object({ kind: z.literal("oauth-finish"), cookie: z.string().regex(/^[a-f0-9]{64}$/), state: z.string().max(160), code: z.string().min(1).max(4096) }).strict(),

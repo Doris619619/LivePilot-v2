@@ -3,6 +3,8 @@
 
 在网页选择素材、授权频道并控制直播；Windows 客户端配置本机 OBS、运行 Agent 和检查故障。支持多台电脑，每台可使用多个独立 OBS。
 
+工作台按「1 直播内容 / 2 音视频 / 3 发布设置 / 4 开始直播」引导操作，前三步集中编辑，封面预览与开播控制置于侧栏。开发分支新增开播前的标题、说明、封面、播放列表、公开范围与儿童内容配置，附观众视角预览，并支持输入 `lofi` 等关键词由 DeepSeek 生成带 emoji 的场景化英文标题和分区说明；新网页场次默认 **公开**。测试直播请主动改为「不公开列出」或「私密」。云端和 Agent 需共同升级；当前线上与安装版尚未随此分支发布。详见 [开播详情配置](docs/开播详情配置.md)。
+
 **[下载 Windows x64 最新安装版](https://github.com/Doris619619/LiveNest-Releases/releases/latest)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要预装 OBS，也不需要另装 Node、Git 或 Docker；点击“准备第一个 OBS”即可。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。
@@ -61,7 +63,7 @@ Windows App 只接受客户账号，通过云端验证。退出界面不停止�
 
 先执行 `npm run build` 与 `npm run desktop:renderer`，再执行 `npm run preview:local`，打开 <http://127.0.0.1:3020>。入口包含客户工作台、管理员总览、登录页及 App 的首次配置、第二路 OBS、诊断、帮助和设置。客户（3021）与管理员（3023）分别自动登录，避免同时预览时角色混淆；3022 是真实本地网页登录服务。
 
-预览只监听本机，使用新建的 `.data/preview/session-*` 合成数据。演示账号 Liang / ULiang 的本地密码为 `preview123456`，与线上密码无关；开停播仅改变演示状态。App 的磁盘选择、扫描和配对使用浏览器模拟桥，不执行 OBS 或文件迁移。此预览不属于安装版或真实直播验收。按 Ctrl+C 停止。
+预览只监听本机，使用新建的 `.data/preview/session-*` 合成数据。演示账号 Liang / ULiang 的本地密码为 `preview123456`，与线上密码无关；开停播仅改变演示状态。App 的磁盘选择、扫描和配对使用浏览器模拟桥，不执行 OBS 或文件迁移。可在本机 `.env.local` 配置 `DEEPSEEK_API_KEY`，重启预览后「生成并填入」会真实调用 DeepSeek，同时填入英文标题与说明；未配置时仍返回标明的演示文案。密钥不会进入前端或 Git。此预览不属于安装版或真实直播验收。按 Ctrl+C 停止。
 
 原 0.1.2 发布已取消，原标签保留。用户已授权检查后发布 0.1.3；只从经过验证的 main 创建新标签，不复用旧标签或覆盖公开安装资产。
 

@@ -36,6 +36,7 @@ export class Control {
   async launch() {
     return this.exclusive(async () => { await this.obs.ensureReady(); });
   }
+  /** 固化本次媒体与直播详情；详情准备失败时不启动推流，重试复用相同场次。 */
   async start(selection: Selection) {
     return this.operation(async state => {
       const channel = await this.youtube.channel();
@@ -50,7 +51,7 @@ export class Control {
         Object.assign(state, initialState(), { channelId: channel.id, streamId: oldStream });
         current = null;
       }
-      if (state.selection && state.broadcastTitle && JSON.stringify(state.selection) !== JSON.stringify(selection)) throw new AppError("RECOVER", "恢复当前场次时请保留原媒体选择，或先结束当前场次再更换媒体。");
+      if (state.selection && state.broadcastTitle && JSON.stringify(state.selection) !== JSON.stringify(selection)) throw new AppError("RECOVER", "恢复当前场次时请保留原媒体与直播详情，或先结束当前场次再更换。");
       const files = await this.media(selection);
       await this.save(state, { phase: "starting", stage: "准备 OBS", error: undefined, channelId: channel.id, selection });
       await this.obs.ensureReady();
@@ -80,7 +81,7 @@ export class Control {
         } else {
           const title = "LivePilot " + new Date().toISOString().replace(/[:.]/g, "-") + " " + randomBytes(4).toString("hex");
           await this.save(state, { broadcastTitle: title, broadcastIntent: true });
-          const created = await this.youtube.createBroadcast(title);
+          const created = await this.youtube.createBroadcast(title, selection.broadcast);
           if (!created.id) throw new AppError("YOUTUBE_API", "YouTube 未返回场次标识，请重试以核对创建结果。");
           await this.save(state, { broadcastId: created.id, broadcastIntent: false });
         }
@@ -88,6 +89,12 @@ export class Control {
       // Never continue preparing a recovered object without reading its lifecycle.
       current = await this.youtube.broadcast(state.broadcastId!);
       if (!current || !["created", "ready", "liveStarting", "live"].includes(current.status.lifeCycleStatus)) throw new AppError("RECOVER", "YouTube 场次不在可开播状态，请结束或在 YouTube Studio 核对。");
+      if (selection.broadcast && !state.detailsApplied) {
+        if (!this.youtube.prepareBroadcast) throw new AppError("CONFIG", "当前 Agent 不支持直播详情，请升级后重试。");
+        await this.save(state, { stage: "设置直播详情、封面与播放列表" });
+        await this.youtube.prepareBroadcast(state.broadcastId!, selection.broadcast);
+        await this.save(state, { detailsApplied: true });
+      }
       if (!state.streamId) {
         if (state.streamIntent) {
           const found = await this.youtube.findStream(state.streamTitle!);

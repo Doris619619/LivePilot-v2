@@ -1,5 +1,6 @@
 /** 登录成员提交幂等命令；先持久化受理再由直播电脑异步执行。 */
 import { cloudMode, target, remoteControl } from "@/server/remote";
+import { broadcastSchema } from "@/shared/broadcast";
 import { controlSchema } from "@/shared/remote";
 import { after } from "next/server";
 import { z } from "zod";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 const base = { agentId: z.string().optional(), instanceId: z.string().min(1).max(32), requestId: z.string().uuid() };
 const input = z.discriminatedUnion("action", [
-  z.object({ ...base, action: z.literal("start"), video: z.string().min(1).max(255), music: z.string().min(1).max(255), videoAudio: z.boolean() }).strict(),
+  z.object({ ...base, action: z.literal("start"), video: z.string().min(1).max(255), music: z.string().min(1).max(255), videoAudio: z.boolean(), broadcast: broadcastSchema.optional() }).strict(),
   z.object({ ...base, action: z.literal("stop") }).strict(),
   z.object({ ...base, action: z.literal("launch") }).strict(),
   z.object({ ...base, action: z.literal("clear-uncertain"), confirmed: z.literal(true) }).strict(),
@@ -24,7 +25,7 @@ export async function POST(request: Request) {
   try {
     guard(request, true);
     const user = await authenticate(request); if (!cloudMode()) requireAdmin(user);
-    const parsed = input.safeParse(await readJson(request));
+    const parsed = input.safeParse(await readJson(request, 32 * 1024));
     if (!parsed.success) throw new AppError("INPUT", "请选择有效实例、媒体和操作，请求必须包含唯一标识。");
     if (cloudMode()) {
       const { agentId, instanceId, requestId, ...input } = parsed.data;
