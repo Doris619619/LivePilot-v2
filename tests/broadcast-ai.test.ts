@@ -21,7 +21,7 @@ it("encrypts the key, exposes only presence and refuses generation without a key
 });
 it("turns a short style brief into a bounded English JSON request", async () => {
   await saveAiKey(storage, key);
-  const copy = { title: "Lofi Rainy Nights | Beats to Study & Relax", description: "Unwind with mellow lofi beats and a calm late-night atmosphere.\n\n#lofi #study" };
+  const copy = { title: "Rainy Night Lofi 🌙 Chill Beats for Study & Relax | Lofi Radio", description: "🌙 Welcome to a quiet night.\n\nPerfect for:\n📚 Studying & reading\n💻 Working & coding\n\n#lofi #study" };
   const fetcher = vi.fn().mockResolvedValue(Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(copy) } }] })); vi.stubGlobal("fetch", fetcher);
   expect(await generateCopy(storage, "lofi")).toEqual(copy);
   expect(fetcher.mock.calls[0][0]).toBe("https://api.deepseek.com/chat/completions");
