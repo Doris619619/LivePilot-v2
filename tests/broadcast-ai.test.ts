@@ -8,7 +8,7 @@ import { aiStatus, saveAiKey, generateCopy, DEEPSEEK_MODEL } from "@/core/broadc
 let dir: string; let storage: Store;
 const key = "sk-synthetic-key-for-tests-only";
 /** 隔离磁盘和加密密钥；所有 HTTP 都由测试控制。 */
-beforeEach(async () => { dir = await mkdtemp(path.join(os.tmpdir(), "ai-copy-test-")); storage = new Store(dir); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); });
+beforeEach(async () => { dir = await mkdtemp(path.join(os.tmpdir(), "ai-copy-test-")); storage = new Store(dir); vi.stubEnv("DEEPSEEK_API_KEY", ""); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); });
 /** 清理自己创建的临时目录，不读取真实 API Key。 */
 afterEach(async () => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); if (path.dirname(dir) !== os.tmpdir() || !path.basename(dir).startsWith("ai-copy-test-")) throw new Error("Unsafe cleanup"); await rm(dir, { recursive: true }); });
 it("encrypts the key, exposes only presence and refuses generation without a key", async () => {
@@ -38,4 +38,17 @@ it.each([
 ])("rejects unusable output without overwriting the draft", async copy => {
   await saveAiKey(storage, key); vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(copy) } }] })));
   await expect(generateCopy(storage, "lofi")).rejects.toThrow("原文案已保留");
+});
+
+it("uses server environment credentials and gives instance credentials precedence", async () => {
+  vi.stubEnv("DEEPSEEK_API_KEY", "sk-environment-synthetic-only");
+  expect(await aiStatus(storage)).toEqual({ configured: true });
+  const copy = { title: "Lofi Night", description: "Soft beats for a peaceful night." };
+  const fetcher = vi.fn().mockImplementation(() => Promise.resolve(Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(copy) } }] })));
+  vi.stubGlobal("fetch", fetcher);
+  expect(await generateCopy(storage, "lofi")).toEqual(copy);
+  expect(fetcher.mock.calls[0][1].headers.Authorization).toBe("Bearer sk-environment-synthetic-only");
+  await saveAiKey(storage, key);
+  await generateCopy(storage, "jazz");
+  expect(fetcher.mock.calls[1][1].headers.Authorization).toBe("Bearer " + key);
 });

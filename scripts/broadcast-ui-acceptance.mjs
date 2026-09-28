@@ -12,6 +12,12 @@ try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', route => { const url = new URL(route.request().url()); return ['127.0.0.1', 'localhost'].includes(url.hostname) || url.protocol === 'data:' ? route.continue() : route.abort(); });
+  // 即使开发环境配置了真实 Key，自动化回归也只使用合成 AI 响应。
+  await page.route('**/api/broadcast-assets', async route => {
+    const input = route.request().postDataJSON();
+    if (input.action === 'ai-generate') return route.fulfill({ json: { demo: true, title: 'Lofi Night | Music for Study', description: 'Warm beats for a peaceful night. #lofi' } });
+    return route.fallback();
+  });
   await page.goto(origin + '/workspace', { waitUntil: 'networkidle' });
   const first = page.locator('#instance-preview_liang-main');
   const second = page.locator('#instance-preview_liang-obs_2');
@@ -28,6 +34,7 @@ try {
   assert.equal(await title.inputValue(), '');
   await first.getByRole('button', { name: '生成并填入', exact: true }).click();
   await first.getByText('演示文案已填入，未调用真实 DeepSeek API。', { exact: true }).waitFor();
+  await first.getByRole('tab', { name: '发布设置', exact: true }).click();
   await first.getByRole('button', { name: '读取频道列表', exact: true }).click();
   await first.getByLabel('学习与专注', { exact: true }).check();
   await first.locator('[id^="broadcast-privacy-"]').selectOption('unlisted');
@@ -36,8 +43,10 @@ try {
   assert.match(await title.inputValue(), /Lofi/);
   assert.equal(await first.locator('[id^="broadcast-privacy-"]').inputValue(), 'unlisted');
   assert.equal(await first.locator('[id^="broadcast-audience-"]').inputValue(), 'true');
+  await first.getByRole('tab', { name: '发布设置', exact: true }).click();
   await first.locator('[id^="broadcast-privacy-"]').selectOption('public');
   await first.locator('[id^="broadcast-audience-"]').selectOption('false');
+  await first.getByRole('tab', { name: '直播内容', exact: true }).click();
   // 合成 PNG 仅用于文件选择与本地预览，不传给外部 API。
   await first.locator('input[type=file]').setInputFiles({ name: 'demo-cover.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=', 'base64') });
   await first.getByText('已上传：demo-cover.png', { exact: true }).waitFor();

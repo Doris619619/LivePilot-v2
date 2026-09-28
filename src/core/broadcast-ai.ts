@@ -13,16 +13,16 @@ export async function saveAiKey(storage: Store, value: string) {
 }
 /** 只返回配置存在性，解密失败不默默覆盖原密钥。 */
 export async function aiStatus(storage: Store) {
-  return { configured: !!await storage.read<string>("deepseek.enc") };
+  return { configured: !!await storage.read<string>("deepseek.enc") || !!process.env.DEEPSEEK_API_KEY?.trim() };
 }
 /** 固定官方地址、无自动重试；输出通过字段/长度校验后才进入网页草稿。 */
 export async function generateCopy(storage: Store, input: string) {
   const parsed = aiBriefSchema.safeParse(input);
   if (!parsed.success) throw new AppError("INPUT", "请填写 1–500 字的音乐风格或主题。");
   const encrypted = await storage.read<string>("deepseek.enc");
-  if (!encrypted) throw new AppError("CONFIG", "请先在 DeepSeek 设置中保存 API Key。");
-  const saved = unseal<{ apiKey: string }>(encrypted);
-  const key = aiKeySchema.safeParse(saved.apiKey);
+  const value = encrypted ? unseal<{ apiKey: string }>(encrypted).apiKey : process.env.DEEPSEEK_API_KEY?.trim();
+  if (!value) throw new AppError("CONFIG", "请先配置 DEEPSEEK_API_KEY 或在 DeepSeek 设置中保存 API Key。");
+  const key = aiKeySchema.safeParse(value);
   if (!key.success) throw new AppError("CONFIG", "DeepSeek 密钥配置无效，请重新保存。");
   let response: Response;
   try {

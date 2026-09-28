@@ -1,4 +1,4 @@
-/* 文件用途：按四个步骤组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
+/* 文件用途：按内容、素材、发布设置与控制区组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
 
 "use client";
 
@@ -147,9 +147,9 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
       {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
-        <div className="instance-workflow">
+        <details className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
-            <h3 id={`step-1-${id}`}><span className="step-number">1</span>设备与频道</h3>
+            <h3 className="visually-hidden" id={`step-1-${id}`}>设备与频道</h3>
             <div className="connections-grid">
               <div className="conn-box">
                 <div className="conn-info"><ObsIcon /><span>{name}</span><span className={`conn-status ${data?.obs.ready && !stale ? "connected" : "disconnected"}`}>{stale ? "未知" : data?.obs.ready ? "已连接" : data?.obs.processKnown === false ? "状态未知" : data?.obs.running ? "控制未连接" : "未启动"}</span></div>
@@ -163,8 +163,10 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
             {data?.youtube.channelId && <a className="channel-link" href={`https://www.youtube.com/channel/${encodeURIComponent(data.youtube.channelId)}`} target="_blank" rel="noopener noreferrer">打开已绑定频道<ExternalLinkIcon /></a>}
           </section>
-          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
-            <h3 id={`step-2-${id}`}><span className="step-number">2</span>音视频编排</h3>
+
+          </div></details>
+          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} broadcastId={data?.state.broadcastId} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
+            <h3 id={`step-2-${id}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">
             <label htmlFor={`video-${id}`} className="field-label">循环视频</label>
@@ -196,12 +198,9 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
         </div>
 
 
-          </section>
-          </div>
-          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} broadcastId={data?.state.broadcastId} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} />
-          <div className="broadcast-control-row">
+          </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`}><span className="step-number">4</span>直播控制</h3>
+            <h3 id={`step-3-${id}`}>直播控制</h3>
             <div className="broadcast-actions">{broadcastControls}</div>
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
@@ -212,7 +211,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
               <div><dt>YouTube</dt><dd>{stale ? "未知" : data?.youtube.lifecycle || "—"}</dd></div>
             </dl>
           </section>
-        </div>
+        </div>} />
 
         <details className="instance-diagnostics">
           <summary>连接与诊断</summary>

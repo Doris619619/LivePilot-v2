@@ -3,7 +3,9 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile, access, open } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+import { parseEnv } from 'node:util';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { seed, refresh, control, password } from './fixtures.mjs';
 import { guardPreview, authorizePreviewControl } from './security.mjs';
@@ -14,6 +16,13 @@ await access('.next/BUILD_ID'); await access('desktop/out/index.html');
 await mkdir('.data/preview', { recursive: true });
 const root = await mkdtemp(path.join(repo, '.data/preview/session-'));
 await seed(root);
+// 仅加载本机显式配置的 DeepSeek 密钥；其他预览配置仍完全隔离。
+try { const local = parseEnv(await readFile(path.join(repo, '.env.local'), 'utf8')); if (local.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = local.DEEPSEEK_API_KEY; } catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取本地 AI 环境配置'); }
+const aiBundle = path.join(root, 'ai-runtime.mjs');
+await build({ stdin: { contents: 'export { generateCopy, aiStatus } from "./src/core/broadcast-ai"; export { Store } from "./src/core/storage";', resolveDir: repo, loader: 'ts' }, outfile: aiBundle, bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
+const ai = await import(pathToFileURL(aiBundle).href);
+const aiStore = new ai.Store(path.join(root, 'ai'));
+let aiBusy = false;
 const origin = 'http://127.0.0.1:3022';
 const env = { ...process.env };
 for (const name of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_)/.test(name)) delete env[name];
@@ -48,8 +57,15 @@ async function proxy(port, username) {
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
       if (url.pathname === '/api/broadcast-assets' && request.method === 'POST') {
         const body = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...body, action: 'launch' });
-        if (body.action === 'ai-status') return json(response, 200, { configured: false });
+        if (body.action === 'ai-status') return json(response, 200, await ai.aiStatus(aiStore));
         if (body.action === 'ai-key') return json(response, 409, { error: '本地演示不保存真实 API Key；请在升级后的正式工作台配置。' });
+        if (body.action === 'ai-generate' && process.env.DEEPSEEK_API_KEY) {
+          if (aiBusy) return json(response, 409, { error: '正在生成文案，请稍候。' });
+          aiBusy = true;
+          try { return json(response, 200, await ai.generateCopy(aiStore, body.brief)); }
+          catch (error) { return json(response, 502, { error: error.code ? error.message : '生成失败，请重试。' }); }
+          finally { aiBusy = false; }
+        }
         if (body.action === 'ai-generate') return json(response, 200, { demo: true, title: 'Tokyo After Rain | Lofi Beats for Study, Work & Relaxation', description: 'Slow down and find your focus with mellow lofi beats, soft melodies, and a peaceful late-night atmosphere. Let these warm sounds keep you company while you study, work, read, or simply take a quiet break.\n\nSettle into your favorite spot, turn the volume to a comfortable level, and enjoy a little space to breathe.\n\n#lofi #chillbeats #studymusic #relaxingmusic' });
         if (body.action === 'playlists') return json(response, 200, { playlists: [{ id: 'PL_preview_study', title: '学习与专注' }, { id: 'PL_preview_night', title: '深夜电台' }, { id: 'PL_preview_lofi', title: 'Lofi 音乐精选' }] });
         if (body.action === 'thumbnail') return json(response, 200, { id: randomUUID(), name: body.input.name });
