@@ -3,6 +3,8 @@
 
 在网页选择素材、授权频道并控制直播；Windows 客户端配置本机 OBS、运行 Agent 和检查故障。支持多台电脑，每台可使用多个独立 OBS。
 
+开发分支新增开播前的标题、说明、封面、播放列表、公开范围与儿童内容配置，附观众视角预览，并支持输入 `lofi` 等关键词由 DeepSeek 生成英文标题和说明；新网页场次默认 **公开**。测试直播请主动改为「不公开列出」或「私密」。云端和 Agent 需共同升级；当前线上与安装版尚未随此分支发布。详见 [开播详情配置](docs/开播详情配置.md)。
+
 **[下载 Windows x64 最新安装版](https://github.com/Doris619619/LiveNest-Releases/releases/latest)** · **[打开网页工作台](https://livenest.duckdns.org/#workspace)**
 
 安装版内置 Node、Agent、OBS 和离线图解。直播电脑不需要预装 OBS，也不需要另装 Node、Git 或 Docker；点击“准备第一个 OBS”即可。首个公开版本为 [LiveNest 0.1.0](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.0)。

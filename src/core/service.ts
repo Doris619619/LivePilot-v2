@@ -26,7 +26,7 @@ export class Service {
     const readConfig = () => config(id);
     const storage = new Store(readConfig().dataDir);
     this.auth = new YouTubeAuth(storage, id, tokens => saveBinding(id, tokens));
-    this.youtube = new YouTubeApi(this.auth);
+    this.youtube = new YouTubeApi(this.auth, storage);
     this.obs = new LocalObsRuntime(new ObsController(readConfig, { id, scene: "LIVE", video: "VIDEO", music: "MUSIC" }), new ObsProcessManager(readConfig));
     this.control = new Control(this.obs, this.youtube, storage, async selection => ({
       video: await resolveMedia(readConfig().mediaRoot, "videos", selection.video),
@@ -72,7 +72,7 @@ export class Service {
       }
     } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
-    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, configuration: { missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, configuration: { broadcastDetails: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

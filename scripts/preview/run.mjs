@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, writeFile, access, open } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { seed, refresh, control, password } from './fixtures.mjs';
 import { guardPreview, authorizePreviewControl } from './security.mjs';
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,7 @@ async function ready() { for (let n = 0; n < 100; n++) { if (child.exitCode !== 
 /** JSON 错误仅用于本地预览，不转发任意外部 URL。 */
 function json(response, status, body) { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(body)); }
 /** 限制前端演示输入体积；大文件上传需要安装版真实环境验收。 */
-async function body(request) { let value = ''; for await (const chunk of request) { value += chunk; if (value.length > 65536) throw new Error('本地预览不接收实际素材文件'); } return value; }
+async function body(request) { let value = ''; for await (const chunk of request) { value += chunk; if (Buffer.byteLength(value) > 3 * 1024 ** 2) throw new Error('本地预览不接收实际素材文件'); } return value; }
 /** 每个端口持有独立演示会话，避免客户与管理员标签页相互覆盖角色。 */
 async function proxy(port, username) {
   const session = await fetch(origin + '/api/session', { method: 'POST', headers: { Origin: origin, 'x-livepilot': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
@@ -46,6 +46,15 @@ async function proxy(port, username) {
       if (url.origin !== origin) return json(response, 400, { error: 'Invalid local preview URL' });
       if (/^\/api\/(uploads|youtube)/.test(url.pathname)) return json(response, 409, { error: '本地界面预览：不上传真实素材或连接 YouTube。' });
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
+      if (url.pathname === '/api/broadcast-assets' && request.method === 'POST') {
+        const body = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...body, action: 'launch' });
+        if (body.action === 'ai-status') return json(response, 200, { configured: false });
+        if (body.action === 'ai-key') return json(response, 409, { error: '本地演示不保存真实 API Key；请在升级后的正式工作台配置。' });
+        if (body.action === 'ai-generate') return json(response, 200, { demo: true, title: 'Tokyo After Rain | Lofi Beats for Study, Work & Relaxation', description: 'Slow down and find your focus with mellow lofi beats, soft melodies, and a peaceful late-night atmosphere. Let these warm sounds keep you company while you study, work, read, or simply take a quiet break.\n\nSettle into your favorite spot, turn the volume to a comfortable level, and enjoy a little space to breathe.\n\n#lofi #chillbeats #studymusic #relaxingmusic' });
+        if (body.action === 'playlists') return json(response, 200, { playlists: [{ id: 'PL_preview_study', title: '学习与专注' }, { id: 'PL_preview_night', title: '深夜电台' }, { id: 'PL_preview_lofi', title: 'Lofi 音乐精选' }] });
+        if (body.action === 'thumbnail') return json(response, 200, { id: randomUUID(), name: body.input.name });
+        return json(response, 400, { error: '无效演示操作' });
+      }
       if (url.pathname === '/api/control' && request.method === 'POST') { const command = JSON.parse(input); const actor = await authorizePreviewControl(origin, cookie, command); return json(response, 200, await control(root, command, actor)); }
       const headers = new Headers();
       for (const [key, value] of Object.entries(request.headers)) if (value && !['host', 'connection', 'accept-encoding', 'content-length', 'cookie'].includes(key)) headers.set(key, String(value));

@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import BroadcastSettings from "./components/broadcast-settings";
 import OAuthFeedback from "./oauth-feedback";
 import ProblemCard from "./components/problem-card";
 import { makeProblem, configurationLabel, type Problem } from "../shared/problems";
@@ -57,6 +58,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
     select,
   } = model;
 
+  const [detailsBusy, setDetailsBusy] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
@@ -102,7 +104,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
     unlisted: "不公开列出",
     private: "私密",
     public: "公开",
-  }[data?.configuration.privacy || "unlisted"];
+  }[selection.broadcast?.privacy || data?.configuration.privacy || "public"];
 
   const issues: Problem[] = [model.problem, data?.obs.problem, data?.youtube.problem, ...(data?.media.problems || []), ...(data?.problems || [])].filter((p): p is NonNullable<typeof p>=>!!p).map(p=>({...p,target:{...p.target,agentId:instance.agentId,instanceId:instance.id}}));
   if (!issues.length && (error || data?.state.error)) issues.push(makeProblem("CONTROL",error || data!.state.error!,{target:{agentId:instance.agentId,instanceId:instance.id},attemptId:data?.operation?.id,stage:"直播操作"}));
@@ -110,7 +112,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
   const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
 
   const broadcastControls = <>
-          <button type="button" className="btn-primary" disabled={!!blocker} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+          <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
           </button>
           <button type="button" className="btn-danger" disabled={busy || stale || !data} onClick={() => void act("stop")}>
@@ -195,12 +197,15 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
 
           </section>
+          </div>
+          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} broadcastId={data?.state.broadcastId} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} />
+          <div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`}><span className="step-number">3</span>直播控制</h3>
+            <h3 id={`step-3-${id}`}><span className="step-number">4</span>直播控制</h3>
             <div className="broadcast-actions">{broadcastControls}</div>
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
-            <h3 id={`step-4-${id}`}><span className="step-number">4</span>运行状态</h3>
+            <h3 id={`step-4-${id}`}>运行状态</h3>
             <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
             <dl className="runtime-values">
               <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
@@ -218,7 +223,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             <dl className="diagnostic-values">
               <div><dt>频道 ID</dt><dd>{data?.youtube.channelId || "—"}</dd></div>
               <div><dt>当前步骤</dt><dd>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</dd></div>
-              <div><dt>可见范围</dt><dd>{privacyText} · {data?.configuration.madeForKids ? "面向儿童" : "常规内容"}</dd></div>
+              <div><dt>可见范围</dt><dd>{privacyText} · {(selection.broadcast?.madeForKids ?? data?.configuration.madeForKids) ? "面向儿童" : "常规内容"}</dd></div>
               <div><dt>实例</dt><dd>{instance.agentName || "本机"} / {instance.id}</dd></div>
               <div><dt>Broadcast ID</dt><dd>{data?.state.broadcastId || "—"}</dd></div>
               <div><dt>Stream ID</dt><dd>{data?.state.streamId || "—"}</dd></div>

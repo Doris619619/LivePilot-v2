@@ -1,4 +1,8 @@
 /** 把白名单远程任务交给本机完整直播流程；禁止远程 shell 和任意路径。 */
+import { aiStatus, saveAiKey, generateCopy } from "@/core/broadcast-ai";
+import { saveThumbnail } from "@/core/broadcast-assets";
+import { Store } from "@/core/storage";
+import { config } from "@/core/config";
 import { Service } from "@/core/service";
 import { instanceIds, instanceDescriptors, validateInstances } from "@/core/config";
 import { saveChannelBinding } from "@/core/youtube/bindings";
@@ -34,6 +38,11 @@ export class Executor {
     if (task.agentId !== this.transport.agentId) throw new AppError("AGENT", "任务不属于这台设备。", 403);
     const app = this.services.get(task.instanceId); if (!app) throw new AppError("INSTANCE", "实例不存在。", 404);
     const p = task.payload; const actor = task.actor; const id = task.instanceId;
+    if (p.kind === "broadcast-ai-status") return aiStatus(new Store(config(id).dataDir));
+    if (p.kind === "broadcast-ai-key") return saveAiKey(new Store(config(id).dataDir), p.apiKey);
+    if (p.kind === "broadcast-ai-generate") return generateCopy(new Store(config(id).dataDir), p.brief);
+    if (p.kind === "broadcast-playlists") return { playlists: await app.youtube.playlists() };
+    if (p.kind === "broadcast-thumbnail") return saveThumbnail(new Store(config(id).dataDir), p.input);
     if (p.kind === "control") {
       const result = await app.commands.accept({ requestId: task.id, instanceId: id, ...p.input }, actor);
       if (result.fresh) await app.commands.run(task.id);

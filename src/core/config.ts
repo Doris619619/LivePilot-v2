@@ -38,7 +38,7 @@ export function config(id = "main") {
   let ws: URL | undefined;
   try { ws = wsUrl ? new URL(wsUrl) : undefined; } catch { throw new AppError("CONFIG", id + " 的 OBS WebSocket 地址格式无效。"); }
   if (ws && (ws.protocol !== "ws:" || ws.hostname !== "127.0.0.1" || !ws.port || ws.username || ws.password || ws.pathname !== "/" || ws.search || ws.hash)) throw new AppError("CONFIG", id + " 的 OBS WebSocket 必须使用 ws://127.0.0.1:端口。");
-  const privacy = environment().LIVEPILOT_PRIVACY || "unlisted";
+  const privacy = environment().LIVEPILOT_PRIVACY || "public";
   if (!["private", "unlisted", "public"].includes(privacy)) throw new AppError("CONFIG", "LIVEPILOT_PRIVACY 必须是 private、unlisted 或 public。");
   const kids = environment().LIVEPILOT_MADE_FOR_KIDS || "false";
   if (!["true", "false"].includes(kids)) throw new AppError("CONFIG", "LIVEPILOT_MADE_FOR_KIDS 必须是 true 或 false。");

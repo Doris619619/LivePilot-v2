@@ -2,6 +2,8 @@
 import { members } from "@/server/access";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { aiCopySchema } from "@/shared/broadcast-ai";
+import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
 import { AppError, sleep } from "@/core/errors";
 import { ACCEPT_MS, PROTOCOL, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
@@ -66,6 +68,10 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 }
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
+  if (record.kind === "broadcast-ai-generate") return aiCopySchema.parse(value);
+  if (record.kind === "broadcast-ai-status" || record.kind === "broadcast-ai-key") return z.object({ configured: z.boolean() }).strict().parse(value);
+  if (record.kind === "broadcast-playlists") return playlistResultSchema.parse(value);
+  if (record.kind === "broadcast-thumbnail") return broadcastSchema.shape.thumbnail.unwrap().parse(value);
   if (record.kind === "control") return operationSchema.parse(value);
   if (record.kind === "oauth-begin") {
     const result = z.object({ cookie: z.string().regex(/^[a-f0-9]{64}$/), url: z.string().max(8192) }).parse(value);

@@ -1,8 +1,11 @@
 /** 本地运行核心：供 Windows Agent 和本地控制台共同使用。 */
+import type { BroadcastDetails, Playlist } from "@/shared/broadcast";
+import { readThumbnail } from "../broadcast-assets";
+import { Store } from "../storage";
 import { config } from "../config";
 import { AppError } from "../errors";
 import { YouTubeAuth } from "./auth";
-export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string }; status: { lifeCycleStatus: string }; contentDetails?: { boundStreamId?: string } };
+export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string; scheduledStartTime?: string }; status: { lifeCycleStatus: string }; contentDetails?: { boundStreamId?: string } };
 export type Stream = { id: string; snippet: { title: string }; status: { streamStatus: string }; cdn?: { ingestionInfo?: { streamName?: string; rtmpsIngestionAddress?: string } } };
 type List<T> = { items?: T[]; nextPageToken?: string };
 const reasons: Record<string, string> = {
@@ -18,7 +21,8 @@ export interface YouTubePort {
   channel(): Promise<{ id: string; title: string }>;
   broadcast(id: string): Promise<Broadcast | null>;
   stream(id: string): Promise<Stream | null>;
-  createBroadcast(title: string): Promise<Broadcast>;
+  createBroadcast(title: string, details?: BroadcastDetails): Promise<Broadcast>;
+  prepareBroadcast?(id: string, details: BroadcastDetails): Promise<void>;
   createStream(title: string): Promise<Stream>;
   findBroadcast(title: string): Promise<Broadcast | null>;
   findStream(title: string): Promise<Stream | null>;
@@ -26,7 +30,7 @@ export interface YouTubePort {
   transition(id: string, target: "live" | "complete"): Promise<void>;
 }
 export class YouTubeApi implements YouTubePort {
-  constructor(readonly auth: YouTubeAuth) {}
+  constructor(readonly auth: YouTubeAuth, private storage = new Store(config().dataDir)) {}
   private async request<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown): Promise<T> {
     const token = await this.auth.access();
     let response: Response;
@@ -57,13 +61,56 @@ export class YouTubeApi implements YouTubePort {
     const data = await this.request<List<Stream>>("liveStreams", { part: "id,snippet,status,cdn", id });
     return data.items?.[0] || null;
   }
-  async createBroadcast(title: string) {
+  /** 先使用唯一恢复标题创建场次；可见设置来自此次命令，旧客户端仍读取环境默认。 */
+  async createBroadcast(title: string, details?: BroadcastDetails) {
     const c = config();
     return this.request<Broadcast>("liveBroadcasts", { part: "id,snippet,status,contentDetails" }, "POST", {
-      snippet: { title, scheduledStartTime: new Date(Date.now() + 30_000).toISOString() },
-      status: { privacyStatus: c.privacy, selfDeclaredMadeForKids: c.madeForKids },
+      snippet: { title, ...(details ? { description: details.description } : {}), scheduledStartTime: new Date(Date.now() + 30_000).toISOString() },
+      status: { privacyStatus: details?.privacy ?? c.privacy, selfDeclaredMadeForKids: details?.madeForKids ?? c.madeForKids },
       contentDetails: { enableAutoStart: false, enableAutoStop: false, monitorStream: { enableMonitorStream: false, broadcastStreamDelayMs: 0 } },
     });
+  }
+  /** 分页读取授权频道拥有的播放列表；不接受任意其他频道的列表。 */
+  async playlists(): Promise<Playlist[]> {
+    const playlists: Playlist[] = [];
+    let pageToken = "";
+    do {
+      const page = await this.request<List<{ id: string; snippet: { title: string } }>>("playlists", { part: "snippet", mine: "true", maxResults: "50", ...(pageToken ? { pageToken } : {}) });
+      playlists.push(...(page.items || []).map(item => ({ id: item.id, title: item.snippet.title })));
+      pageToken = page.nextPageToken || "";
+      if (playlists.length > 1000) throw new AppError("YOUTUBE_API", "频道播放列表超过当前支持数量，请在 Studio 中管理。");
+    } while (pageToken);
+    return playlists;
+  }
+  /** 在 OBS 推流前应用详情；列表先查询后添加，失败重试不会重复添加。 */
+  async prepareBroadcast(id: string, details: BroadcastDetails) {
+    const current = await this.broadcast(id);
+    if (!current || !["created", "ready"].includes(current.status.lifeCycleStatus)) throw new AppError("RECOVER", "场次已不在待播状态，请到 Studio 核对直播详情。");
+    if (details.playlistIds.length) {
+      const owned = await this.playlists();
+      if (details.playlistIds.some(value => !owned.some(item => item.id === value))) throw new AppError("INPUT", "所选播放列表不属于当前频道或已删除，请先结束待播场次后重新选择。");
+    }
+    const thumbnail = details.thumbnail ? await readThumbnail(this.storage, details.thumbnail.id) : undefined;
+    await this.request("liveBroadcasts", { part: "id,snippet,status" }, "PUT", {
+      id, snippet: { title: details.title, description: details.description, scheduledStartTime: current.snippet.scheduledStartTime },
+      status: { privacyStatus: details.privacy, selfDeclaredMadeForKids: details.madeForKids },
+    });
+    if (thumbnail) {
+      const token = await this.auth.access();
+      let response: Response;
+      try {
+        response = await fetch("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?" + new URLSearchParams({ videoId: id, uploadType: "media" }), {
+          method: "POST", headers: { Authorization: "Bearer " + token.accessToken, "Content-Type": thumbnail.mime },
+          body: Buffer.from(thumbnail.data, "base64"), signal: AbortSignal.timeout(30_000), redirect: "error",
+        });
+      } catch { throw new AppError("YOUTUBE_NETWORK", "封面上传未确认，请检查网络后重试开播。", 502); }
+      if (!response.ok) { await response.body?.cancel(); throw new AppError("YOUTUBE_API", "YouTube 未接受封面，请检查频道自定义缩略图权限后重试。", 502); }
+      await response.body?.cancel();
+    }
+    for (const playlistId of new Set(details.playlistIds)) {
+      const existing = await this.request<List<{ id: string }>>("playlistItems", { part: "id", playlistId, videoId: id, maxResults: "1" });
+      if (!existing.items?.length) await this.request("playlistItems", { part: "snippet" }, "POST", { snippet: { playlistId, resourceId: { kind: "youtube#video", videoId: id } } });
+    }
   }
   async createStream(title: string) {
     return this.request<Stream>("liveStreams", { part: "id,snippet,cdn,status,contentDetails" }, "POST", {

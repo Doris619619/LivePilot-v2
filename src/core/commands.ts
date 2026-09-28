@@ -5,7 +5,7 @@ import { AppError, safeError, problemFor } from "./errors";
 import { audit } from "./audit";
 import type { Control } from "./control";
 import type { CommandStatus, Selection } from "@/shared/types";
-export type CommandInput = { requestId: string; instanceId: string; action: "start" | "stop" | "launch" | "clear-uncertain"; video?: string; music?: string; videoAudio?: boolean; confirmed?: boolean };
+export type CommandInput = { requestId: string; instanceId: string; action: "start" | "stop" | "launch" | "clear-uncertain"; video?: string; music?: string; videoAudio?: boolean; confirmed?: boolean; broadcast?: Selection["broadcast"] };
 type Record = CommandStatus & { fingerprint: string; owner: string; input: CommandInput };
 const registry = globalThis as typeof globalThis & { livePilotCommandOwner?: string };
 const owner = registry.livePilotCommandOwner ??= randomUUID();
@@ -78,7 +78,7 @@ export class Commands {
     try {
       await audit(record.actor, record.action, this.instanceId, "running", id);
       const input = record.input;
-      if (input.action === "start") await this.control.start({ video: input.video!, music: input.music!, videoAudio: input.videoAudio! } satisfies Selection);
+      if (input.action === "start") await this.control.start({ video: input.video!, music: input.music!, videoAudio: input.videoAudio!, ...(input.broadcast ? { broadcast: input.broadcast } : {}) } satisfies Selection);
       else if (input.action === "stop") await this.control.stop();
       else if (input.action === "launch") await this.control.launch();
       else await this.control.clearUncertain();

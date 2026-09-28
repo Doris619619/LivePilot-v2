@@ -27,12 +27,19 @@ export async function remoteDashboard(destination: Target): Promise<Dashboard> {
   const agent = await requireTarget(destination.agentId, destination.instanceId);
   const snapshot = await snapshotFor(destination.agentId, destination.instanceId); const current = await latestControl(destination);
   const fresh = agent.online && !!snapshot && snapshot.observedAt > Date.now() - 20_000 && snapshot.observedAt <= Date.now() + 5_000;
-  const base: Dashboard = snapshot?.dashboard || { state: initialState(), busy: false, obs: { ready: false, running: false, streaming: null }, youtube: { connected: false }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "unlisted", madeForKids: false } };
+  const base: Dashboard = snapshot?.dashboard || { state: initialState(), busy: false, obs: { ready: false, running: false, streaming: null }, youtube: { connected: false }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "public", madeForKids: false } };
   const waiting = !!current && ["queued", "delivering", "accepted", "running", "uncertain"].includes(current.status);
   return { ...base, problems: [...(base.problems || []), ...await problemsFor(destination.agentId,destination.instanceId)], operation: current || base.operation, busy: waiting || base.busy, device: { agentId: agent.id, name: agent.name, online: fresh, lastSeen: agent.lastSeen, observedAt: snapshot?.observedAt }, obs: fresh ? base.obs : { ...base.obs, ready: false, streaming: null, message: agent.online ? "设备状态读取已过期，请检查直播电脑。" : "直播电脑离线；实际推流状态未知，已有直播可能仍在继续。" } };
 }
+/** 旧 Agent 不识别新任务时提前拒绝，避免把无法解析的任务塞进设备队列。 */
+export async function requireBroadcastDetails(destination: Target) {
+  await requireTarget(destination.agentId, destination.instanceId, true);
+  const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+  if (!snapshot?.dashboard.configuration.broadcastDetails) throw new AppError("CONFIG", "请先升级这台直播电脑的 Agent，再设置直播详情。", 409);
+}
 /** 控制接口只持久化完整任务，核心执行在 Agent，不使用 Next after 编排直播。 */
 export async function remoteControl(destination: Target, actor: string, payload: Extract<TaskPayload, { kind: "control" }>, requestId: string) {
+  if (payload.input.action === "start" && payload.input.broadcast) await requireBroadcastDetails(destination);
   return { operation: operation(await enqueue(destination, actor, payload, requestId)) };
 }
 /** 上传记录仍由目标 Agent 所有，云端补上明确的设备归属。 */

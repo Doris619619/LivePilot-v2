@@ -244,3 +244,20 @@ describe("independent local instances", () => {
     expect((await b.control.state()).phase).toBe("stopped");
   });
 });
+
+/** 详情失败必须停止开播，重试只补齐已有场次。 */
+it("applies frozen metadata before streaming and retries the same broadcast", async () => {
+  const f = await fixture();
+  const broadcast = { title: "东京雨夜", description: "晚间音乐", privacy: "public" as const, madeForKids: false, playlistIds: [] };
+  f.yt.prepareBroadcast = vi.fn().mockRejectedValueOnce(new AppError("YOUTUBE_API", "封面权限不足")).mockResolvedValue(undefined);
+  const input = { ...selection, broadcast };
+  await expect(f.control.start(input)).rejects.toThrow("封面权限不足");
+  expect(f.obs.startStream).not.toHaveBeenCalled();
+  expect((await f.control.state()).broadcastId).toBe("b1");
+  await expect(f.control.start({ ...input, broadcast: { ...broadcast, privacy: "private" } })).rejects.toThrow("直播详情");
+  await f.control.start(input);
+  expect(f.yt.createBroadcast).toHaveBeenCalledTimes(1);
+  expect(f.yt.createBroadcast).toHaveBeenCalledWith(expect.stringContaining("LivePilot "), broadcast);
+  expect(f.yt.prepareBroadcast).toHaveBeenLastCalledWith("b1", broadcast);
+  expect((await f.control.state()).detailsApplied).toBe(true);
+});

@@ -69,7 +69,7 @@ it("creates the broadcast with manual lifecycle transitions and configured priva
   const fetcher = vi.fn().mockResolvedValue(reply({ id: "broadcast" })); vi.stubGlobal("fetch", fetcher);
   await new YouTubeApi(auth).createBroadcast("My live");
   const body = JSON.parse(fetcher.mock.calls[0][1].body);
-  expect(body.status).toEqual({ privacyStatus: "unlisted", selfDeclaredMadeForKids: false });
+  expect(body.status).toEqual({ privacyStatus: "public", selfDeclaredMadeForKids: false });
   expect(body.contentDetails).toMatchObject({ enableAutoStart: false, enableAutoStop: false, monitorStream: { enableMonitorStream: false } });
 });
 it("never leaks upstream diagnostic text containing credentials", async () => {
@@ -86,3 +86,26 @@ it.each([[503,"invalid_grant","GOOGLE_UNAVAILABLE"],[429,"quota","YOUTUBE_QUOTA"
  await expect(new YouTubeAuth().access()).rejects.toMatchObject({code});expect(await storage.read("youtube.enc")).toBe(encrypted);
 });
 it("consumes a cancelled transaction without token exchange",async()=>{const auth=new YouTubeAuth();const tx=await auth.begin();const fetcher=vi.fn();vi.stubGlobal("fetch",fetcher);await auth.finish(tx.cookie,new URL(tx.url).searchParams.get("state")!,"",undefined,undefined,true);expect(fetcher).not.toHaveBeenCalled();await expect(auth.finish(tx.cookie,new URL(tx.url).searchParams.get("state")!,"",undefined,undefined,true)).rejects.toThrow("已过期");});
+
+/** 新网页的明确选择覆盖环境，所有隐私选项和儿童内容标记原样发送。 */
+it.each(["public", "unlisted", "private"] as const)("honors explicit %s broadcast details", async privacy => {
+  const auth = new YouTubeAuth();
+  vi.spyOn(auth, "access").mockResolvedValue({ accessToken: "token", refreshToken: "refresh", expiresAt: Date.now() + 3600_000, channelId: "channel", channel: "Studio" });
+  const fetcher = vi.fn().mockResolvedValue(reply({ id: "b" })); vi.stubGlobal("fetch", fetcher);
+  await new YouTubeApi(auth).createBroadcast("unique recovery title", { title: "观众标题", description: "直播说明", privacy, madeForKids: true, playlistIds: [] });
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({ snippet: { description: "直播说明" }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: true } });
+});
+/** 列表已存在时跳过插入；公开标题仅在场次 ID 持久化之后应用。 */
+it("applies a public title without changing lifecycle and avoids duplicate playlist insertion", async () => {
+  const auth = new YouTubeAuth();
+  vi.spyOn(auth, "access").mockResolvedValue({ accessToken: "token", refreshToken: "refresh", expiresAt: Date.now() + 3600_000, channelId: "channel", channel: "Studio" });
+  const fetcher = vi.fn().mockResolvedValueOnce(reply({ items: [{ id: "b", snippet: { title: "recovery", scheduledStartTime: "2030-01-01T00:00:00Z" }, status: { lifeCycleStatus: "ready" } }] }))
+    .mockResolvedValueOnce(reply({ items: [{ id: "PL_existing_list", snippet: { title: "Music" } }] }))
+    .mockResolvedValueOnce(reply({ id: "b" })).mockResolvedValueOnce(reply({ items: [{ id: "entry" }] }));
+  vi.stubGlobal("fetch", fetcher);
+  await new YouTubeApi(auth).prepareBroadcast("b", { title: "Music live", description: "Description", privacy: "public", madeForKids: false, playlistIds: ["PL_existing_list"] });
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ id: "b", snippet: { title: "Music live", description: "Description" } });
+  expect(fetcher.mock.calls[2][0]).toContain("part=id%2Csnippet");
+  expect(fetcher.mock.calls.some(call => call[0].includes("transition"))).toBe(false);
+});
