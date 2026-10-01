@@ -28,6 +28,7 @@
 | 云端从零部署 | [从零部署](docs/从零部署.md) |
 | 多电脑和远程控制原理 | [多电脑云端与 Agent](docs/多电脑云端与Agent.md)、[远程控制与素材上传](docs/远程控制与素材上传.md) |
 | 架构、开发规范与验证 | [架构](docs/ARCHITECTURE.md)、[工程协作规范](docs/工程协作规范.md)、[PR 规范](docs/PR撰写规范.md)、[桌面验收记录](docs/desktop/验证记录.md) |
+| 普通视频批量上传、断点恢复、定时发布、合规及真实频道验收 | [YouTube 普通视频发布](docs/YouTube普通视频发布.md) |
 
 本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，独立于旧 LivePilot。开发验证：`npm.cmd ci` → `npm.cmd run verify`。真实频道授权及音画验收由用户主动完成。
 

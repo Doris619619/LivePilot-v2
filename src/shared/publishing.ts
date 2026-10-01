@@ -1,0 +1,33 @@
+/** 发布配置、指令和公开报告的严格协议；任何浏览器 DTO 都不含上传会话或凭据。 */
+import { z } from "zod";
+import { videoCopySchema, videoTagsSchema } from "./video-metadata";
+export const PRIVACY_VERSION = "2026-10-01";
+export const UPLOAD_NOTICE = "点击“确认上传并按计划发布”，即表示您确认上传内容符合 YouTube 服务条款（包括社区准则）。请确保不侵犯他人的版权或隐私权。";
+const identity = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/);
+const safeName = z.string().min(1).max(255).refine(v => !/[\\/:%\x00-\x1f]/.test(v) && v !== "." && v !== ".." && !/[. ]$/.test(v), "素材文件名无效");
+export const itemOverrideSchema = z.object({ assetId: z.string().regex(/^[a-f0-9]{64}$/), ...videoCopySchema.partial().shape, thumbnail: safeName.optional() }).strict();
+export type ItemOverride = z.infer<typeof itemOverrideSchema>;
+export const assetSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), filename: safeName, size: z.number().int().positive().max(256 * 1024 ** 3), mtimeMs: z.number().nonnegative(), version: z.string().regex(/^[a-f0-9]{64}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(), hashState: z.enum(["not_computed", "verified"]).optional(), thumbnail: safeName.optional() }).strict();
+export type MediaAsset = z.infer<typeof assetSchema>;
+export const profileSchema = z.object({
+  id: z.string().uuid(), revision: z.number().int().positive(), name: z.string().min(1).max(80), agentId: identity, instanceId: identity, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  titleTemplate: z.string().min(1).max(1000), descriptionTemplate: z.string().max(10000), tags: videoTagsSchema, categoryId: z.string().regex(/^\d{1,3}$/), playlistIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).max(20),
+  privacy: z.enum(["public", "private", "unlisted"]), scheduled: z.boolean(), madeForKids: z.boolean(), license: z.enum(["youtube", "creativeCommon"]).default("youtube"), embeddable: z.boolean().default(true), containsSyntheticMedia: z.boolean().default(false), notifySubscribers: z.boolean().default(true),
+  thumbnailMode: z.enum(["matching", "fixed", "none"]), thumbnailFilename: safeName.optional(),
+  ai: z.object({ enabled: z.boolean(), language: z.string().min(1).max(40), prompt: z.string().min(1).max(4000), fallbackTitle: z.string().min(1).max(1000), fallbackDescription: z.string().max(10000) }).strict(),
+  schedule: z.object({ timezone: z.string().min(1).max(100).refine(v => { try { new Intl.DateTimeFormat("en", { timeZone: v }); return true; } catch { return false; } }, "时区无效"), weekdays: z.array(z.number().int().min(1).max(7)).min(1).max(7), localTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), preuploadDays: z.number().int().min(1).max(365) }).strict(),
+}).strict().refine(v => !v.scheduled || v.privacy === "public", "只有公开模式可定时发布").refine(v => v.thumbnailMode !== "fixed" || !!v.thumbnailFilename, "请选择固定缩略图");
+export type PublishingProfile = z.infer<typeof profileSchema>;
+export const policySchema = z.object({ enabled: z.boolean().default(false), publicVerified: z.boolean().default(false), projectKey: z.string().regex(/^[A-Za-z0-9_-]{1,100}$/).default("current-project"), uploadsPerDay: z.number().int().min(1).max(10000).default(20), otherUnitsPerDay: z.number().int().min(1).max(10000000).default(5000), concurrency: z.number().int().min(1).max(4).default(1), uploadMbps: z.number().min(0.1).max(10000).default(20), liveUploadMbps: z.number().min(0.1).max(10000).default(5), publishLeadSeconds: z.number().int().min(1).max(86400).default(600), chunkBytes: z.number().int().min(256 * 1024).max(32 * 1024 ** 2).multipleOf(256 * 1024).default(8 * 1024 ** 2), pollBatchSize: z.number().int().min(1).max(50).default(50), processingPollSeconds: z.number().int().min(10).max(3600).default(60), scheduledPollSeconds: z.number().int().min(10).max(86400).default(1800), tickSeconds: z.number().int().min(5).max(3600).default(60), privacyContact: z.string().max(200).default(""), verificationNote: z.string().max(2000).default("") }).strict();
+export type PublishingPolicy = z.infer<typeof policySchema>;
+export const defaultPolicy = policySchema.parse({});
+export const publishingStates = ["draft", "ready", "generating_metadata", "uploading", "processing", "finalizing", "scheduled", "published", "completed", "retry_wait", "needs_attention", "paused", "cancelled", "failed"] as const;
+export const desiredSchema = z.enum(["run", "pause", "cancel"]);
+export const jobSpecSchema = z.object({ id: z.string().uuid(), batchId: z.string().uuid(), owner: z.string().min(1).max(32), actor: z.string().min(1).max(32), revision: z.number().int().positive(), desired: desiredSchema, asset: assetSchema, profile: profileSchema, index: z.number().int().positive(), originalPublishAt: z.string().datetime().optional(), overrides: videoCopySchema.partial().strict().default({}), policy: policySchema, consent: z.object({ version: z.literal(PRIVACY_VERSION), acceptedAt: z.number().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true) }).strict() }).strict().refine(v => v.consent.ai || !v.profile.ai.enabled, "AI 自动生成需要用户明确同意").refine(v => !v.profile.scheduled || !!v.originalPublishAt, "定时公开任务必须保存发布时间");
+export type JobSpec = z.infer<typeof jobSpecSchema>;
+export const publishingReportSchema = z.object({ id: z.string().uuid(), revision: z.number().int().positive(), sequence: z.number().int().positive(), state: z.enum(publishingStates), offset: z.number().int().nonnegative(), total: z.number().int().positive(), updatedAt: z.number().positive(), nextAttemptAt: z.number().optional(), remoteCheckedAt: z.number().optional(), authorizationInvalid: z.boolean().optional(), videoId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), effectivePublishAt: z.string().datetime().optional(), observedPrivacy: z.enum(["private", "public", "unlisted"]).optional(), processingStatus: z.string().max(40).optional(), metadata: videoCopySchema.optional(), metadataSource: z.enum(["template", "ai", "fallback", "override"]).optional(), message: z.string().max(500).optional() }).strict();
+export type PublishingReport = z.infer<typeof publishingReportSchema>;
+export type VideoJob = { spec: JobSpec; initialPublishAt?: string; blockReason?: string; observed?: PublishingReport; delivery?: { id: string; revision: number }; createdAt: number };
+export const assetsResultSchema = z.object({ assets: z.array(assetSchema).max(10000), thumbnails: z.array(safeName).max(10000), channelId: z.string().optional(), channel: z.string().optional() }).strict();
+/** 终态任务不继续自动执行或自动重新上传。 */
+export function publishingTerminal(state?: string) { return !!state && ["published", "completed", "cancelled", "failed"].includes(state); }

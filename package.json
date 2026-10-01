@@ -37,6 +37,7 @@
     "preview:local": "node scripts/preview/run.mjs"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
     "electron-updater": "6.8.9",
     "next": "16.3.3",
     "obs-websocket-js": "5.0.8",

@@ -1,9 +1,10 @@
 /** 开播详情的共享校验；仅包含公开元数据和实例内封面标识。 */
 import { z } from "zod";
+import { videoTitleSchema, videoDescriptionSchema } from "./video-metadata";
 
 export const broadcastSchema = z.object({
-  title: z.string().trim().min(1, "请填写直播标题").max(100).refine(v => !/[<>]/.test(v), "标题不能包含尖括号"),
-  description: z.string().max(5000).refine(v => !/[<>]/.test(v), "说明不能包含尖括号"),
+  title: videoTitleSchema,
+  description: videoDescriptionSchema,
   privacy: z.enum(["public", "unlisted", "private"]),
   madeForKids: z.boolean(),
   playlistIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{10,100}$/)).max(20),

@@ -2,6 +2,7 @@
 import { members } from "@/server/access";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { assetsResultSchema } from "@/shared/publishing";
 import { aiCopySchema } from "@/shared/broadcast-ai";
 import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
@@ -29,6 +30,7 @@ function fingerprint(target: Target, actor: string, payload: TaskPayload) { retu
 /** 持久化后才返回受理；重复请求即便设备离线也能读取原结果。 */
 export async function enqueue(target: Target, actor: string, payload: TaskPayload, id: string = randomUUID()) {
   payload = taskPayloadSchema.parse(payload);
+  if (payload.kind.startsWith("publishing-") || payload.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(payload.kind) || payload.kind === "control" && payload.input.action === "start") await (await import("./publishing")).assertNoPublishingCleanup(target.agentId, target.instanceId);
   const store = agentStore(target.agentId); const hash = fingerprint(target, actor, payload);
   return transaction(store, async () => {
     const queue = await store.read<Queue>("tasks.json") || { records: [] };
@@ -68,6 +70,8 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 }
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
+  if (record.kind === "publishing-assets") return assetsResultSchema.parse(value);
+  if (record.kind === "publishing-apply") return z.object({ ok: z.literal(true) }).strict().parse(value);
   if (record.kind === "broadcast-ai-generate") return aiCopySchema.parse(value);
   if (record.kind === "broadcast-ai-status" || record.kind === "broadcast-ai-key") return z.object({ configured: z.boolean() }).strict().parse(value);
   if (record.kind === "broadcast-playlists") return playlistResultSchema.parse(value);

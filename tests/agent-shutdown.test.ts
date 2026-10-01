@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ stopped: false, receive: vi.fn(), drain: vi.fn(), poll: vi.fn() }));
 vi.mock("@/core/config", () => ({ config: () => ({ origin: "https://example.invalid" }), dataRoot: () => "fixture", instanceDescriptors: () => [] }));
 vi.mock("@/core/ownership", () => ({ claimHost: vi.fn() }));
-vi.mock("@/agent/executor", () => ({ Executor: class { registerChannels = vi.fn(); } }));
+vi.mock("@/agent/executor", () => ({ Executor: class { registerChannels = vi.fn(); connectPublishing = vi.fn(); stopPublishing = vi.fn(); } }));
 vi.mock("@/agent/worker", () => ({ Worker: class { receive = state.receive; drain = state.drain; reports = vi.fn().mockResolvedValue([]); acknowledge = vi.fn(); } }));
 vi.mock("@/agent/transport", () => ({ Transport: class { post = vi.fn().mockResolvedValue({ session: "fixture" }); request = state.poll; } }));
 import { runAgent } from "@/agent/runner";

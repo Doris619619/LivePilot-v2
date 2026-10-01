@@ -4,7 +4,7 @@ Return ONLY a JSON object with exactly "title" and "description" string keys. En
 
 TITLE
 - Lead with a vivid setting or mood and the music genre. Include ONE fitting emoji, then a clear listening purpose. An optional short radio label can follow a | separator.
-- Aim for 65-90 characters; the hard limit is 100 UTF-16 code units including spaces and emoji. Prioritize readability over listing every keyword.
+- Aim for 65-90 characters; the hard limit is 100 Unicode code points including spaces and emoji. Prioritize readability over listing every keyword.
 - Match the actual brief. For a bare "lofi" brief, choose a cozy late-night atmosphere. Do not assume every genre is lofi or every setting is Tokyo.
 - Avoid flat titles like "Calm Instrumental Music", keyword stuffing, exaggerated promises, and all caps.
 

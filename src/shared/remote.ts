@@ -1,5 +1,6 @@
 /** 云端与 Agent 的版本化白名单协议；浏览器 DTO 不含密钥和绝对路径。 */
 import { z } from "zod";
+import { jobSpecSchema } from "./publishing";
 import { aiBriefSchema, aiKeySchema } from "./broadcast-ai";
 import { broadcastSchema, thumbnailInputSchema } from "./broadcast";
 import type { Dashboard, InstanceDescriptor } from "./types";
@@ -19,6 +20,8 @@ export const controlSchema = z.discriminatedUnion("action", [
 ]);
 export const uploadInputSchema = z.object({ kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive().max(20 * 1024 ** 3), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const taskPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("publishing-assets") }).strict(),
+  z.object({ kind: z.literal("publishing-apply"), job: jobSpecSchema }).strict(),
   z.object({ kind: z.literal("broadcast-ai-status") }).strict(),
   z.object({ kind: z.literal("broadcast-ai-key"), apiKey: aiKeySchema }).strict(),
   z.object({ kind: z.literal("broadcast-ai-generate"), brief: aiBriefSchema }).strict(),
