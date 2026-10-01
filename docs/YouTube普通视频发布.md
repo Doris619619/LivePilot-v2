@@ -16,6 +16,8 @@ Cloud 保存用户确认的发布意图；Windows Agent 直接读取本地视频
 
 界面沿用直播工作台的侧栏、配色与控件。素材清单只展示文件、大小和选择顺序；确认页一次编辑一个视频。播放列表、高级参数和任务详情折叠，操作说明只在暂停已定时任务、取消或撤销时出现。月历支持切换月份、显示时区和单日清单，显示选择不修改 UTC 排期。
 
+界面截图使用 **合成示例数据**，不代表真实频道或上传结果：[桌面确认页](screenshots/publishing/confirmation-desktop.png)、[手机月历](screenshots/publishing/calendar-mobile.png)。
+
 ## 产品策略与配额
 
 | 设置 | 初始值 | 归属 |
