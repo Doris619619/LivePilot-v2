@@ -35,7 +35,7 @@ export function occupiedPublishingSlots(jobs: VideoJob[], channelId: string, exc
   for (const job of jobs) {
     if (job.spec.id === excluding || job.spec.profile.channelId !== channelId || job.observed?.state === "cancelled" && job.observed.revision === job.spec.revision) continue;
     if (job.observed?.revision === job.spec.revision && ["published", "completed"].includes(job.observed.state)) { const at = job.observed.effectivePublishAt || job.initialPublishAt || job.spec.originalPublishAt; if (at && Number.isFinite(Date.parse(at))) occupied.add(Date.parse(at)); continue; }
-    for (const at of [job.spec.originalPublishAt, job.observed?.effectivePublishAt, job.pendingPublishAt]) if (at && Number.isFinite(Date.parse(at))) occupied.add(Date.parse(at));
+    for (const at of [job.spec.originalPublishAt, job.observed?.effectivePublishAt, job.pendingPublishAt, ...job.pendingPublishAts || []]) if (at && Number.isFinite(Date.parse(at))) occupied.add(Date.parse(at));
   }
   return occupied;
 }

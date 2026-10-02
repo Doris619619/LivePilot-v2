@@ -58,6 +58,7 @@ export class PublishingRunner {
         if (spec.desired === "run" && ["paused", "needs_attention", "retry_wait"].includes(old.report.state)) { old.report.state = old.resumeState || (old.report.videoId ? "processing" : "ready"); old.report.nextAttemptAt = undefined; old.report.message = undefined; }
         if (spec.desired === "run" && ["scheduled", "processing", "published", "completed"].includes(old.report.state)) old.report.nextAttemptAt = this.now();
       }
+      if (old.report.state === "published" && spec.desired === "cancel") old.report.message = "视频已公开，取消未应用。";
       old.report.sequence++; old.report.updatedAt = this.now();
       // 旧修订报告可能被Cloud丢弃；新修订在创建会话前重新确认最终文件描述。
       if (old.finalUpload && !old.session && !old.report.videoId) old.preparedSequence = old.report.sequence;
@@ -77,11 +78,26 @@ export class PublishingRunner {
   /** 旧排期请求返回后不得确认新修订；下一 tick 用相同 videoId 回读并应用当前意图。 */
   private currentFinalization(entry: Entry, revision: number) { return entry.spec.revision === revision && entry.spec.desired === "run" && !this.stopped; }
   /** 视频已公开时保留远端事实，并明确报告改期未应用；绝不把它改回私密。 */
-  private async alreadyPublic(entry: Entry) {
+  private async alreadyPublic(entry: Entry, cancellation = false) {
     const rejected = entry.scheduleRevisionPending || !!entry.reschedulePreviousAt;
     if (rejected && entry.reschedulePreviousAt) entry.report.effectivePublishAt = entry.reschedulePreviousAt;
     entry.scheduleRevisionPending = false; entry.reschedulePreviousAt = undefined;
-    await this.update(entry, { state: "published", observedPrivacy: "public", remoteCheckedAt: this.now(), nextAttemptAt: this.now() + 25 * 86400_000, message: rejected ? "视频已公开，改期未应用。" : undefined });
+    await this.update(entry, { state: "published", observedPrivacy: "public", remoteCheckedAt: this.now(), nextAttemptAt: this.now() + 25 * 86400_000, message: cancellation ? "视频已公开，取消未应用。" : rejected ? "视频已公开，改期未应用。" : undefined });
+  }
+  /** 旧取消可能已生效；先回读原视频，再恢复最新意图，不能替新修订确认取消或错误。 */
+  private async supersededCancellation(entry: Entry, api: VideoPort) {
+    if (this.stopped) return;
+    let current: VideoResource | undefined;
+    try { if (entry.report.videoId) current = (await api.list([entry.report.videoId]))[0]; }
+    catch { /* 旧请求错误不污染新修订；下面保留检查点，等待重新核对。 */ }
+    if (this.stopped) return;
+    if (current?.status?.privacyStatus === "public") { await this.alreadyPublic(entry, true); return; }
+    entry.finalized = false;
+    entry.scheduleRevisionPending = entry.spec.profile.scheduled;
+    const phase = current?.processingDetails?.processingStatus === "processing" || current?.status?.uploadStatus === "uploaded" ? "processing" : entry.report.videoId ? "finalizing" : "ready";
+    entry.resumeState = phase;
+    const known = !entry.report.videoId || !!current?.status?.privacyStatus;
+    await this.update(entry, { state: entry.spec.desired === "pause" ? "paused" : known ? phase : "retry_wait", nextAttemptAt: entry.spec.desired === "pause" ? undefined : known ? this.now() : this.now() + 30_000, message: known ? undefined : "旧取消结果等待核对，保留原视频并等待应用最新设置。", ...(current ? { observedPrivacy: current.status?.privacyStatus, remoteCheckedAt: this.now(), processingStatus: current.processingDetails?.processingStatus } : {}) });
   }
   /** 对真实频道身份做独立检查，不依赖任何 OBS readiness。 */
   private async checkChannel(entry: Entry) {
@@ -101,7 +117,7 @@ export class PublishingRunner {
     for (const e of this.entries.values()) if (!this.active.has(e.spec.id) && !e.expiredData && e.report.remoteCheckedAt && e.report.remoteCheckedAt < this.now() - 30 * 86400_000) { const terminal = publishingTerminal(e.report.state); e.expiredData = true; e.session = undefined; e.playlistsDone = []; e.resumeState = undefined; await this.update(e, { state: terminal ? e.report.state : "needs_attention", videoId: undefined, metadata: undefined, processingStatus: undefined, observedPrivacy: undefined, nextAttemptAt: undefined, message: terminal ? "过期 YouTube 观察数据已清除，执行结果保留。" : "过期 YouTube 数据已清除；请在 Studio 核对，本任务禁止重新上传。" }); }
     const entries = [...this.entries.values()].sort((a, b) => (a.spec.originalPublishAt || "").localeCompare(b.spec.originalPublishAt || "") || a.spec.index - b.spec.index);
     for (const entry of entries) {
-      if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && entry.report.state === "paused" || entry.spec.desired === "cancel" && entry.report.state === "cancelled" || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
+      if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && entry.report.state === "paused" || entry.spec.desired === "cancel" && ["cancelled", "published"].includes(entry.report.state) || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
       if (entry.report.nextAttemptAt && entry.report.nextAttemptAt > this.now()) continue;
       if (this.active.size >= entry.spec.policy.concurrency) break;
       const promise = this.execute(entry).catch(e => this.failure(entry, e)).finally(() => { this.active.delete(entry.spec.id); this.aborters.delete(entry.spec.id); });
@@ -126,8 +142,25 @@ export class PublishingRunner {
     const api = this.api(entry); await this.checkChannel(entry);
     if (entry.spec.desired === "cancel") {
       if (entry.report.state === "cancelled") return;
-      if (!entry.report.videoId && entry.finalChunkPossible) { if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, this.uploadAsset(entry).size), api); else await this.acceptProbe(entry, { offset: 0, expired: true }, api); if (!entry.report.videoId && entry.report.offset === this.uploadAsset(entry).size) throw new AppError("UPLOAD_UNCERTAIN", "末块结果尚未确认，未将任务标为可重新排队。请在 Studio 核对。"); }
-      if (entry.report.videoId) await api.unschedule(entry.report.videoId);
+      const cancellingRevision = entry.spec.revision;
+      /** 远端探测和取消的迟到结果只属于发起时的修订；停止后留待下次启动核对。 */
+      const currentCancellation = () => entry.spec.revision === cancellingRevision && entry.spec.desired === "cancel" && !this.stopped;
+      try {
+        if (!entry.report.videoId && entry.finalChunkPossible) { if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, this.uploadAsset(entry).size), api); else await this.acceptProbe(entry, { offset: 0, expired: true }, api); if (!entry.report.videoId && entry.report.offset === this.uploadAsset(entry).size) throw new AppError("UPLOAD_UNCERTAIN", "末块结果尚未确认，未将任务标为可重新排队。请在 Studio 核对。"); }
+        if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; }
+        if (entry.report.videoId) await api.unschedule(entry.report.videoId);
+      } catch (error) {
+        if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; }
+        if (entry.report.videoId && error instanceof VideoApiError && ["ALREADY_PUBLIC", "VIDEO_CHANGED"].includes(error.code)) {
+          let latest: VideoResource | undefined;
+          try { latest = (await api.list([entry.report.videoId]))[0]; }
+          catch (readError) { if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; } throw readError; }
+          if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; }
+          if (latest?.status?.privacyStatus === "public") { await this.alreadyPublic(entry, true); return; }
+        }
+        throw error;
+      }
+      if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; }
       await this.update(entry, { state: "cancelled", nextAttemptAt: undefined, message: "任务已取消；本地源文件和 YouTube 视频未删除。" }); return;
     }
     if (!entry.spec.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "管理员尚未开启发布模块。");

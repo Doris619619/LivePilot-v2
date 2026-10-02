@@ -13,7 +13,8 @@ import { defaultPolicy, PRIVACY_VERSION, type PublishingAccount } from "@/shared
 import { publishingTaskAccountId, type TaskPayload } from "@/shared/remote";
 import { unseal } from "@/core/storage";
 import { agentPublishingAccounts, authorizePublishingAccount, claimPublishingAccount, expirePublishingAccountData, publishingAccountCleanups, publishingAccounts, requirePublishingAccount, syncPublishingAccounts } from "@/cloud/publishing-accounts";
-import { acceptPublishingPrivacy, chargePublishing, completePublishingCleanup, confirmPublishingBatch, connectPublishingAccount, createPublishingAccount, previewPublishingBatch, previewPublishingPlan, publishingCleanups, publishingTick, publishingView, reportPublishing, requestPublishingAccountCleanup, requestPublishingCleanup, savePublishingPolicy, savePublishingProfile } from "@/cloud/publishing";
+import * as accountChecks from "@/cloud/publishing-accounts";
+import { acceptPublishingPrivacy, chargePublishing, completePublishingCleanup, confirmPublishingBatch, connectPublishingAccount, createPublishingAccount, previewPublishingBatch, previewPublishingPlan, publishingCleanups, publishingStore, publishingTick, publishingView, reportPublishing, requestPublishingAccountCleanup, requestPublishingCleanup, savePublishingPolicy, savePublishingProfile } from "@/cloud/publishing";
 import { finishRemoteOAuth, oauthCookie, remoteOAuthContext } from "@/cloud/oauth";
 import { enqueue, pollTasks, readTask, reportTasks } from "@/cloud/tasks";
 import { fixtureJob } from "./publishing-fixtures";
@@ -103,6 +104,35 @@ it("expires channel titles without letting cached sync or heartbeat extend API r
   vi.setSystemTime(Date.now() + 2 * 86400_000); await expirePublishingAccountData(); expect((await agentPublishingAccounts("pc"))[0]).toMatchObject({ channelId: "publish_a", status: "connected" }); expect((await agentPublishingAccounts("pc"))[0].channel).toBeUndefined();
   await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "publish_a", channel: "Old title", channelCheckedAt: checkedAt }]); expect((await agentPublishingAccounts("pc"))[0].channel).toBeUndefined(); expect(JSON.stringify(await cloudStore().read("publishing-accounts.json"))).not.toContain("Old title");
   await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "publish_a", channel: "Fresh API title", channelCheckedAt: Date.now() }]); expect((await agentPublishingAccounts("pc"))[0].channel).toBe("Fresh API title");
+});
+/** 模拟外层目标校验通过后、发布写事务开始前完成删除，保存配置仍须拒绝迟到写入。 */
+it("rechecks an account inside profile writes after the earlier authorization raced cleanup", async () => {
+  const account = await connected("publish_a"); const check = requirePublishingAccount;
+  vi.spyOn(accountChecks, "requirePublishingAccount").mockImplementationOnce(async (...args) => {
+    const value = await check(...args); const cleanup = await requestPublishingAccountCleanup(alice, account.id); await completePublishingCleanup("pc", cleanup.id); return value;
+  });
+  await expect(savePublishingProfile(alice, { ...fixtureJob().profile, id: randomUUID(), accountId: account.id, channelId: account.channelId })).rejects.toMatchObject({ code: "CLEANUP" });
+  expect((await publishingView(alice)).profiles).toEqual([]);
+});
+/** 旧扁平预览继续兼容独立账号，但延迟扫描结果同样不能恢复已经删除的批次。 */
+it("rejects a legacy asset preview arriving after independent account deletion", async () => {
+  const account = await connected("publish_a"); const profile = await savePublishingProfile(alice, { ...fixtureJob().profile, id: randomUUID(), accountId: account.id, channelId: account.channelId });
+  let finishScan!: (value: unknown) => void; let scanning!: () => void; const started = new Promise<void>(resolve => { scanning = resolve; });
+  remote.rpc.mockImplementationOnce(() => { scanning(); return new Promise(resolve => { finishScan = resolve; }); });
+  const pending = previewPublishingBatch(alice, profile.id, [fixtureJob().asset.id]); const rejected = expect(pending).rejects.toMatchObject({ code: "CLEANUP" }); await started;
+  const cleanup = await requestPublishingAccountCleanup(alice, account.id); await completePublishingCleanup("pc", cleanup.id);
+  finishScan({ assets: [fixtureJob().asset], thumbnails: [], channelId: account.channelId }); await rejected;
+  const saved = await publishingStore().read<{ profiles: unknown[]; batches: unknown[] }>("state.json"); expect(saved!.profiles).toEqual([]); expect(saved!.batches).toEqual([]);
+});
+/** 原实例授权删除完成后没有绑定，旧扫描结果不得把已清理的配置批次重新写入。 */
+it("rejects a legacy asset preview arriving after instance authorization deletion", async () => {
+  const profile = await savePublishingProfile(alice, fixtureJob().profile);
+  let finishScan!: (value: unknown) => void; let scanning!: () => void; const started = new Promise<void>(resolve => { scanning = resolve; });
+  remote.rpc.mockImplementationOnce(() => { scanning(); return new Promise(resolve => { finishScan = resolve; }); });
+  const pending = previewPublishingBatch(alice, profile.id, [fixtureJob().asset.id]); const rejected = expect(pending).rejects.toMatchObject({ code: "CHANNEL" }); await started;
+  const cleanup = await requestPublishingCleanup(alice, "pc", "main"); await completePublishingCleanup("pc", cleanup.id);
+  finishScan({ assets: [fixtureJob().asset], thumbnails: [], channelId: profile.channelId }); await rejected;
+  expect((await publishingStore().read<{ batches: unknown[] }>("state.json"))!.batches).toEqual([]);
 });
 it("accepts strict package and archive RPC reports through the real task reporter", async () => {
   const scan = await enqueue(destination, "alice", { kind: "publishing-packages" }); await pollTasks("pc"); await reportTasks("pc", [{ id: scan.id, status: "succeeded", result: { root: "Synthetic/Publishing", batches: [], thumbnails: [] } }]); expect(unseal((await readTask("pc", scan.id))!.result!)).toEqual({ root: "Synthetic/Publishing", batches: [], thumbnails: [] });

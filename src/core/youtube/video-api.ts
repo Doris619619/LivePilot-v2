@@ -143,7 +143,9 @@ export class VideoApi implements VideoPort {
     if (!current.etag || !current.status?.privacyStatus) throw new VideoApiError("CANCEL_UNCONFIRMED", "取消前未能确认视频版本和可见性，请重新核对。");
     if (!current.status.publishAt) return;
     await this.json("videos", { part: "status" }, "PUT", { id, status: { ...pick(current.status, ["license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: current.status.privacyStatus } }, 50, current.etag);
-    const after = (await this.list([id]))[0]; if (!after || after.status?.publishAt) throw new VideoApiError("CANCEL_UNCONFIRMED", "YouTube 取消排期尚未确认。", true);
+    const after = (await this.list([id]))[0];
+    if (after?.status?.privacyStatus === "public") throw new VideoApiError("ALREADY_PUBLIC", "视频已经公开，取消未应用，请在 YouTube Studio 核对。");
+    if (!after || !after.status?.privacyStatus || after.status.publishAt) throw new VideoApiError("CANCEL_UNCONFIRMED", "YouTube 取消排期尚未确认。", true);
   }
 }
 /** 只合并 API 明确可写字段，避免将 processing 等只读字段回写。 */

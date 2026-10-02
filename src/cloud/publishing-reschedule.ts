@@ -9,7 +9,7 @@ export type SchedulePreview = { id: string; planId: string; revision: number; ac
 export function scheduleEditable(job: VideoJob) { return job.spec.profile.scheduled && job.spec.desired !== "cancel" && !["published", "completed", "cancelled", "failed", "needs_attention"].includes(job.observed?.state || ""); }
 
 /** 只锁影响排期安全的状态；普通上传进度变化不会让用户刚看到的预览失效。 */
-export function scheduleFingerprint(job: VideoJob) { return JSON.stringify({ revision: job.spec.revision, desired: job.spec.desired, editable: scheduleEditable(job), publishAt: job.spec.originalPublishAt, effective: job.observed?.effectivePublishAt, pending: job.pendingPublishAt }); }
+export function scheduleFingerprint(job: VideoJob) { return JSON.stringify({ revision: job.spec.revision, desired: job.spec.desired, editable: scheduleEditable(job), publishAt: job.spec.originalPublishAt, effective: job.observed?.effectivePublishAt, pending: job.pendingPublishAt, pendingAll: job.pendingPublishAts }); }
 
 /** 每个活动任务的意图、远端和待确认时刻均归原 Job；收到新修订确认前不让同批其他 Job 抢占。 */
 function scheduleOwners(jobs: VideoJob[]) { const owners = new Map<number, Set<string>>(); for (const job of jobs) for (const at of occupiedPublishingSlots([job], job.spec.profile.channelId)) { const ids = owners.get(at) || new Set<string>(); ids.add(job.spec.id); owners.set(at, ids); } return owners; }
@@ -62,7 +62,10 @@ export function applyConfirmedSchedule(plan: PublishingPlan, preview: SchedulePr
   for (const job of mutable) {
     const item = preview.plan.items.find(item => item.packageId === job.spec.contentPackage?.id)!;
     if (job.spec.originalPublishAt === item.publishAt && job.spec.scheduleSource === item.scheduleSource && JSON.stringify(job.spec.plan) === JSON.stringify(preview.plan.rule)) continue;
-    if (job.spec.originalPublishAt !== item.publishAt) job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt;
+    if (job.spec.originalPublishAt !== item.publishAt) {
+      job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt;
+      job.pendingPublishAts = [...new Set([job.spec.originalPublishAt, job.observed?.effectivePublishAt, job.pendingPublishAt, ...job.pendingPublishAts || []].filter((at): at is string => !!at))];
+    }
     job.spec.originalPublishAt = item.publishAt; job.spec.scheduleSource = item.scheduleSource; job.spec.plan = structuredClone(preview.plan.rule); job.spec.actor = actor; job.spec.revision++;
   }
   plan.rule = structuredClone(preview.plan.rule); plan.items = structuredClone(preview.plan.items); plan.skipped = [...preview.plan.skipped]; plan.skippedOccupied = preview.plan.skippedOccupied; plan.revision++;

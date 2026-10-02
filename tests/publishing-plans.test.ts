@@ -9,7 +9,7 @@ vi.mock("@/cloud/tasks", async importOriginal => ({ ...await importOriginal<type
 import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, setAgentOwner } from "@/cloud/agents";
 import { cloudStore } from "@/cloud/store";
 import { accessStore, emptyAccess } from "@/server/access";
-import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, reportPublishing, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
+import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, completePublishingCleanup, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
 import { occupiedPublishingSlots, schedulePlanSlots } from "@/core/publishing/schedule";
 import { AppError } from "@/core/errors";
 import { makeProblem } from "@/shared/problems";
@@ -42,6 +42,25 @@ beforeEach(async () => {
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-plans-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 默认创建完整包快照，便于测试后续修订和确认。 */
 async function preview() { return previewPublishingPlan(alice, profile.id, batch.id, rule); }
+/** 设备扫描晚于授权删除返回时，不能把已清理的发布包快照重新写回 Cloud。 */
+it("rejects a package preview returning after account cleanup is complete", async () => {
+  let finishScan!: (value: unknown) => void; let scanning!: () => void;
+  const started = new Promise<void>(resolve => { scanning = resolve; });
+  remote.rpc.mockImplementationOnce(() => { scanning(); return new Promise(resolve => { finishScan = resolve; }); });
+  const pending = preview(); const rejected = expect(pending).rejects.toMatchObject({ code: "CLEANUP" }); await started;
+  const cleanup = await requestPublishingAccountCleanup(alice, profile.accountId!); await completePublishingCleanup("pc", cleanup.id);
+  finishScan({ root: "Synthetic/Publishing/Inbox", batches: [batch], thumbnails: [], channelId: profile.channelId });
+  await rejected; const view = await publishingView(alice); expect(view.profiles).toEqual([]); expect(view.plans).toEqual([]); expect(view.jobs).toEqual([]);
+});
+/** 扫描开始时的管理员/客户设备归属不能授权扫描结束后的持久写入。 */
+it("rejects a package preview returning after device reassignment", async () => {
+  let finishScan!: (value: unknown) => void; let scanning!: () => void;
+  const started = new Promise<void>(resolve => { scanning = resolve; });
+  remote.rpc.mockImplementationOnce(() => { scanning(); return new Promise(resolve => { finishScan = resolve; }); });
+  const pending = preview(); const rejected = expect(pending).rejects.toMatchObject({ code: "FORBIDDEN" }); await started;
+  await setAgentOwner("pc", "bob"); finishScan({ root: "Synthetic/Publishing/Inbox", batches: [batch], thumbnails: [], channelId: profile.channelId });
+  await rejected; expect((await publishingStore().read<{ plans: unknown[] }>("state.json"))!.plans).toEqual([]);
+});
 it("supports same-day slots, occupied times and DST gap/overlap", () => {
   const scheduled = schedulePlanSlots(rule, 3, [Date.parse("2026-10-01T20:00:00Z")], Date.now()); expect(scheduled.slots.map(slot => slot.publishAt)).toEqual(["2026-10-01T21:00:00Z", "2026-10-02T09:00:00Z", "2026-10-08T20:00:00Z"]); expect(scheduled.skippedOccupied).toBe(1);
   const spring = schedulePlanSlots({ ...rule, timezone: "America/New_York", startDate: "2026-03-08", weeklySlots: [{ weekday: 7, time: "02:30" }] }, 1, [], Date.parse("2026-03-01T00:00:00Z")); expect(spring.skipped).toHaveLength(1); expect(spring.slots[0].publishAt).toBe("2026-03-15T06:30:00Z");
@@ -60,7 +79,7 @@ it("rejects changed package versions and channel changes at confirmation", async
 it("rejects a racing confirmed slot and requires refresh without silently moving preview", async () => { const first = await preview(); const second = await preview(); await confirmPublishingPlan(alice, first.id, 1, false, true); await expect(confirmPublishingPlan(alice, second.id, 1, false, true)).rejects.toMatchObject({ code: "CONFLICT" }); expect((await publishingView(alice)).plans.find(plan => plan.id === second.id)?.items[0].publishAt).toBe(second.items[0].publishAt); });
 it("occupies current/effective/pending-change times until the current cancellation is acknowledged", async () => {
   const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "scheduled", offset: 0, total: job.spec.asset.size, effectivePublishAt: "2026-10-01T22:00:00Z", updatedAt: Date.now() }]); await changePublishingJob(alice, job.spec.id, "reschedule", "2026-10-03T22:00:00Z"); await changePublishingJob(alice, job.spec.id, "cancel");
-  let current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(2); await reportPublishing("pc", [{ id: job.spec.id, revision: current.spec.revision - 1, sequence: 2, state: "cancelled", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(2); await reportPublishing("pc", [{ ...current.observed!, revision: current.spec.revision, sequence: 3 }]); current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(0);
+  let current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(3); await reportPublishing("pc", [{ id: job.spec.id, revision: current.spec.revision - 1, sequence: 2, state: "cancelled", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(3); await reportPublishing("pc", [{ ...current.observed!, revision: current.spec.revision, sequence: 3 }]); current = (await publishingView(alice)).jobs.find(value => value.spec.id === job.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").size).toBe(0);
 });
 it("fixes final output size before progress and ignores stale pre-preparation reports", async () => {
   const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); const base = { id: job.spec.id, revision: 1, updatedAt: Date.now(), state: "uploading" as const }; const prepared = { size: 999000, version: "f".repeat(64), sha256: "e".repeat(64) };
@@ -241,4 +260,37 @@ it("shows a completed Job at its actual time when a late reschedule was rejected
   const changed = await changePublishingJob(alice, job.spec.id, "reschedule", "2026-10-04T19:00:00Z");
   await reportPublishing("pc", [{ id: job.spec.id, revision: changed.spec.revision, sequence: 1, state: "published", observedPrivacy: "public", effectivePublishAt: actual, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
   const current = (await publishingView(alice)).plans.find(value => value.id === plan.id)!; const draft = await previewPublishingReschedule(alice, plan.id, current.revision, rule); expect(draft.scheduleLockedPackageIds).toContain(plan.items[0].packageId); expect(draft.items[0].publishAt).toBe(actual);
+});
+
+/** 连续单条改期的中间时刻仍可能在远端请求中；旧修订回读不能提前释放占位。 */
+it("retains every single-job reschedule time until the latest revision is acknowledged", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const first = jobs[0];
+  const a = first.spec.originalPublishAt!; const b = "2026-10-03T17:00:00Z"; const c = "2026-10-04T17:00:00Z";
+  await reportPublishing("pc", [{ id: first.spec.id, revision: first.spec.revision, sequence: 1, state: "scheduled", effectivePublishAt: a, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
+  const revisionB = await changePublishingJob(alice, first.spec.id, "reschedule", b); const revisionC = await changePublishingJob(alice, first.spec.id, "reschedule", c);
+  await expect(changePublishingJob(alice, jobs[1].spec.id, "reschedule", b)).rejects.toMatchObject({ code: "DUPLICATE" });
+  let current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([a, b, c].map(Date.parse)));
+  await reportPublishing("pc", [{ id: first.spec.id, revision: revisionB.spec.revision, sequence: 2, state: "scheduled", effectivePublishAt: b, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
+  current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([a, b, c].map(Date.parse)));
+  const currentPlan = (await publishingView(alice)).plans.find(value => value.id === plan.id)!;
+  await expect(previewPublishingReschedule(alice, plan.id, currentPlan.revision, rule, currentPlan.items.map((item, index) => index === 1 ? { ...item, scheduleSource: "manual", publishAt: b } : item))).rejects.toMatchObject({ code: "CONFLICT" });
+  await reportPublishing("pc", [{ id: first.spec.id, revision: revisionC.spec.revision, sequence: 3, state: "scheduled", effectivePublishAt: c, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
+  current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(c)])); expect(current.pendingPublishAt).toBeUndefined(); expect(current.pendingPublishAts).toBeUndefined();
+  await expect(changePublishingJob(alice, jobs[1].spec.id, "reschedule", b)).resolves.toMatchObject({ spec: { originalPublishAt: b } });
+});
+
+/** 两次整批改期保留各任务可能已经发出的中间时刻，最新排期确认后才能交给其他包。 */
+it("retains intermediate confirmed-plan slots across multiple unapplied revisions", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const first = jobs[0]; const a = first.spec.originalPublishAt!;
+  const ruleB = { ...rule, weeklySlots: [{ weekday: 6, time: "17:00" }] }; const ruleC = { ...rule, weeklySlots: [{ weekday: 7, time: "17:00" }] };
+  const previewB = await previewPublishingReschedule(alice, plan.id, plan.revision, ruleB); const committedB = await confirmPublishingReschedule(alice, plan.id, plan.revision, previewB.schedulePreviewId!); const b = committedB.items[0].publishAt!;
+  const revisionB = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!.spec.revision;
+  const previewC = await previewPublishingReschedule(alice, plan.id, committedB.revision, ruleC); const committedC = await confirmPublishingReschedule(alice, plan.id, committedB.revision, previewC.schedulePreviewId!); const c = committedC.items[0].publishAt!;
+  let current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([a, b, c].map(Date.parse)));
+  await reportPublishing("pc", [{ id: first.spec.id, revision: revisionB, sequence: 1, state: "scheduled", effectivePublishAt: b, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
+  current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one").has(Date.parse(b))).toBe(true);
+  await expect(previewPublishingReschedule(alice, plan.id, committedC.revision, ruleC, committedC.items.map((item, index) => index === 1 ? { ...item, scheduleSource: "manual", publishAt: b } : item))).rejects.toMatchObject({ code: "CONFLICT" });
+  await reportPublishing("pc", [{ id: first.spec.id, revision: current.spec.revision, sequence: 2, state: "scheduled", effectivePublishAt: c, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
+  current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(c)]));
+  const released = await previewPublishingReschedule(alice, plan.id, committedC.revision, ruleC, committedC.items.map((item, index) => index === 1 ? { ...item, scheduleSource: "manual", publishAt: b } : item)); expect(released.items[1].publishAt).toBe(b);
 });
