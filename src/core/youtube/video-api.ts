@@ -7,7 +7,7 @@ import { AppError, sleep } from "../errors";
 import type { JobSpec } from "@/shared/publishing";
 import type { z } from "zod";
 import type { videoCopySchema } from "@/shared/video-metadata";
-export type VideoResource = { id: string; snippet?: Record<string, unknown> & { title?: string; channelId?: string }; status?: Record<string, unknown> & { privacyStatus?: "private" | "public" | "unlisted"; uploadStatus?: string; publishAt?: string }; processingDetails?: { processingStatus?: string } };
+export type VideoResource = { id: string; etag?: string; snippet?: Record<string, unknown> & { title?: string; channelId?: string }; status?: Record<string, unknown> & { privacyStatus?: "private" | "public" | "unlisted"; uploadStatus?: string; publishAt?: string }; processingDetails?: { processingStatus?: string } };
 export type UploadProbe = { offset: number; videoId?: string; expired?: boolean };
 export type Charge = (units: number, upload: boolean) => Promise<void>;
 export interface VideoPort {
@@ -45,6 +45,7 @@ export class VideoApi implements VideoPort {
     catch { throw new VideoApiError("VIDEO_NETWORK", "YouTube 网络中断，结果等待核对。", true); }
     if (response.status === 308 || response.status === 404) return response;
     if (!response.ok) {
+      if (response.status === 412) { await response.body?.cancel(); throw new VideoApiError("VIDEO_CHANGED", "视频状态已改变，请重新核对后再操作。"); }
       const body = await response.json().catch(() => null) as { error?: { errors?: { reason?: string }[] } } | null;
       const reason = body?.error?.errors?.[0]?.reason;
       const retry = response.headers.get("retry-after"); const retryAfterMs = retry ? Math.max(0, /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now()) : 0;
@@ -53,8 +54,8 @@ export class VideoApi implements VideoPort {
     return response;
   }
   /** 有界 JSON 请求，part 指定的可写字段由业务合并。 */
-  private async json<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown, units = 1): Promise<T> {
-    const response = await this.request("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), { method, headers: { "Content-Type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, units);
+  private async json<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown, units = 1, etag?: string): Promise<T> {
+    const response = await this.request("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), { method, headers: { "Content-Type": "application/json", ...(etag ? { "If-Match": etag } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, units);
     if (!response.ok) { await response.body?.cancel(); throw new VideoApiError("VIDEO_MISSING", "YouTube 对象不存在或不可访问。"); }
     try { return await response.json() as T; } catch { throw new VideoApiError("VIDEO_RESPONSE", "YouTube 响应不完整，结果等待核对。", true); }
   }
@@ -132,11 +133,13 @@ export class VideoApi implements VideoPort {
     const status = { ...pick(current.status, ["privacyStatus", "license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: publishAt ? "private" : p.privacy, license: p.license, embeddable: p.embeddable, selfDeclaredMadeForKids: p.madeForKids, containsSyntheticMedia: p.containsSyntheticMedia, ...(publishAt ? { publishAt } : {}) };
     await this.json("videos", { part: "snippet,status" }, "PUT", { id, snippet, status }, 50);
   }
-  /** 已公开视频不自动下架；私密视频通过移除 publishAt 取消排期。 */
+  /** 按回读版本取消排期；公开或并发变更时不覆盖远端可见性。 */
   async unschedule(id: string) {
     const current = (await this.list([id]))[0]; if (!current) throw new VideoApiError("VIDEO_MISSING", "取消前无法核对视频。");
     if (current.status?.privacyStatus === "public") throw new VideoApiError("ALREADY_PUBLIC", "视频已经公开，未自动下架，请在 YouTube Studio 处理。");
-    await this.json("videos", { part: "status" }, "PUT", { id, status: { ...pick(current.status, ["license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: current.status?.privacyStatus || "private" } }, 50);
+    if (!current.etag || !current.status?.privacyStatus) throw new VideoApiError("CANCEL_UNCONFIRMED", "取消前未能确认视频版本和可见性，请重新核对。");
+    if (!current.status.publishAt) return;
+    await this.json("videos", { part: "status" }, "PUT", { id, status: { ...pick(current.status, ["license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: current.status.privacyStatus } }, 50, current.etag);
     const after = (await this.list([id]))[0]; if (!after || after.status?.publishAt) throw new VideoApiError("CANCEL_UNCONFIRMED", "YouTube 取消排期尚未确认。", true);
   }
 }

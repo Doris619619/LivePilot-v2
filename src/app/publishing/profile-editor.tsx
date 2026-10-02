@@ -1,4 +1,4 @@
-/** 发布配置表单：文案与排期优先，播放列表和高级设置按需展开。 */
+/** 发布方式配置表单；发布时间归属计划，封面和高级设置按需展开。 */
 "use client";
 import { useState, type FormEvent } from "react";
 import type { PublishingProfile } from "@/shared/publishing";
@@ -10,9 +10,9 @@ type Props = { initial?: PublishingProfile; target: PublishingTarget; thumbnails
 export function newProfile(target: PublishingTarget): PublishingProfile {
   return {
     id: crypto.randomUUID(), revision: 1, name: "常规发布", agentId: target.agentId, instanceId: target.instanceId, channelId: target.channelId || "",
-    titleTemplate: "{{filenameStem}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false,
+    titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false,
     license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching",
-    ai: { enabled: false, language: "English", prompt: "根据素材主题生成准确、自然的视频标题和说明。", fallbackTitle: "{{filenameStem}}", fallbackDescription: "" },
+    ai: { enabled: false, language: "English", prompt: "根据素材主题生成准确、自然的视频标题和说明。", fallbackTitle: "{{packageName}}", fallbackDescription: "" },
     schedule: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", weekdays: [1, 3, 5, 7], localTime: "20:00", startDate: new Date().toLocaleDateString("en-CA"), preuploadDays: 28 },
   };
 }
@@ -39,7 +39,7 @@ export default function ProfileEditor({ initial, target, thumbnails, save, cance
     <fieldset><legend>视频文案</legend>
       <label>标题模板<input required value={value.titleTemplate} onChange={e => setValue({ ...value, titleTemplate: e.target.value })} /></label>
       <label>说明模板<textarea rows={3} value={value.descriptionTemplate} onChange={e => setValue({ ...value, descriptionTemplate: e.target.value })} /></label>
-      <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期 · {{channelId}} 频道"}</p></details>
+      <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{packageName}} 发布包 · {{batchName}} 批次 · {{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期"}</p></details>
       <label className="publishing-check"><input type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
       {value.ai.enabled && <div className="publishing-ai-fields">
         <p className="publishing-hint">使用设备上的 DeepSeek。批次确认时单独授权。</p>
@@ -49,15 +49,9 @@ export default function ProfileEditor({ initial, target, thumbnails, save, cance
       </div>}
     </fieldset>
     <fieldset><legend>发布方式</legend>
-      <div className="publishing-fields"><label>可见性<select value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingProfile["privacy"], scheduled: e.target.value === "public" && value.scheduled })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select required value={childrenChoice} onChange={e => setChildrenChoice(e.target.value)}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
-      {value.privacy === "public" && <label className="publishing-check"><input type="checkbox" checked={value.scheduled} onChange={e => setValue({ ...value, scheduled: e.target.checked })} />定时公开</label>}
-      <div className="publishing-fields"><label>封面<select value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingProfile["thumbnailMode"] })}><option value="matching">同名图片</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label>{value.thumbnailMode === "fixed" && <label>固定图片<select required value={value.thumbnailFilename || ""} onChange={e => setValue({ ...value, thumbnailFilename: e.target.value })}><option value="">请选择</option>{thumbnails.map(name => <option key={name}>{name}</option>)}</select></label>}</div>
+      <div className="publishing-fields"><label>可见性<select value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingProfile["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select required value={childrenChoice} onChange={e => setChildrenChoice(e.target.value)}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
+      <div className="publishing-fields"><label>封面<select value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingProfile["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label>{value.thumbnailMode === "fixed" && <label>固定图片<input required list="publishing-thumbnails" value={value.thumbnailFilename || ""} onChange={e => setValue({ ...value, thumbnailFilename: e.target.value })} /><datalist id="publishing-thumbnails">{thumbnails.map(name => <option key={name}>{name}</option>)}</datalist></label>}</div>
     </fieldset>
-    {value.scheduled && <fieldset><legend>每周排期</legend>
-      <div className="publishing-fields"><label>时区<input required list="publishing-timezones" value={value.schedule.timezone} onChange={e => setValue({ ...value, schedule: { ...value.schedule, timezone: e.target.value } })} /><datalist id="publishing-timezones">{["America/Los_Angeles", "America/New_York", "Asia/Shanghai", "Asia/Hong_Kong", "Asia/Tokyo", "UTC"].map(t => <option key={t}>{t}</option>)}</datalist></label><label>发布时间<input type="time" required value={value.schedule.localTime} onChange={e => setValue({ ...value, schedule: { ...value.schedule, localTime: e.target.value } })} /></label></div>
-      <div className="publishing-days">{["一", "二", "三", "四", "五", "六", "日"].map((day, i) => <label key={day}><input type="checkbox" checked={value.schedule.weekdays.includes(i + 1)} onChange={e => setValue({ ...value, schedule: { ...value.schedule, weekdays: e.target.checked ? [...value.schedule.weekdays, i + 1].sort() : value.schedule.weekdays.filter(d => d !== i + 1) } })} />周{day}</label>)}</div>
-      <div className="publishing-fields"><label>开始日期<input type="date" required value={value.schedule.startDate} onChange={e => setValue({ ...value, schedule: { ...value.schedule, startDate: e.target.value } })} /></label><label>提前上传 · 天<input type="number" min={1} max={365} required value={value.schedule.preuploadDays} onChange={e => setValue({ ...value, schedule: { ...value.schedule, preuploadDays: Number(e.target.value) } })} /></label></div>
-    </fieldset>}
     <details className="publishing-details"><summary>标签与播放列表{value.playlistIds.length > 0 ? " · " + value.playlistIds.length + " 个已选" : ""}</summary>
       <label>标签 · 逗号分隔<input value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
       <div className="publishing-section-heading"><span>播放列表</span><button type="button" disabled={busy || reading} onClick={() => void loadPlaylists()}>{reading ? "读取中…" : "读取播放列表"}</button></div>

@@ -21,12 +21,17 @@ export async function resolvePublishingThumbnail(root: string, filename: string)
     return file;
   } catch { throw new AppError("MEDIA", "缩略图不存在、超过 50 MB 或不在本地 thumbnails 目录。"); }
 }
+/** 固定封面沿用旧 thumbnails 目录，不要求同时准备直播视频。 */
+export async function scanPublishingThumbnails(root: string) {
+  const thumbnails: string[] = [];
+  for (const name of await readdir(path.join(root, "thumbnails")).catch(e => { if (e.code === "ENOENT") return []; throw e; })) { try { await resolvePublishingThumbnail(root, name); thumbnails.push(name); } catch { /* 无效图片不进入可选列表。 */ } }
+  return thumbnails;
+}
 /** 一次扫描视频和已准备的缩略图，不打开视频内容流。 */
 export async function scanPublishingAssets(root: string) {
   const media = await scanMedia(root);
   if (media.error && !media.videos.length) throw new AppError("MEDIA", media.error);
-  const thumbnails: string[] = [];
-  for (const name of await readdir(path.join(root, "thumbnails")).catch(e => { if (e.code === "ENOENT") return []; throw e; })) { try { await resolvePublishingThumbnail(root, name); thumbnails.push(name); } catch { /* 排除无效图片。 */ } }
+  const thumbnails = await scanPublishingThumbnails(root);
   const assets: MediaAsset[] = [];
   for (const filename of media.videos) {
     const file = await resolveMedia(root, "videos", filename); const info = await stat(file);

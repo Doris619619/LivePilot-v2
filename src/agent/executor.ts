@@ -11,7 +11,8 @@ import { AppError } from "@/core/errors";
 import { sleep } from "@/core/errors";
 import { randomUUID } from "node:crypto";
 import { PublishingRunner } from "@/core/publishing/runner";
-import { scanPublishingAssets } from "@/core/publishing/assets";
+import { scanPublishingPackages, publishingRoot } from "@/core/publishing/packages";
+import { scanPublishingAssets, scanPublishingThumbnails } from "@/core/publishing/assets";
 import { PublishingStore } from "@/core/publishing/storage";
 import type { RemoteTask, AgentSnapshot } from "@/shared/remote";
 import type { Transport } from "./transport";
@@ -80,6 +81,8 @@ export class Executor {
     const p = task.payload;
     const clearing = await new Store(config(task.instanceId).dataDir).read<{ pending?: boolean }>("publishing-purge.json");
     if (clearing?.pending && (p.kind.startsWith("publishing-") || p.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(p.kind) || p.kind === "control" && p.input.action === "start")) throw new AppError("CLEANUP", "设备正在清理授权，请完成后重新连接频道。"); const actor = task.actor; const id = task.instanceId;
+    if (p.kind === "publishing-packages") { const token = await app.auth.tokens(); return { ...await scanPublishingPackages(publishingRoot()), thumbnails: await scanPublishingThumbnails(config(id).mediaRoot), ...(token ? { channelId: token.channelId, channel: token.channel } : {}) }; }
+    if (p.kind === "publishing-archive") return this.publishing.archiveBatch(p.batch, p.archiveId);
     if (p.kind === "publishing-assets") { const token = await app.auth.tokens(); const index = await scanPublishingAssets(config(id).mediaRoot); const hashes = await this.publishing.assetHashes(id); return { ...index, assets: index.assets.map(a => hashes[a.version] ? { ...a, sha256: hashes[a.version], hashState: "verified" } : a), ...(token ? { channelId: token.channelId, channel: token.channel } : {}) }; }
     if (p.kind === "publishing-apply") {
       if (p.job.profile.agentId !== task.agentId || p.job.profile.instanceId !== task.instanceId || p.job.actor !== actor) throw new AppError("TARGET", "发布指令与任务目标不一致。", 403);

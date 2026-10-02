@@ -16,7 +16,7 @@ function moveMonth(month: string, delta: number) {
 }
 /** 所有任务共用一个显示时区；确认后的 UTC 排期不会被显示选择修改。 */
 export default function PublishingCalendar({ jobs }: { jobs: VideoJob[] }) {
-  const zones = [...new Set(jobs.map(job => job.spec.profile.schedule.timezone))];
+  const zones = [...new Set(jobs.map(job => job.spec.plan?.timezone || job.spec.profile.schedule.timezone))];
   if (!zones.length) zones.push(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [choice, setChoice] = useState(zones[0]); const timezone = zones.includes(choice) ? choice : zones[0];
   const [now, setNow] = useState(() => Date.now()); const today = localDate(now, timezone);

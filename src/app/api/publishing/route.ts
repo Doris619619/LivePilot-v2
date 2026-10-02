@@ -5,14 +5,19 @@ import { guard, failed } from "@/server/http";
 import { readJson } from "@/server/request-body";
 import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
-import { profileSchema, policySchema, itemOverrideSchema } from "@/shared/publishing";
+import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema } from "@/shared/publishing";
 import { idSchema, uuidSchema } from "@/shared/remote";
-import { publishingView, publishingAssets, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup } from "@/cloud/publishing";
+import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup } from "@/cloud/publishing";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("consent"), version: z.string().max(40) }).strict(),
   z.object({ action: z.literal("assets"), agentId: idSchema, instanceId: idSchema }).strict(),
+  z.object({ action: z.literal("packages"), agentId: idSchema, instanceId: idSchema }).strict(),
+  z.object({ action: z.literal("plan-preview"), profileId: uuidSchema, batchId: z.string().regex(/^[a-f0-9]{64}$/), rule: planRuleSchema, items: z.array(planItemSchema).max(10000).optional() }).strict(),
+  z.object({ action: z.literal("plan-update"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema.optional(), items: z.array(planItemSchema).max(10000) }).strict(),
+  z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
+  z.object({ action: z.literal("plan-archive"), planId: uuidSchema }).strict(),
   z.object({ action: z.literal("profile"), profile: profileSchema }).strict(),
   z.object({ action: z.literal("preview"), profileId: uuidSchema, assetIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(1000) }).strict(),
   z.object({ action: z.literal("confirm"), batchId: uuidSchema, ai: z.boolean(), temporaryPrivateTitle: z.boolean(), overrides: z.array(itemOverrideSchema).max(1000).default([]) }).strict(),
@@ -31,6 +36,11 @@ export async function POST(request: Request) {
     const value = command.parse(await readJson(request, 2 * 1024 ** 2)); let result: unknown;
     if (value.action === "consent") result = await acceptPublishingPrivacy(user, value.version);
     else if (value.action === "assets") result = await publishingAssets(user, value.agentId, value.instanceId);
+    else if (value.action === "packages") result = await publishingPackages(user, value.agentId, value.instanceId);
+    else if (value.action === "plan-preview") result = await previewPublishingPlan(user, value.profileId, value.batchId, value.rule, value.items);
+    else if (value.action === "plan-update") result = await updatePublishingPlan(user, value.planId, value.revision, value.items, value.rule);
+    else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds);
+    else if (value.action === "plan-archive") result = await archivePublishingPlan(user, value.planId);
     else if (value.action === "profile") result = await savePublishingProfile(user, value.profile);
     else if (value.action === "preview") result = await previewPublishingBatch(user, value.profileId, value.assetIds);
     else if (value.action === "confirm") result = await confirmPublishingBatch(user, value.batchId, value.ai, value.temporaryPrivateTitle, value.overrides);

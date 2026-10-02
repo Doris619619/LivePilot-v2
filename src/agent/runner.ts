@@ -32,7 +32,7 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
   while (!hooks.stopped()) {
     try {
       if (!connected) {
-        const session = await transport.post<{ session: string; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1"], ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
+        const session = await transport.post<{ session: string; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2"], ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
         delete process.env.LIVENEST_MAINTENANCE;
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"));

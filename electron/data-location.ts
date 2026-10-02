@@ -80,7 +80,7 @@ export async function copyDataLocation(settings: Settings, target: string, progr
     await progress("正在复制 OBS、素材与授权，原目录保留");
     for(const name of await readdir(source)) {
       if(name===ROOT_MARKER || name===MIGRATION_FILE)continue;
-      await cp(path.join(source,name),path.join(destination,name),{recursive:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new AppError("DATA", "数据目录含链接，复制已中止。");return true;}});
+      await cp(path.join(source,name),path.join(destination,name),{recursive:true,preserveTimestamps:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new AppError("DATA", "数据目录含链接，复制已中止。");return true;}});
     }
     await progress("正在逐文件校验复制结果");
     if(JSON.stringify(before)!==JSON.stringify(await manifest(destination)) || JSON.stringify(before)!==JSON.stringify(await manifest(source)))throw new AppError("DATA", "复制校验失败或源文件发生变化，没有切换数据位置。");

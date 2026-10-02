@@ -1,28 +1,84 @@
 <!-- 文件用途：普通视频发布模块的启用、运行、恢复、合规与真实频道验收说明；区分实现和上线证据。 -->
 # YouTube 普通视频批量发布
 
-Cloud 保存用户确认的发布意图；Windows Agent 直接读取本地视频并上传；YouTube 执行已回读确认的 `publishAt`。视频字节不经过 Cloud。模块复用现有账号、设备归属、实例授权和文件存储，没有引入数据库、Redis、FFmpeg 或通用 Job/Run 平台。
+Cloud 保存用户确认的发布意图；Windows Agent 直接读取本地视频并上传；YouTube 执行已回读确认的 `publishAt`。视频字节不经过 Cloud。模块复用现有账号、设备归属、实例授权和文件存储，没有引入数据库、Redis 或通用 Job/Run 平台；FFmpeg 仅作为 PublishingRunner 的本机发布包预处理。
 
 本次为功能代码交付，**未部署、未发布桌面安装器、未进行真实 OAuth、上传或广播**。通知使用持久队列状态、报告序号与审计；SMTP 留作后续阶段，未配置邮件不会影响发布流程。
 
 ## 入口与启用
 
-1. 先更新 Cloud，再更新 CLI / 桌面 Agent。新 Agent 声明 `publishing-v1`；旧 Agent 保留直播操作，但不能接收发布任务。构建后的 `dist/agent.cjs` 与桌面客户端共用 PublishingRunner。
-2. 从工作台进入 `/publishing`。先阅读并同意当前隐私政策；`/privacy`、`/terms` 无需登录且全站有入口。管理员必须配置隐私联系地址。
-3. 管理员在“发布策略”开启模块，先使用 **private** 配置。默认 `enabled=false`、`publicVerified=false`。公开需要真实项目验收记录和管理员显式开启；单元测试、直播 API 成功或网页检查均不能替代该记录。
-4. 用户将视频提前存入所选 Agent 的 `videos`，PNG/JPEG 缩略图存入同一素材根目录的 `thumbnails`。扫描只读取属性和图片文件头；视频 SHA-256 只在准备上传时流式计算，重启恢复重新校验，已验证值按文件版本缓存。
-5. 选择设备、已绑定频道和 Profile，选择、排序视频后生成服务端预览。确认页显示可见性、排期、临时私密标题说明、AI/兜底规则与 YouTube Terms / Community Guidelines 提示。可逐项覆盖标题、说明和匹配封面。
-6. 确认后 Profile 快照、素材版本和 UTC 时刻固定。日历、队列和历史共用缓存状态。修改 Profile 不影响已有批次；改期和运行策略形成任务新修订，收到 Agent 回报后才显示已应用。
+先更新 Cloud，再更新 CLI / 桌面 Agent。旧 `publishing-v1` 任务继续使用原素材与检查点；发布包要求 `publishing-v2`。默认 `enabled=false`、`publicVerified=false`；管理员配置隐私联系方式并完成真实项目验收后才能开启自动公开。直播 API、构建和模拟网页不能替代验收。
 
-界面沿用直播工作台的侧栏、配色与控件。素材清单只展示文件、大小和选择顺序；确认页一次编辑一个视频。播放列表、高级参数和任务详情折叠，操作说明只在暂停已定时任务、取消或撤销时出现。月历支持切换月份、显示时区和单日清单，显示选择不修改 UTC 排期。
+用户实际流程固定为四步：
 
-界面截图使用 **合成示例数据**，不代表真实频道或上传结果：[桌面确认页](screenshots/publishing/confirmation-desktop.png)、[手机月历](screenshots/publishing/calendar-mobile.png)。
+1. **准备素材**：客户在自己的广播电脑，把批次复制到固定 Inbox。网页选择所属电脑，点击“检测素材”，选择一个批次，检查自然排序的所有子文件夹。扫描仅读视频属性，坏包逐项显示；修复后刷新，或明确勾“暂不发布”再继续。
+2. **设置时间**：选择已授权频道和发布配置，填写开始日期、IANA 时区和每周时间。各星期可用不同时间，也可同日多个时刻。新批次的公开统一经过定时确认；私密和不公开无需排期。发布时间属于 Plan；Profile 保存文案、AI、可见性、Tags、儿童内容等发布规则。旧 Profile 的排期只用于初始化计划，已有即时公开任务继续遵循原快照。
+3. **确认计划**：显示条数、首末时间和跳过的占用时刻；逐项手动修改时间或文案，自动重排保留手动时间。最终确认保留频道、可见性、AI/兜底同意、临时私密标题与 YouTube Terms / Community Guidelines 提示，用户内容不静默截断。
+4. **自动执行**：当前批次显示待处理、正在生成、正在上传、已排期、异常；任务控制和诊断按需展开。“我的发布”查看批次、日历和历史；配置、授权与管理员策略位于设置。
+
+刷新后恢复未确认的持久计划，已确认快照不随配置修改改变。网页只通过 Agent 检测固定目录，不提供大文件网页上传或任意本机路径扫描。电脑客户端设置有“打开发布目录”；远程网页显示并复制目标电脑的路径。
+
+## 真实目录与发布包
+
+数据根由客户选择，下面以 `D:\LIVENEST` 为例；不是必须使用 D 盘。
+
+```text
+D:\LIVENEST
+├─ tools
+│  ├─ ffmpeg.exe
+│  └─ ffprobe.exe
+├─ Publishing
+│  ├─ Inbox
+│  │  └─ 2026-10-Batch-01
+│  │     ├─ 001
+│  │     │  ├─ video.mp4
+│  │     │  ├─ music.mp3
+│  │     │  ├─ cover.jpg
+│  │     │  ├─ title.txt
+│  │     │  └─ description.txt
+│  │     └─ 002
+│  │        └─ video.mp4
+│  ├─ Working
+│  │  └─ 2026-10-Batch-01/001/<packageVersion>
+│  │     ├─ render.json
+│  │     └─ output.mp4
+│  └─ Completed
+│     └─ 2026-10-Batch-01--<archiveId>
+└─ state
+   └─ agent/publishing/entries.enc
+```
+
+仅支持 `Batch/Package/files`。一个包只能有一个支持的主视频，最多一首音乐；视频支持 MP4/MKV/MOV/WebM/AVI/M4V，音乐支持 MP3/WAV/FLAC/AAC/M4A/OGG。封面为 `cover.jpg/jpeg/png`，文案文件使用 UTF-8；文件大小、格式、链接、嵌套目录、缺视频和多视频等问题逐包指出。标题按现有 Unicode 验证器、说明按 UTF-8 5000 bytes 校验。
+
+字段优先级为人工覆盖、包内文本、已授权 AI、Profile 模板，按标题和说明分别应用。`{{packageName}}` 与 `{{batchName}}` 可以用于默认模板，避免把所有 `video.mp4` / `output.mp4` 变成同名标题。匹配封面有则使用、没有则采用 YouTube 自动缩略图；固定封面沿用所选实例 `media/<instance>/thumbnails`，不存在时明确阻塞。
+
+桌面显式传入 `LIVEPILOT_PUBLISHING_ROOT=<数据根>/Publishing`。CLI 可配置同一变量；未配置时，数据目录末段为 `state` 则取其上级，否则在 CLI 数据根下创建 Publishing。不会把 OBS、Token 或直播素材迁入新目录。
+
+## 合成、文件确认与归档
+
+无音乐直接使用源视频；有音乐只保留源画面，以音乐替换原音轨，循环短音乐、截断长音乐，最终长度按源视频确定。优先复制视频编码，不能装入 MP4 时转 H.264；音乐输出 AAC，不主动修改分辨率和帧率。工具优先使用数据根下 `tools` 中成对的 FFmpeg/ffprobe，再查 PATH，本轮不自动下载。缺工具只阻塞带音乐的包，页面明确提示。
+
+进入 Plan 的滚动窗口后才准备文件，每台设备一次生成一个包，重编码限制线程，明确直播时推迟新的重编码。没有 OBS 或状态 Unknown 不全面暂停普通上传。输出使用包版本隔离，临时文件完成音画、时长及 Hash 校验后原子落位，记录完成才可复用；重启不会仅因 output 文件存在就认定成功。
+
+Cloud 保存发布包输入快照；Agent 保存最终上传文件的路径、大小、修改时间和完整 Hash，先向 Cloud 报告最终尺寸并等待确认，再建立上传会话。原始 Job asset 不被合成文件原地替换。重启验证源包和最终文件，同一会话的 bytes/offset/末块始终绑定固定输出。已有 session、末块未知或 videoId 时，禁止自动覆盖输出或再 insert。
+
+确认后的源内容变化进入人工处理，重新扫描并确认新计划；须先安全取消旧任务并由 Agent 回报。有远端视频的新版本需要用户明确确认“创建新视频，原视频保留”，保留旧任务关联，不自动重复上传。
+
+自动排期跳过 LiveNest 已知的同频道 UTC 时刻，包括原计划、实际生效时间和待确认改期。暂停保留占位；取消经 Agent 确认后释放，未知结果的失败不直接释放。手动时间不被自动重排覆盖，暂不发布的包保留计划但不建立上传任务、不占 Slot。确认事务再次防冲突，竞争失败要求刷新预览，不暗改已显示时间；不能承诺避让未被 LiveNest 记录的 Studio 手工计划。
+
+整批当前版本的每个包都确认 published 或非公开 completed、没有未完成引用后，用户才能手动归档。暂不发布的包须在后续计划完成，旧草稿和安全取消的历史记录不会阻止归档。Agent 复核版本，保存可恢复搬移记录，移动 Inbox 整批到带 archiveId 的 Completed 目录，禁止覆盖同名目录；Working 与上传恢复文件保留，不自动删除。离线/结果未知显示等待确认并可重试同一归档 ID。数据根迁移保留文件时间属性与相对定位。
+
+## 接口与增量兼容
+
+`/api/publishing` 增加 `packages`、`plan-preview`、`plan-update`、`plan-confirm`、`plan-archive`；GET 返回用户当前设备可见的 plans，旧 Profile、Batch、Job 接口保留。Plan 更新使用 revision 并持久保存手动覆盖；重复确认返回原任务。`plan-confirm` 可传 `replaceJobIds`，仅接受当前修订已安全取消、源包版本已改变的替代任务；`plan-archive` 未完成时返回 `{state:"pending",message}`，不能显示归档成功。新版 Agent 指令只接收固定目录包身份及快照，不接收任意 shell/path。报告先固定 prepared 文件描述，再按最终 total 校验进度，旧序号不会覆盖新状态。
+
+已有文件状态只增量添加 plans 和可选包/最终文件字段，旧文件不删除、不强制重写成新格式。旧 Cloud/Agent 回退前关闭新派发，保留新旧记录；已有 YouTube 排期仍有效。
 
 ## 产品策略与配额
 
 | 设置 | 初始值 | 归属 |
 | --- | ---: | --- |
-| 提前上传窗口 | 28 天 | Profile |
+| 提前上传窗口 | 28 天 | Plan；旧任务兼容 Profile |
 | 新上传会话 | 20 次/日 | 管理员 / API Project |
 | 其他普通发布 API 预算 | 5000 units/日 | 管理员 / API Project |
 | 每台机器并发 | 1 | Agent 策略，允许 1–4 |
@@ -42,7 +98,7 @@ Cloud 保存用户确认的发布意图；Windows Agent 直接读取本地视频
 核心顺序为上传、续传、状态恢复、processing、封面 / Playlist、最终 metadata / `publishAt`，再观察真实公开。
 
 ```text
-ready → generating_metadata → uploading → processing → finalizing
+ready → preparing_media（发布包）→ generating_metadata → uploading → processing → finalizing
       → scheduled → published
 private / unlisted：finalizing → completed
 retry_wait → 原阶段；needs_attention / paused / cancelled / failed
@@ -52,9 +108,9 @@ retry_wait → 原阶段；needs_attention / paused / cancelled / failed
 
 更新保留同一 part 的其他可写字段，排期按实际时刻比较而非字符串格式。`scheduled` 只表示 YouTube 已回读确认，只有真实观察到 `public` 才是 `published`。缺失查询结果不推断删除。页面打开不会逐视频请求；普通状态查询按频道分组、ID 列表分批，id 模式不带分页参数。最终写入前后的单视频回读用于避免覆盖字段和确认副作用。
 
-普通上传不要求 OBS 正常。没有 OBS 或 Unknown 时按常规速率运行；明确推流 / YouTube live / OBS reconnecting 时使用保护带宽，多并发分摊整机上限。AI 文案生成后持久保存；暂时性失败最多额外两次，之后使用用户已同意的合法兜底。儿童内容由用户明确选择。
+普通上传不要求 OBS 正常。没有 OBS 或 Unknown 时按常规速率运行；明确推流 / YouTube live / OBS reconnecting 时使用保护带宽，多并发分摊整机上限。AI 仅补充没有人工/包内内容的字段，文案生成后持久保存；暂时性失败最多额外两次，之后使用用户已同意的合法兜底。儿童内容由用户明确选择。
 
-暂停只停止本地后续工作，不清除远端排期。取消需核对未知末块、清除尚未公开的 `publishAt` 并回读；已经公开的不自动下架。无法确认的取消不标为可重新排队的 cancelled。迟到只调整该任务实际生效时刻，不顺延整个批次。人工 Studio 改动触发核对 / 人工处理，不自动覆盖已确认排期。
+暂停只停止本地后续工作，不清除远端排期。取消需核对未知末块、清除尚未公开的 `publishAt` 并回读；使用刚回读版本的 `If-Match` 条件更新，公开或并发变更时停止写入，不自动下架。此版本保护依据 [YouTube ETag 文档](https://developers.google.com/youtube/v3/getting-started#using-etags)，真实接口行为仍需测试频道验收。无法确认的取消不标为可重新排队的 cancelled。迟到只调整该任务实际生效时刻，不顺延整个批次。人工 Studio 改动触发核对 / 人工处理，不自动覆盖已确认排期。
 
 ## 授权、删除与保存期限
 
@@ -62,7 +118,7 @@ retry_wait → 原阶段；needs_attention / paused / cancelled / failed
 
 离线显示等待设备清理，过期显示超期联系管理员。**不能保证未开机设备的文件在七日内自动消失**；运营者须联系设备负责人在期限内完成，Google / Agent 确认前不能宣称全部删除。
 
-模块视频 API 观察数据超过 30 天则移除；Agent 保留禁止重复上传的执行标记并进入人工处理。用户自己确认的素材、文案、计划和目标身份属于发布意图，不能当成新鲜远端观察数据。外部撤销在重新联网请求时可检测，持续断电的设备不能主动检测。撤销共享实例授权会影响直播 API 控制，**已提交的 YouTube 定时视频仍可能公开**，不会自动取消或删除。
+模块视频 API 观察数据超过 30 天则移除；Agent 保留禁止重复上传的执行标记并进入人工处理，Cloud 保留自有 `hadUpload` 执行事实，清除旧 videoId 不等于从未上传。用户自己确认的素材、文案、计划和目标身份属于发布意图，不能当成新鲜远端观察数据。外部撤销在重新联网请求时可检测，持续断电的设备不能主动检测。撤销共享实例授权会影响直播 API 控制，**已提交的 YouTube 定时视频仍可能公开**，不会自动取消或删除。
 
 ## Phase 0 与真实人工验收
 
@@ -87,10 +143,10 @@ retry_wait → 原阶段；needs_attention / paused / cancelled / failed
 
 ## 本轮验证与回退
 
-已通过完整 `npm run verify`：类型、lint、469 个测试、8 项部署检查、Next.js / Agent 构建。新增专项覆盖 Unicode / UTF-8 / Tags / DST、惰性 Hash、文件变化、无 OBS 与直播限速、308 和失效 session、末块未知、报告确认、批量缺失状态、暂停 / 取消、Profile 快照、窗口派发、权限 / 归属变更、配额预留与未知计账、无 SMTP / AI Key 的兜底。
+新增验证覆盖发布包轻量扫描、100 包/排序、路径逃逸、音轨循环截断、转码兜底、缺工具、缓存与输出落位崩溃、源/输出变化、最终尺寸握手、旧 session 恢复、多 Slot/DST/占位竞争、手动覆盖、替代确认和归档恢复。最终 `npm run verify` 的 72 个测试文件 / 533 个测试、8 项部署检查、类型与 lint、Next.js / Agent 构建通过，桌面编译通过。生产构建的浏览器模拟验收覆盖四步、100 包和 320/390/1024/1440 宽度，截图见当前 PR；模拟 FFmpeg command runner 和 YouTube 端口不证明真实工具/频道接受结果。
 
-浏览器 smoke：在本地生产构建上检查 320 / 390 / 1024 / 1440 宽度、隐私同意、Profile、排序、人工覆盖、100/101 emoji 无 maxlength、上传确认、已接收但未暂停时的等待状态、取消等待、月历切换、离线删除等待及法律页。`tests/publishing-ui.smoke.mjs` 的账号 / 设备 / 发布 API 全部模拟，**不证明真实上传**。先以隔离数据目录在 `127.0.0.1:3077` 启动构建，再执行 `node tests/publishing-ui.smoke.mjs`；截图和结果保存在 `.data/publishing-ui/`。
+网页验收覆盖 320/390/1024/1440、100 包分页、第一步检测与检查、第二步时间、最终确认及执行、刷新草稿、异常包和普通用户入口。截图必须标注示例数据。真实 Windows 工具、跨进程续传、真实项目 Unicode/Audit、Agent 关闭后公开、真实直播并行及跨多日滚动仍分别人工验收。
 
-发布文件：Cloud `cloud/publishing/state.json`；Agent `agent/publishing/entries.enc`；使用旧加密密钥。数据增量新增。异常进程遗留的 host / tokens 等锁沿用原人工核对流程；Cloud 发布锁可用 `npm run recover:lock -- main publishing`，只在确认 PID 已退出时清理，不删除日志。普通退出 / 重启自动载入检查点，安全停止会中断活动流式 Hash / HTTP。
+发布文件：Cloud `cloud/publishing/state.json`（含 plans）；Agent `agent/publishing/entries.enc`；本机 Working 生成记录和归档记录。继续使用旧加密密钥。异常遗留锁沿用人工核对流程，禁止删除日志来绕过恢复。
 
-回退先关闭新派发、暂停尚在执行的上传并等待安全检查点，然后回退 Cloud / Agent。保存发布日志、原配置和授权，不删除 `.data`。Cloud / Agent 回退不会取消已经提交给 YouTube 的排期；部署清单必须从已回读任务列出仍在远端生效的视频，必要时用户在在线 Agent 或 Studio 显式取消并核对。
+回退先关闭新派发、暂停当前生成/上传并等待安全检查点，保留所有状态和原授权。旧版本不能执行新发布包，应保留其记录并等新版恢复。Cloud/Agent 回退不会取消 YouTube 已提交排期；部署清单必须列出仍生效的视频。本轮保持 PR #26 未合并，未部署或发布安装器。

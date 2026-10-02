@@ -137,6 +137,7 @@ export class Manager {
         await this.configure("prepare", { id: item.id });
       }
       else if (["prepare", "add", "attach", "rename", "import-obs", "restore-candidate"].includes(action)) await this.configure(action, input);
+      else if (action === "open-publishing") { const { ensurePublishingRoot } = await import("../src/core/publishing/packages"); const root = path.join(this.settings.dataRoot, "Publishing"); await ensurePublishingRoot(root); if (await shell.openPath(path.join(root, "Inbox"))) throw new AppError("DESKTOP", "无法打开发布目录，请检查文件夹访问权限。"); }
       else if (action === "open-data") { if (await shell.openPath(this.settings.dataRoot)) throw new AppError("DESKTOP", "无法打开数据目录，请检查文件夹是否存在及访问权限。"); }
       else if (action === "directory") {
         const result = await dialog.showOpenDialog({ title:"选择 LiveNest 数据保存位置（自动创建 LiveNest 文件夹）", properties: ["openDirectory", "createDirectory"] });

@@ -3,20 +3,25 @@ import path from "node:path";
 import { stat } from "node:fs/promises";
 import { config, dataRoot } from "../config";
 import { seal, unseal, Store } from "../storage";
-import { AppError, safeError } from "../errors";
+import { AppError, safeError, sleep } from "../errors";
 import type { Service } from "../service";
 import { VideoApi, VideoApiError, type VideoPort, type VideoResource } from "../youtube/video-api";
-import { type JobSpec, type PublishingReport, jobSpecSchema, publishingTerminal } from "@/shared/publishing";
+import { type JobSpec, type PublishingReport, type MediaAsset, type PackageBatch, jobSpecSchema, publishingTerminal } from "@/shared/publishing";
 import { PublishingStore } from "./storage";
 import { validateAsset, resolvePublishingThumbnail } from "./assets";
 import { publishingMetadata } from "./metadata";
+import { publishingRoot, resolvePackageFile, validatePackage } from "./packages";
+import { preparePackageUpload, validatePreparedUpload } from "./render";
+import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
-type Entry = { spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"] };
-type Options = { store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
+type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
+type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"] };
+type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
 /** RFC3339 的不同等价格式按同一时刻比较，避免 .000Z 与 Z 导致误判排期。 */
 function sameMoment(a?: unknown, b?: string) { return typeof a === "string" && !!b && Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b); }
 export class PublishingRunner {
   private entries = new Map<string, Entry>(); private loaded = false; private writes: Promise<unknown> = Promise.resolve(); private active = new Map<string, Promise<void>>(); private aborters = new Map<string, AbortController>(); private stopped = false;
+  private archives = new Map<string, Promise<unknown>>();
   private accepting: Promise<unknown> = Promise.resolve(); private loading?: Promise<void>;
   readonly storage: PublishingStore; private now: () => number;
   /** 每台物理机器创建一次；API 与时钟可注入以验证崩溃恢复而不访问真实频道。 */
@@ -31,25 +36,27 @@ export class PublishingRunner {
   }
   /** 串行检查版本和落盘，防止同时接收两条修订时旧版本覆盖新版本。 */
   private async applyOnce(value: JobSpec) {
-    await this.load(); const spec = jobSpecSchema.parse(value); const old = this.entries.get(spec.id);
+    await this.load(); const spec = jobSpecSchema.parse(value); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
-    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.owner !== spec.owner || JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
+    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
     if (old) {
       const rescheduled = old.spec.originalPublishAt !== spec.originalPublishAt;
       if (rescheduled && ["published", "completed"].includes(old.report.state)) throw new AppError("ALREADY_PUBLIC", "已完成的视频不能重新定时公开。");
-      old.spec = spec; old.report.revision = spec.revision;
+      old.spec = spec; if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
       if (spec.desired !== "run" && old.report.state === "needs_attention") old.report.state = old.report.videoId ? "processing" : "ready";
       old.report.nextAttemptAt = undefined;
       if (rescheduled && old.report.videoId) { old.finalized = false; old.report.effectivePublishAt = undefined; old.report.state = "finalizing"; }
       if (spec.desired === "run" && ["paused", "needs_attention", "retry_wait"].includes(old.report.state)) { old.report.state = old.resumeState || (old.report.videoId ? "processing" : "ready"); old.report.nextAttemptAt = undefined; old.report.message = undefined; }
       if (spec.desired === "run" && ["scheduled", "processing", "published", "completed"].includes(old.report.state)) old.report.nextAttemptAt = this.now();
       old.report.sequence++; old.report.updatedAt = this.now();
+      // 旧修订报告可能被Cloud丢弃；新修订在创建会话前重新确认最终文件描述。
+      if (old.finalUpload && !old.session && !old.report.videoId) old.preparedSequence = old.report.sequence;
     } else this.entries.set(spec.id, { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "ready", offset: 0, total: spec.asset.size, updatedAt: this.now() }, playlistsDone: [], failures: 0 });
     await this.save(); return { ok: true };
   }
   /** 只有新报告被精确确认后才丢弃待报告标记，旧确认不能吞掉新进度。 */
   async acknowledge(values: { id: string; sequence: number }[]) { await this.load(); for (const v of values) { const entry = this.entries.get(v.id); if (entry && v.sequence <= entry.report.sequence) entry.acknowledged = Math.max(entry.acknowledged || 0, v.sequence); } await this.save(); }
-  /** 公开报告采用结构化拷贝，绝不包含 session URI、Hash 或 Token。 */
+  /** 公开报告只含状态和最终文件指纹，不包含 session URI、本机文件路径或 Token。 */
   async reports() { await this.load(); return [...this.entries.values()].filter(e => e.report.sequence > (e.acknowledged || 0)).slice(0, 32).map(e => structuredClone(e.report)); }
   /** 新授权必须仍属于尚未完成任务的频道。 */
   async expectedChannel(instanceId: string) { await this.load(); return [...this.entries.values()].find(e => e.spec.profile.instanceId === instanceId && !publishingTerminal(e.report.state))?.spec.profile.channelId; }
@@ -83,17 +90,20 @@ export class PublishingRunner {
   private async failure(entry: Entry, error: unknown) {
     if (!entry.resumeState) entry.resumeState = entry.report.state;
     entry.failures++;
-    const retry = error instanceof VideoApiError ? error.retryable : error instanceof AppError && (["VIDEO_QUOTA", "AGENT_NETWORK", "AGENT_TIMEOUT", "CLOUD_NETWORK", "GOOGLE_NETWORK", "GOOGLE_UNAVAILABLE", "YOUTUBE_QUOTA"].includes(error.code) || error.code === "CLOUD_REQUEST" && error.status >= 500);
+    if (entry.spec.desired === "pause") { await this.update(entry, { state: "paused", nextAttemptAt: undefined, message: undefined }); return; }
+    if (entry.spec.desired === "cancel" && (error instanceof Error && error.name === "AbortError" || error instanceof AppError && error.code === "RENDER_ABORTED")) { await this.update(entry, { state: "retry_wait", nextAttemptAt: this.now() }); return; }
+    const retry = error instanceof VideoApiError ? error.retryable : error instanceof AppError && (["RENDER_WAIT", "VIDEO_QUOTA", "AGENT_NETWORK", "AGENT_TIMEOUT", "CLOUD_NETWORK", "GOOGLE_NETWORK", "GOOGLE_UNAVAILABLE", "YOUTUBE_QUOTA"].includes(error.code) || error.code === "CLOUD_REQUEST" && error.status >= 500);
     await this.update(entry, { state: retry || this.stopped ? "retry_wait" : "needs_attention", authorizationInvalid: error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code) || undefined, message: safeError(error).slice(0, 500), nextAttemptAt: retry ? this.now() + Math.max(error instanceof VideoApiError ? error.retryAfterMs : 0, Math.min(1_800_000, 30_000 * 2 ** Math.min(entry.failures - 1, 6))) : undefined });
   }
   /** 续传前先核对远端 session；末块结果不明时从不盲目重新开始。 */
   private async execute(entry: Entry) {
     if (entry.expiredData) throw new AppError("DATA_EXPIRED", "API 数据已清除；请在 Studio 人工核对，不会创建第二次上传。");
     if (entry.spec.desired === "pause") { if (entry.report.state !== "paused") { entry.resumeState = entry.report.state === "retry_wait" ? entry.resumeState : entry.report.state; await this.update(entry, { state: "paused", nextAttemptAt: undefined }); } return; }
+    if (entry.spec.contentPackage && !entry.finalUpload && !entry.report.videoId && (entry.session || entry.finalChunkPossible)) throw new AppError("UPLOAD_UNCERTAIN", "最终文件检查点缺失，禁止重新生成和重复上传。");
     const api = this.api(entry); await this.checkChannel(entry);
     if (entry.spec.desired === "cancel") {
       if (entry.report.state === "cancelled") return;
-      if (!entry.report.videoId && entry.finalChunkPossible) { if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, entry.spec.asset.size), api); else await this.acceptProbe(entry, { offset: 0, expired: true }, api); if (!entry.report.videoId && entry.report.offset === entry.spec.asset.size) throw new AppError("UPLOAD_UNCERTAIN", "末块结果尚未确认，未将任务标为可重新排队。请在 Studio 核对。"); }
+      if (!entry.report.videoId && entry.finalChunkPossible) { if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, this.uploadAsset(entry).size), api); else await this.acceptProbe(entry, { offset: 0, expired: true }, api); if (!entry.report.videoId && entry.report.offset === this.uploadAsset(entry).size) throw new AppError("UPLOAD_UNCERTAIN", "末块结果尚未确认，未将任务标为可重新排队。请在 Studio 核对。"); }
       if (entry.report.videoId) await api.unschedule(entry.report.videoId);
       await this.update(entry, { state: "cancelled", nextAttemptAt: undefined, message: "任务已取消；本地源文件和 YouTube 视频未删除。" }); return;
     }
@@ -102,6 +112,22 @@ export class PublishingRunner {
     if (entry.report.state === "retry_wait") await this.update(entry, { state: entry.resumeState || (entry.report.videoId ? "processing" : "ready"), nextAttemptAt: undefined });
     entry.resumeState = undefined;
     if (entry.report.state === "scheduled" && entry.report.videoId) return;
+    if (entry.spec.contentPackage && !entry.report.videoId && !entry.finalUpload) {
+      if (entry.session || entry.finalChunkPossible) throw new AppError("UPLOAD_UNCERTAIN", "最终文件检查点缺失，禁止重新生成和重复上传。");
+      await this.update(entry, { state: "preparing_media" });
+      const abort = new AbortController(); this.aborters.set(entry.spec.id, abort);
+      entry.finalUpload = await preparePackageUpload(publishingRoot(), entry.spec.contentPackage, { signal: abort.signal, live: this.options.live });
+      const final = entry.finalUpload;
+      entry.sha256 = final.sha256;
+      await this.update(entry, { total: final.asset.size, prepared: { version: final.asset.version, size: final.asset.size, sha256: final.sha256 } });
+      entry.preparedSequence = entry.report.sequence; await this.save();
+      if (entry.spec.desired !== "run" || this.stopped) return;
+    }
+    if (entry.spec.contentPackage && entry.finalUpload && !entry.session && !entry.report.videoId && (this.options.requirePreparedAcknowledgement ?? !this.options.api)) {
+      // 在 Cloud 确认最终文件大小前停在 offset 0；后台 sync 不被此等待阻塞。
+      while (!this.stopped && entry.spec.desired === "run" && (entry.acknowledged || 0) < (entry.preparedSequence || entry.report.sequence)) await sleep(50);
+      if (this.stopped || entry.spec.desired !== "run") return;
+    }
     if (!entry.report.metadata) {
       await this.update(entry, { state: "generating_metadata" });
       const generated = await (this.options.metadata || publishingMetadata)(new Store(config(entry.spec.profile.instanceId).dataDir), entry.spec);
@@ -113,20 +139,21 @@ export class PublishingRunner {
     if (!entry.report.videoId) {
       await this.update(entry, { state: "uploading" });
       const hashAbort = new AbortController(); this.aborters.set(entry.spec.id, hashAbort);
-      const root = config(entry.spec.profile.instanceId).mediaRoot; const checked = await validateAsset(root, entry.spec.asset, entry.sha256 || entry.spec.asset.sha256 || undefined, hashAbort.signal);
+      const root = config(entry.spec.profile.instanceId).mediaRoot; const checked = entry.spec.contentPackage && entry.finalUpload ? await validatePreparedUpload(publishingRoot(), entry.finalUpload, entry.spec.contentPackage, hashAbort.signal) : await validateAsset(root, entry.spec.asset, entry.sha256 || entry.spec.asset.sha256 || undefined, hashAbort.signal);
       entry.sha256 = checked.sha256; await this.save();
       if (entry.spec.desired !== "run" || this.stopped) return;
-      if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, entry.spec.asset.size), api);
-      if (!entry.report.videoId && !entry.session) { entry.session = await api.begin(entry.spec, "LiveNest upload " + entry.spec.id); entry.finalChunkPossible = false; await this.save(); }
+      if (entry.session) await this.acceptProbe(entry, await api.probe(entry.session, this.uploadAsset(entry).size), api);
+      if (!entry.report.videoId && !entry.session) { entry.session = await api.begin({ ...entry.spec, asset: this.uploadAsset(entry) }, "LiveNest upload " + entry.spec.id); entry.finalChunkPossible = false; await this.save(); }
       while (!entry.report.videoId && !this.stopped && entry.spec.desired === "run") {
-        if (entry.report.offset === entry.spec.asset.size) throw new VideoApiError("UPLOAD_RESULT", "YouTube 已接收全部字节但结果尚未确认，稍后探测原会话。", true);
+        if (entry.report.offset === this.uploadAsset(entry).size) throw new VideoApiError("UPLOAD_RESULT", "YouTube 已接收全部字节但结果尚未确认，稍后探测原会话。", true);
         if (!entry.spec.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "发布策略已关闭，保留检查点等待管理员开启。");
+        if (entry.spec.contentPackage) await validatePackage(publishingRoot(), entry.spec.contentPackage);
         await this.checkChannel(entry);
-        const file = await stat(checked.file); if (file.size !== entry.spec.asset.size || file.mtimeMs !== entry.spec.asset.mtimeMs) throw new AppError("ASSET_CHANGED", "上传期间素材发生变化，已停止。");
-        const end = Math.min(entry.spec.asset.size, entry.report.offset + entry.spec.policy.chunkBytes);
-        if (end === entry.spec.asset.size) { entry.finalChunkPossible = true; await this.save(); }
+        const file = await stat(checked.file); if (file.size !== this.uploadAsset(entry).size || file.mtimeMs !== this.uploadAsset(entry).mtimeMs) throw new AppError("ASSET_CHANGED", "上传期间素材发生变化，已停止。");
+        const end = Math.min(this.uploadAsset(entry).size, entry.report.offset + entry.spec.policy.chunkBytes);
+        if (end === this.uploadAsset(entry).size) { entry.finalChunkPossible = true; await this.save(); }
         const abort = new AbortController(); this.aborters.set(entry.spec.id, abort);
-        const result = await api.chunk(entry.session!, checked.file, entry.report.offset, entry.spec.asset.size, entry.spec.policy.chunkBytes, this.options.live?.() ? entry.spec.policy.liveUploadMbps / entry.spec.policy.concurrency : entry.spec.policy.uploadMbps / entry.spec.policy.concurrency, abort.signal);
+        const result = await api.chunk(entry.session!, checked.file, entry.report.offset, this.uploadAsset(entry).size, entry.spec.policy.chunkBytes, this.options.live?.() ? entry.spec.policy.liveUploadMbps / entry.spec.policy.concurrency : entry.spec.policy.uploadMbps / entry.spec.policy.concurrency, abort.signal);
         const previous = entry.report.offset; await this.acceptProbe(entry, result, api);
         if (result.expired && !entry.report.videoId) throw new VideoApiError("UPLOAD_EXPIRED", "上传会话已过期，下次从新会话恢复；末块未发送。", true);
         if (!entry.report.videoId && entry.report.offset <= previous) throw new VideoApiError("UPLOAD_STALLED", "YouTube 上传进度未前进，稍后先探测再续传。", true);
@@ -136,10 +163,16 @@ export class PublishingRunner {
     }
     if (entry.report.state === "processing") return;
     await this.update(entry, { state: "finalizing" });
+    if (entry.spec.contentPackage) await validatePackage(publishingRoot(), entry.spec.contentPackage);
     if (entry.spec.profile.thumbnailMode !== "none" && !entry.thumbnailDone) {
       const filename = entry.spec.profile.thumbnailMode === "fixed" ? entry.spec.profile.thumbnailFilename : entry.spec.asset.thumbnail;
-      if (!filename) throw new AppError("THUMBNAIL", "缺少提前准备的缩略图，请补充同名图片后重新确认素材。");
-      await api.thumbnail(entry.report.videoId, await resolvePublishingThumbnail(config(entry.spec.profile.instanceId).mediaRoot, filename)); entry.thumbnailDone = true; await this.save();
+      if (entry.spec.contentPackage && entry.spec.profile.thumbnailMode === "matching") {
+        if (entry.spec.contentPackage.cover) { await validatePackage(publishingRoot(), entry.spec.contentPackage); await api.thumbnail(entry.report.videoId, await resolvePackageFile(publishingRoot(), entry.spec.contentPackage, entry.spec.contentPackage.cover, "cover")); }
+      } else {
+        if (!filename) throw new AppError("THUMBNAIL", "缺少提前准备的缩略图，请补充同名图片后重新确认素材。");
+        await api.thumbnail(entry.report.videoId, await resolvePublishingThumbnail(config(entry.spec.profile.instanceId).mediaRoot, filename));
+      }
+      entry.thumbnailDone = true; await this.save();
     }
     for (const id of entry.spec.profile.playlistIds) if (!entry.playlistsDone.includes(id)) { if (entry.spec.desired !== "run" || this.stopped) return; await api.playlist(entry.report.videoId, id); entry.playlistsDone.push(id); await this.save(); }
     if (entry.spec.desired !== "run" || this.stopped) return;
@@ -164,7 +197,7 @@ export class PublishingRunner {
   /** session 失效只有确认末块未发送时可重建；否则必须精确匹配唯一视频。 */
   private async acceptProbe(entry: Entry, probe: { offset: number; videoId?: string; expired?: boolean }, api: VideoPort) {
     if (probe.expired) {
-      if (entry.finalChunkPossible) { const matches = await api.recover("LiveNest upload " + entry.spec.id, entry.spec.profile.channelId); if (matches.length !== 1) throw new AppError("UPLOAD_UNCERTAIN", "上传结果未知，未创建第二个视频。请在 YouTube Studio 人工核对。"); await this.update(entry, { videoId: matches[0], offset: entry.spec.asset.size }); }
+      if (entry.finalChunkPossible) { const matches = await api.recover("LiveNest upload " + entry.spec.id, entry.spec.profile.channelId); if (matches.length !== 1) throw new AppError("UPLOAD_UNCERTAIN", "上传结果未知，未创建第二个视频。请在 YouTube Studio 人工核对。"); await this.update(entry, { videoId: matches[0], offset: this.uploadAsset(entry).size }); }
       else { entry.session = undefined; await this.update(entry, { offset: 0 }); }
       return;
     }
@@ -193,10 +226,24 @@ export class PublishingRunner {
     else if (state === "scheduled" && (video.status?.privacyStatus !== "private" || !sameMoment(video.status.publishAt, entry.report.effectivePublishAt))) state = "needs_attention";
     await this.update(entry, { state, processingStatus, observedPrivacy: video.status?.privacyStatus, remoteCheckedAt: this.now(), nextAttemptAt: state === "finalizing" ? this.now() : this.now() + interval * 1000, message: state === "needs_attention" ? "YouTube 排期已被修改，未自动覆盖人工操作。" : undefined });
   }
+  /** 上传会话始终绑定准备完成的不可变文件，旧扁平素材任务继续使用原 asset。 */
+  private uploadAsset(entry: Entry) { return entry.finalUpload?.asset || entry.spec.asset; }
+  /** 本机再次检查所有引用后归档；活动上传和新任务不能与搬移并行。 */
+  async archiveBatch(batch: PackageBatch, archiveId: string) {
+    await this.accepting; await this.load();
+    if (this.archives.has(batch.name)) throw new AppError("ARCHIVE_BUSY", "该批次正在归档。");
+    const references = [...this.entries.values()].filter(e => e.spec.contentPackage?.batchName === batch.name);
+    /** 只有当前修订被明确取消的历史任务才不再阻塞整批归档。 */
+    const safelyCancelled = (e: Entry) => e.spec.desired === "cancel" && e.report.state === "cancelled" && e.report.revision === e.spec.revision;
+    if (references.some(e => this.active.has(e.spec.id) || !safelyCancelled(e) && !["published", "completed"].includes(e.report.state)) || batch.packages.some(pkg => !references.some(e => e.spec.contentPackage?.id === pkg.id && e.spec.contentPackage.version === pkg.version && ["published", "completed"].includes(e.report.state) && (e.spec.profile.privacy !== "public" || e.report.observedPrivacy === "public")))) throw new AppError("ARCHIVE_BUSY", "批次仍有未完成任务或内容版本没有完成记录，不能移动源文件。");
+    const promise = archivePublishingBatch(publishingRoot(), batch, archiveId);
+    this.archives.set(batch.name, promise);
+    try { return await promise; } finally { this.archives.delete(batch.name); }
+  }
   /** 维护仅阻止当前执行，不让未来排期永久阻塞升级。 */
-  get busy() { return this.active.size > 0; }
+  get busy() { return this.active.size > 0 || this.archives.size > 0; }
   /** 停止时中断当前 HTTP 并保存检查点，不等待数小时视频传完。 */
-  async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values()]); await this.writes; }
+  async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values()]); await this.writes; }
   /** 撤销或删除授权前停止该实例任务并清除本地 API 数据；源素材保留。 */
   async purge(instanceId: string) { await this.accepting; await this.load(); const active: Promise<void>[] = []; for (const e of this.entries.values()) if (e.spec.profile.instanceId === instanceId) { e.spec.desired = "pause"; this.aborters.get(e.spec.id)?.abort(); const task = this.active.get(e.spec.id); if (task) active.push(task); } await Promise.allSettled(active); for (const [id, e] of this.entries) if (e.spec.profile.instanceId === instanceId) this.entries.delete(id); await this.save(); }
 }
