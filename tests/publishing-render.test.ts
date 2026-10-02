@@ -1,6 +1,6 @@
 /** FFmpeg wrapper 回归使用模拟子进程和真实文件，覆盖输出缓存、短长音乐、停止与崩溃恢复。 */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, rm, utimes } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, utimes, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { PublishingStore } from "@/core/publishing/storage";
@@ -51,7 +51,7 @@ function renders() { return execution.calls.filter(call => path.basename(call.ex
 it("uploads the original video without invoking FFmpeg when music is absent", async () => {
   const pkg = await fixture(false); await rm(path.join(base, "tools"), { recursive: true });
   const prepared = await preparePackageUpload(root, pkg); expect(prepared.relativePath).toBe("Inbox/Batch/001/video.mp4"); expect(prepared.asset.filename).toBe("video.mp4"); expect(prepared.sha256).toMatch(/^[a-f0-9]{64}$/); expect(execution.calls).toHaveLength(0);
-  const checked = await validatePreparedUpload(root, prepared, pkg); expect(checked.file).toBe(path.join(root, "Inbox", "Batch", "001", "video.mp4"));
+  const checked = await validatePreparedUpload(root, prepared, pkg); expect(checked.file).toBe(await realpath(path.join(root, "Inbox", "Batch", "001", "video.mp4")));
 });
 
 it.each([3, 30])("loops music of length %s and truncates at the video duration while preserving picture", async duration => {

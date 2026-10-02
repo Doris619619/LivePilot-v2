@@ -1,6 +1,6 @@
 /** 整批手工归档使用真实目录 rename 与持久日志，覆盖中断、重复请求和不覆盖源文件。 */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, symlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { ensurePublishingRoot, scanPublishingPackages } from "@/core/publishing/packages";
@@ -15,7 +15,7 @@ afterEach(async () => { if (path.dirname(root) !== os.tmpdir() || !path.basename
 
 it("moves the batch only on explicit archive and preserves source bytes and Working caches", async () => {
   const batch = (await scanPublishingPackages(root)).batches[0]; await writeFile(path.join(root, "Working", "keep.txt"), "cache");
-  const first = await archivePublishingBatch(root, batch, "archive-01"); expect(first).toEqual({ state: "complete", destination: path.join(root, "Completed", "Batch--archive-01") });
+  const first = await archivePublishingBatch(root, batch, "archive-01"); expect(first).toEqual({ state: "complete", destination: await realpath(path.join(root, "Completed", "Batch--archive-01")) });
   expect(await readdir(path.join(root, "Inbox"))).toEqual([]); expect(await readFile(path.join(first.destination, "001", "video.mp4"), "utf8")).toBe("source-video"); expect(await readFile(path.join(root, "Working", "keep.txt"), "utf8")).toBe("cache");
   expect(await archivePublishingBatch(root, batch, "archive-01")).toEqual(first);
 });
