@@ -3,16 +3,18 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, writeFile, readFile, rm, utimes, realpath } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import type { ChildProcess } from "node:child_process";
 import { PublishingStore } from "@/core/publishing/storage";
 import { ensurePublishingRoot, scanPublishingPackages } from "@/core/publishing/packages";
 import { preparePackageUpload, validatePreparedUpload } from "@/core/publishing/render";
 
-const execution = vi.hoisted(() => ({ calls: [] as { executable: string; args: string[] }[], failures: 0, invalidOutput: false, hold: false, musicDuration: 3 }));
+const execution = vi.hoisted(() => ({ calls: [] as { executable: string; args: string[] }[], failures: 0, invalidOutput: false, hold: false, musicDuration: 3, onRenderSpawn: undefined as ((child: ChildProcess) => void) | undefined }));
 vi.mock("node:child_process", async () => {
   const { EventEmitter } = await import("node:events"); const { PassThrough } = await import("node:stream"); const fs = await import("node:fs/promises");
   return { spawn: vi.fn((executable: string, args: string[]) => {
     const child = new EventEmitter() as import("node:child_process").ChildProcess; const stdout = new PassThrough(); const stderr = new PassThrough();
     Object.assign(child, { pid: process.pid, stdout, stderr, kill: vi.fn(() => { queueMicrotask(() => child.emit("close", 1)); return true; }) }); execution.calls.push({ executable, args });
+    if (path.basename(executable).startsWith("ffmpeg")) execution.onRenderSpawn?.(child);
     queueMicrotask(async () => {
       try {
         if (path.basename(executable).startsWith("ffprobe")) {
@@ -36,7 +38,7 @@ beforeEach(async () => {
   await writeFile(path.join(base, "tools", "ffmpeg.exe"), "mock-tool"); await writeFile(path.join(base, "tools", "ffprobe.exe"), "mock-tool");
   await mkdir(path.join(root, "Inbox", "Batch", "001"), { recursive: true }); await writeFile(path.join(root, "Inbox", "Batch", "001", "video.mp4"), "video-bytes");
   await utimes(path.join(root, "Inbox", "Batch", "001", "video.mp4"), new Date(1700000000000), new Date(1700000000000));
-  vi.stubEnv("PATH", ""); execution.calls.length = 0; execution.failures = 0; execution.invalidOutput = false; execution.hold = false; execution.musicDuration = 3;
+  vi.stubEnv("PATH", ""); execution.calls.length = 0; execution.failures = 0; execution.invalidOutput = false; execution.hold = false; execution.musicDuration = 3; execution.onRenderSpawn = undefined;
 });
 /** 仅清理明确属于本测试的根，模拟子进程不会触碰真实 FFmpeg 或用户媒体。 */
 afterEach(async () => { if (path.dirname(base) !== os.tmpdir() || !path.basename(base).startsWith("publishing-render-")) throw new Error("Unsafe cleanup"); await rm(base, { recursive: true, force: true }); vi.unstubAllEnvs(); });
@@ -114,9 +116,18 @@ it.each(["video.mp4", "music.mp3"])("detects changed %s bytes with restored size
 });
 
 it("stops its own process on abort and prevents a second generation on the same device", async () => {
-  const pkg = await fixture(); execution.hold = true; const controller = new AbortController(); const active = preparePackageUpload(root, pkg, { signal: controller.signal }); const rejected = expect(active).rejects.toMatchObject({ name: "AbortError" });
-  await vi.waitFor(() => expect(renders()).toHaveLength(1)); await expect(preparePackageUpload(root, pkg)).rejects.toMatchObject({ code: "RENDER_WAIT" });
-  controller.abort(); await rejected; execution.hold = false; await expect(preparePackageUpload(root, pkg)).resolves.toMatchObject({ asset: { filename: "output.mp4" } });
+  const pkg = await fixture(); execution.hold = true; const controller = new AbortController();
+  /** 真正创建本测试的 FFmpeg 子进程时才继续，避免把磁盘准备耗时误判为未生成。 */
+  const spawned = new Promise<ChildProcess>(resolve => { execution.onRenderSpawn = resolve; });
+  const active = preparePackageUpload(root, pkg, { signal: controller.signal });
+  /** 立即处理失败，前置断言失败时也必须中止并排空活动任务，再允许 afterEach 删除目录。 */
+  const outcome = active.then(value => ({ ok: true as const, value }), error => ({ ok: false as const, error }));
+  try {
+    const child = await Promise.race([spawned, outcome.then(result => { if (!result.ok) throw result.error; throw new Error("The upload preparation completed without starting the expected FFmpeg process"); })]);
+    expect(renders()).toHaveLength(1); await expect(preparePackageUpload(root, pkg)).rejects.toMatchObject({ code: "RENDER_WAIT" });
+    controller.abort(); expect(await outcome).toMatchObject({ ok: false, error: { name: "AbortError" } }); expect(child.kill).toHaveBeenCalledOnce();
+  } finally { controller.abort(); await outcome; execution.hold = false; execution.onRenderSpawn = undefined; }
+  await expect(preparePackageUpload(root, pkg)).resolves.toMatchObject({ asset: { filename: "output.mp4" } });
 });
 
 it("preserves an unknown generation lock instead of silently deleting it", async () => {

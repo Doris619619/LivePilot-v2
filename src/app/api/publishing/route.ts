@@ -7,7 +7,7 @@ import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
 import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema } from "@/shared/publishing";
 import { idSchema, uuidSchema } from "@/shared/remote";
-import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
+import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, previewPublishingReschedule, confirmPublishingReschedule, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
 import { oauthCookie } from "@/cloud/oauth";
 import { NextResponse } from "next/server";
 export const runtime = "nodejs";
@@ -22,6 +22,8 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("packages"), agentId: idSchema, instanceId: idSchema, accountId: uuidSchema.optional() }).strict(),
   z.object({ action: z.literal("plan-preview"), profileId: uuidSchema, batchId: z.string().regex(/^[a-f0-9]{64}$/), rule: planRuleSchema, items: z.array(planItemSchema).max(10000).optional() }).strict(),
   z.object({ action: z.literal("plan-update"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema.optional(), items: z.array(planItemSchema).max(10000) }).strict(),
+  z.object({ action: z.literal("plan-reschedule-preview"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema, items: z.array(planItemSchema).max(10000).optional() }).strict(),
+  z.object({ action: z.literal("plan-reschedule-confirm"), planId: uuidSchema, revision: z.number().int().positive(), previewId: uuidSchema }).strict(),
   z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
   z.object({ action: z.literal("plan-archive"), planId: uuidSchema }).strict(),
   z.object({ action: z.literal("profile"), profile: profileSchema }).strict(),
@@ -49,6 +51,8 @@ export async function POST(request: Request) {
     else if (value.action === "packages") result = await publishingPackages(user, value.agentId, value.instanceId, value.accountId);
     else if (value.action === "plan-preview") result = await previewPublishingPlan(user, value.profileId, value.batchId, value.rule, value.items);
     else if (value.action === "plan-update") result = await updatePublishingPlan(user, value.planId, value.revision, value.items, value.rule);
+    else if (value.action === "plan-reschedule-preview") result = await previewPublishingReschedule(user, value.planId, value.revision, value.rule, value.items);
+    else if (value.action === "plan-reschedule-confirm") result = await confirmPublishingReschedule(user, value.planId, value.revision, value.previewId);
     else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds);
     else if (value.action === "plan-archive") result = await archivePublishingPlan(user, value.planId);
     else if (value.action === "profile") result = await savePublishingProfile(user, value.profile);

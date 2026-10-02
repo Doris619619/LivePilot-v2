@@ -124,14 +124,17 @@ export class VideoApi implements VideoPort {
     const existing = await this.json<{ items?: unknown[] }>("playlistItems", { part: "id", playlistId, videoId, maxResults: "1" });
     if (!existing.items?.length) await this.json("playlistItems", { part: "snippet" }, "POST", { snippet: { playlistId, resourceId: { kind: "youtube#video", videoId } } }, 50);
   }
-  /** 更新时保留已存在的可写字段，不复制只读状态。 */
+  /** 更新时保留可写字段，并只修改刚读取的版本；已经公开的视频不重新私密排期。 */
   async finalize(id: string, job: JobSpec, copy: z.infer<typeof videoCopySchema>, publishAt?: string) {
     const current = (await this.list([id]))[0]; if (!current) throw new VideoApiError("VIDEO_MISSING", "无法核对上传的视频。");
     if (current.snippet?.channelId !== job.profile.channelId) throw new VideoApiError("CHANNEL", "视频不属于任务频道。");
+    if (current.status?.privacyStatus === "public") throw new VideoApiError("ALREADY_PUBLIC", "视频已经公开，未重新设为私密或改期。");
+    if (!current.etag || !current.status?.privacyStatus) throw new VideoApiError("SCHEDULE_UNCONFIRMED", "未能确认视频版本和可见性，请重新核对。");
+    if (publishAt && current.status.privacyStatus !== "private") throw new VideoApiError("SCHEDULE_UNCONFIRMED", "只有仍为私密的视频才能设置定时公开。");
     const p = job.profile;
     const snippet = { ...pick(current.snippet, ["title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage"]), ...copy, tags: p.tags, categoryId: p.categoryId };
     const status = { ...pick(current.status, ["privacyStatus", "license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: publishAt ? "private" : p.privacy, license: p.license, embeddable: p.embeddable, selfDeclaredMadeForKids: p.madeForKids, containsSyntheticMedia: p.containsSyntheticMedia, ...(publishAt ? { publishAt } : {}) };
-    await this.json("videos", { part: "snippet,status" }, "PUT", { id, snippet, status }, 50);
+    await this.json("videos", { part: "snippet,status" }, "PUT", { id, snippet, status }, 50, current.etag);
   }
   /** 按回读版本取消排期；公开或并发变更时不覆盖远端可见性。 */
   async unschedule(id: string) {

@@ -5,7 +5,7 @@ import os from "node:os"; import path from "node:path";
 import { PublishingStore } from "@/core/publishing/storage";
 import { PublishingRunner } from "@/core/publishing/runner";
 import { scanPublishingAssets } from "@/core/publishing/assets";
-import { seal } from "@/core/storage";
+import { seal, unseal } from "@/core/storage";
 import { VideoApiError } from "@/core/youtube/video-api";
 import { fixtureApi, fixtureJob } from "./publishing-fixtures";
 import type { JobSpec, PublishingReport } from "@/shared/publishing";
@@ -59,3 +59,68 @@ it("recovers a lost schedule response without shifting its time or finalizing tw
 it("retries only the failed playlist step and never reuploads a completed video", async () => { const { api, videos } = fixtureApi(); job.profile.playlistIds = ["PLfirst", "PLsecond"]; await checkpoint("finalizing", { report: { id: job.id, revision: 1, sequence: 1, state: "finalizing", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, metadata: { title: "movie", description: "Description" } } }); videos.set("v1", { id: "v1", snippet: { channelId: "channel_one" }, status: { privacyStatus: "private" } }); api.playlist.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new VideoApiError("VIDEO_NETWORK", "lost insert", true)); const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.tick(); await settle(runner); now += 60001; await runner.tick(); await settle(runner); expect(api.playlist.mock.calls).toEqual([["v1", "PLfirst"], ["v1", "PLsecond"], ["v1", "PLsecond"]]); expect(api.begin).not.toHaveBeenCalled(); expect((await runner.reports())[0].state).toBe("completed"); await runner.stop(); });
 it("blocks upload when the instance authorization channel changes", async () => { const { api } = fixtureApi(); const service = { auth: { tokens: async () => ({ channelId: "other_channel" }) } } as unknown as Service; const runner = new PublishingRunner(new Map([["main", service]]), { store, now: () => now, api: () => api }); await runner.apply(job); await runner.tick(); await settle(runner); expect(api.begin).not.toHaveBeenCalled(); expect((await runner.reports())[0].state).toBe("needs_attention"); await runner.stop(); });
 it("does not turn an unknown last-chunk result into a cancelled job that can be requeued", async () => { const { api } = fixtureApi(); await checkpoint("uploading", { session: "old", finalChunkPossible: true }); api.probe.mockResolvedValue({ offset: 0, expired: true } as never); const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply({ ...job, revision: 2, desired: "cancel" }); await runner.tick(); await settle(runner); expect((await runner.reports())[0].state).toBe("needs_attention"); expect(api.begin).not.toHaveBeenCalled(); expect(api.unschedule).not.toHaveBeenCalled(); await runner.stop(); });
+it.each([false, true])("applies a newer schedule after a delayed old finalization and restart without reuploading (lost=%s)", async lost => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z";
+  const copy = { title: "Persisted title", description: "Persisted copy" }; const finalUpload = { asset: job.asset, relativePath: "Working/001/output.mp4", sha256: "c".repeat(64) };
+  await checkpoint("finalizing", { finalUpload, session: "original-session", sha256: finalUpload.sha256, finalChunkPossible: true, report: { id: job.id, revision: 1, sequence: 1, state: "finalizing", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, metadata: copy } });
+  videos.set("v1", { id: "v1", snippet: { channelId: "channel_one" }, status: { privacyStatus: "private" } });
+  let started!: () => void; let release!: () => void; const entered = new Promise<void>(resolve => { started = resolve; }); const gate = new Promise<void>(resolve => { release = resolve; });
+  const finalize = api.finalize.getMockImplementation()!;
+  /** Hold the old write open while the persisted new revision arrives; its late result cannot confirm the new intent. */
+  api.finalize.mockImplementationOnce(async (...args) => { started(); await gate; await finalize(...args); if (lost) throw new VideoApiError("VIDEO_NETWORK", "Delayed response lost", true); });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.tick(); await entered;
+  const revised = { ...job, revision: 2, originalPublishAt: "2026-10-03T18:00:00Z" }; await runner.apply(revised); release(); await settle(runner);
+  expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "finalizing", videoId: "v1", metadata: copy }); await runner.stop();
+  const restored = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await restored.tick(); await settle(restored);
+  expect((await restored.reports())[0]).toMatchObject({ revision: 2, state: "scheduled", videoId: "v1", metadata: copy, effectivePublishAt: "2026-10-03T18:00:00.000Z" });
+  expect(api.finalize).toHaveBeenCalledTimes(2); expect(api.finalize.mock.calls[1]).toEqual(["v1", expect.objectContaining({ revision: 2 }), copy, "2026-10-03T18:00:00.000Z"]); expect(api.begin).not.toHaveBeenCalled(); expect(api.chunk).not.toHaveBeenCalled();
+  const encrypted = await store.read<string>("entries.enc"); const entries = unseal<{ session: string; finalUpload: unknown; sha256: string }[]>(encrypted!); expect(entries[0]).toMatchObject({ session: "original-session", finalUpload, sha256: finalUpload.sha256 }); await restored.stop();
+});
+it("preserves a paused schedule revision until explicit resume, then changes only the original remote video", async () => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z";
+  const copy = { title: "Persisted title", description: "Persisted copy" }; await api.finalize("v1", job, copy, job.originalPublishAt); api.finalize.mockClear();
+  await checkpoint("paused", { finalized: true, resumeState: "scheduled", report: { id: job.id, revision: 1, sequence: 1, state: "paused", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, effectivePublishAt: job.originalPublishAt, metadata: copy } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); const revised = { ...job, revision: 2, desired: "pause" as const, originalPublishAt: "2026-10-03T18:00:00Z" }; await runner.apply(revised); await runner.tick(); await settle(runner);
+  expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "paused", effectivePublishAt: job.originalPublishAt }); expect(videos.get("v1")!.status!.publishAt).toBe(job.originalPublishAt); expect(api.finalize).not.toHaveBeenCalled();
+  await runner.apply({ ...revised, revision: 3, desired: "run" }); await runner.tick(); await settle(runner); expect((await runner.reports())[0]).toMatchObject({ revision: 3, state: "scheduled", effectivePublishAt: "2026-10-03T18:00:00.000Z" }); expect(api.finalize).toHaveBeenCalledOnce(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});
+it("reports a late schedule revision at the current revision when the Agent already observed publication", async () => {
+  const { api } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z";
+  await checkpoint("published", { report: { id: job.id, revision: 1, sequence: 1, state: "published", observedPrivacy: "public", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, effectivePublishAt: job.originalPublishAt } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.acknowledge([{ id: job.id, sequence: 1 }]); await runner.apply({ ...job, revision: 2, originalPublishAt: "2026-10-03T18:00:00Z" }); await runner.tick();
+  expect((await runner.reports())[0]).toMatchObject({ revision: 2, sequence: 2, state: "published", observedPrivacy: "public", effectivePublishAt: job.originalPublishAt, message: expect.stringContaining("改期未应用") }); expect(api.list).not.toHaveBeenCalled(); expect(api.finalize).not.toHaveBeenCalled(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});
+it("waits for YouTube processing after a timing revision before finalizing the same video", async () => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z";
+  await checkpoint("processing", { report: { id: job.id, revision: 1, sequence: 1, state: "processing", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, metadata: { title: "Persisted title", description: "Persisted copy" } } });
+  videos.set("v1", { id: "v1", snippet: { channelId: "channel_one" }, status: { privacyStatus: "private" }, processingDetails: { processingStatus: "processing" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply({ ...job, revision: 2, originalPublishAt: "2026-10-03T18:00:00Z" }); await runner.tick(); expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "processing" }); expect(api.finalize).not.toHaveBeenCalled();
+  videos.get("v1")!.processingDetails!.processingStatus = "succeeded"; now += 60001; await runner.tick(); await runner.tick(); await settle(runner); expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "scheduled", effectivePublishAt: "2026-10-03T18:00:00.000Z" }); expect(api.finalize).toHaveBeenCalledOnce(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});
+it.each(["ALREADY_PUBLIC", "VIDEO_CHANGED"])("reconciles publication during the conditional schedule write (%s)", async code => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z";
+  const copy = { title: "Persisted title", description: "Persisted copy" }; await api.finalize("v1", job, copy, job.originalPublishAt); api.finalize.mockClear(); await checkpoint("scheduled", { finalized: true, report: { id: job.id, revision: 1, sequence: 1, state: "scheduled", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, effectivePublishAt: job.originalPublishAt, metadata: copy } });
+  /** Simulate publication between the outer read and conditional API update, with no accepted write. */
+  api.finalize.mockImplementationOnce(async () => { videos.get("v1")!.status!.privacyStatus = "public"; delete videos.get("v1")!.status!.publishAt; throw new VideoApiError(code, "Publication won the race"); });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply({ ...job, revision: 2, originalPublishAt: "2026-10-03T18:00:00Z" }); await runner.tick(); await settle(runner);
+  expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "published", observedPrivacy: "public", effectivePublishAt: job.originalPublishAt, message: expect.stringContaining("改期未应用") }); expect(api.finalize).toHaveBeenCalledOnce(); expect(api.begin).not.toHaveBeenCalled(); expect(api.chunk).not.toHaveBeenCalled(); await runner.stop();
+});
+it("does not turn a newer timing revision into a retry of an unknown last-chunk result", async () => {
+  const { api } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-02T12:00:00Z"; await checkpoint("needs_attention", { session: "original-session", finalChunkPossible: true });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply({ ...job, revision: 2, originalPublishAt: "2026-10-03T18:00:00Z" }); await runner.tick(); expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "needs_attention", message: expect.stringContaining("改期未应用") }); expect(api.probe).not.toHaveBeenCalled(); expect(api.begin).not.toHaveBeenCalled(); expect(api.chunk).not.toHaveBeenCalled(); await runner.stop();
+});
+it("clears an unverified legacy finalization marker and allows explicit schedule recovery", async () => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-03T18:00:00Z";
+  const copy = { title: "Persisted title", description: "Persisted copy" }; await checkpoint("finalizing", { finalized: true, report: { id: job.id, revision: 1, sequence: 1, state: "finalizing", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, effectivePublishAt: job.originalPublishAt, metadata: copy } });
+  videos.set("v1", { id: "v1", snippet: { channelId: "channel_one", title: "Old copy" }, status: { privacyStatus: "private", publishAt: "2026-10-02T12:00:00Z" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.tick(); await settle(runner); expect((await runner.reports())[0].state).toBe("needs_attention"); expect(api.finalize).not.toHaveBeenCalled();
+  const saved = await store.read<string>("entries.enc"); expect(unseal<{ finalized: boolean }[]>(saved!)[0].finalized).toBe(false);
+  await runner.apply({ ...job, revision: 2 }); await runner.tick(); await settle(runner); expect((await runner.reports())[0]).toMatchObject({ revision: 2, state: "scheduled", effectivePublishAt: "2026-10-03T18:00:00.000Z" }); expect(api.finalize).toHaveBeenCalledOnce(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});
+it("recovers a missing post-write verification without sending the schedule update twice", async () => {
+  const { api, videos } = fixtureApi(); job.profile.privacy = "public"; job.profile.scheduled = true; job.originalPublishAt = "2026-10-03T18:00:00Z";
+  await checkpoint("finalizing", { report: { id: job.id, revision: 1, sequence: 1, state: "finalizing", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, metadata: { title: "Persisted title", description: "Persisted copy" } } });
+  videos.set("v1", { id: "v1", snippet: { channelId: "channel_one" }, status: { privacyStatus: "private" } }); const list = api.list.getMockImplementation()!; api.list.mockImplementationOnce(list).mockResolvedValueOnce([]);
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.tick(); await settle(runner); expect((await runner.reports())[0].state).toBe("retry_wait"); const saved = await store.read<string>("entries.enc"); expect(unseal<{ finalized?: boolean }[]>(saved!)[0].finalized).not.toBe(true);
+  now += 30001; await runner.tick(); await settle(runner); expect((await runner.reports())[0]).toMatchObject({ state: "scheduled", effectivePublishAt: "2026-10-03T18:00:00.000Z" }); expect(api.finalize).toHaveBeenCalledOnce(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});

@@ -9,7 +9,7 @@ vi.mock("@/cloud/tasks", async importOriginal => ({ ...await importOriginal<type
 import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, setAgentOwner } from "@/cloud/agents";
 import { cloudStore } from "@/cloud/store";
 import { accessStore, emptyAccess } from "@/server/access";
-import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, confirmPublishingPlan, previewPublishingPlan, publishingStore, publishingTick, publishingView, reportPublishing, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
+import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, reportPublishing, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
 import { occupiedPublishingSlots, schedulePlanSlots } from "@/core/publishing/schedule";
 import { AppError } from "@/core/errors";
 import { makeProblem } from "@/shared/problems";
@@ -120,4 +120,125 @@ it("keeps one archive ID per batch while allowing the original pending plan to r
 });
 it("releases the old remote slot after successful reschedule while retaining historical display time", async () => {
   const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); const actual = "2026-10-01T22:00:00Z"; await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "scheduled", effectivePublishAt: actual, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); const at = "2026-10-03T22:00:00Z"; const revised = await changePublishingJob(alice, job.spec.id, "reschedule", at); await reportPublishing("pc", [{ id: job.spec.id, revision: revised.spec.revision, sequence: 2, state: "finalizing", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); let current = (await publishingView(alice)).jobs[0]; expect(occupiedPublishingSlots([current], "channel_one").has(Date.parse(actual))).toBe(true); await reportPublishing("pc", [{ id: job.spec.id, revision: revised.spec.revision, sequence: 3, state: "scheduled", effectivePublishAt: at, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); current = (await publishingView(alice)).jobs[0]; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(at)])); expect(current.initialPublishAt).toBe(job.initialPublishAt);
+});
+
+it("previews confirmed plan times without changing uploads, then revises the same jobs and account", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, plan.revision, false, true);
+  await reportPublishing("pc", [{ id: jobs[0].spec.id, revision: 1, sequence: 1, state: "scheduled", videoId: "existing_video", effectivePublishAt: jobs[0].spec.originalPublishAt, offset: 0, total: jobs[0].spec.asset.size, updatedAt: Date.now() }]);
+  const updatedRule = { ...rule, weeklySlots: [{ weekday: 5, time: "11:00" }] };
+  const draft = await previewPublishingReschedule(alice, plan.id, plan.revision, updatedRule);
+  expect(draft).toMatchObject({ id: plan.id, revision: 1, confirmedAt: Date.now(), schedulePreviewId: expect.any(String) });
+  expect(draft.items[0].publishAt).toBe("2026-10-02T11:00:00Z"); expect((await publishingView(alice)).jobs.map(job => job.spec.originalPublishAt)).toEqual(jobs.map(job => job.spec.originalPublishAt));
+  const saved = await publishingStore().read<{ schedulePreviews: unknown[] }>("state.json"); expect(saved?.schedulePreviews).toHaveLength(1);
+  const changed = await confirmPublishingReschedule(alice, plan.id, plan.revision, draft.schedulePreviewId!); const current = (await publishingView(alice)).jobs;
+  expect(changed.revision).toBe(2); expect(changed.schedulePreviewId).toBeUndefined(); expect(current.map(job => job.spec.id)).toEqual(jobs.map(job => job.spec.id)); expect(current.map(job => job.spec.revision)).toEqual([2, 2]);
+  expect(current[0]).toMatchObject({ initialPublishAt: jobs[0].initialPublishAt, pendingPublishAt: jobs[0].spec.originalPublishAt, hadUpload: true, observed: { videoId: "existing_video" }, spec: { profile: jobs[0].spec.profile, asset: jobs[0].spec.asset, contentPackage: jobs[0].spec.contentPackage, overrides: jobs[0].spec.overrides } });
+  expect(await confirmPublishingReschedule(alice, plan.id, plan.revision, draft.schedulePreviewId!)).toEqual(changed); expect((await publishingView(alice)).jobs.map(job => job.spec.revision)).toEqual([2, 2]);
+});
+
+it("keeps manual and excluded packages fixed while changing only automatic remaining times", async () => {
+  batch = packageBatch(3); const plan = await preview(); const fixed = "2026-10-02T08:00:00Z";
+  const arranged = await updatePublishingPlan(alice, plan.id, 1, plan.items.map((item, index) => index === 0 ? { ...item, scheduleSource: "manual", publishAt: fixed } : index === 2 ? { ...item, excluded: true } : item));
+  const jobs = await confirmPublishingPlan(alice, plan.id, arranged.revision, false, true);
+  const draft = await previewPublishingReschedule(alice, plan.id, arranged.revision, { ...rule, weeklySlots: [{ weekday: 6, time: "12:00" }] });
+  expect(draft.items[0].publishAt).toBe(fixed); expect(draft.items[1].publishAt).toBe("2026-10-03T12:00:00Z"); expect(draft.items[2]).toMatchObject({ excluded: true }); expect(draft.scheduleLockedPackageIds).toContain(plan.items[2].packageId);
+  await confirmPublishingReschedule(alice, plan.id, arranged.revision, draft.schedulePreviewId!); expect((await publishingView(alice)).jobs.map(job => job.spec.id)).toEqual(jobs.map(job => job.spec.id));
+  await expect(previewPublishingReschedule(alice, plan.id, arranged.revision + 1, rule, draft.items.map((item, index) => index === 0 ? { ...item, title: "Changed after confirmation" } : item))).rejects.toMatchObject({ code: "INPUT" });
+});
+
+it("keeps an individual job time override when later regenerating the batch schedule", async () => {
+  const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); const fixed = "2026-10-05T16:00:00Z";
+  const overridden = await changePublishingJob(alice, job.spec.id, "reschedule", fixed); expect(overridden.spec.scheduleSource).toBe("manual");
+  const currentPlan = (await publishingView(alice)).plans.find(value => value.id === plan.id)!; expect(currentPlan.revision).toBe(2); expect(currentPlan.items[0]).toMatchObject({ scheduleSource: "manual", publishAt: fixed });
+  const draft = await previewPublishingReschedule(alice, plan.id, currentPlan.revision, { ...rule, weeklySlots: [{ weekday: 7, time: "17:00" }] }); expect(draft.items[0].publishAt).toBe(fixed);
+});
+
+it("preserves paused intent and locks completed, cancelled, failed and attention packages", async () => {
+  batch = packageBatch(7); const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  for (const [index, state] of (["published", "completed", "cancelled", "failed", "needs_attention"] as const).entries()) await reportPublishing("pc", [{ id: jobs[index].spec.id, revision: 1, sequence: 1, state, offset: 0, total: jobs[index].spec.asset.size, updatedAt: Date.now() }]);
+  const paused = await changePublishingJob(alice, jobs[5].spec.id, "pause"); await changePublishingJob(alice, jobs[6].spec.id, "cancel");
+  const before = (await publishingView(alice)).jobs; const draft = await previewPublishingReschedule(alice, plan.id, 1, { ...rule, weeklySlots: [{ weekday: 7, time: "13:00" }] });
+  expect(draft.scheduleLockedPackageIds).toHaveLength(6); await confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!); const current = (await publishingView(alice)).jobs;
+  expect(current.filter((_, index) => index !== 5)).toEqual(before.filter((_, index) => index !== 5)); expect(current[5].spec.desired).toBe("pause"); expect(current[5].spec.revision).toBe(paused.spec.revision + 1); expect(current[5].spec.originalPublishAt).not.toBe(paused.spec.originalPublishAt);
+});
+
+it("accepts harmless upload progress but rejects publication or a racing control revision", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const nextRule = { ...rule, weeklySlots: [{ weekday: 6, time: "11:00" }] };
+  const first = await previewPublishingReschedule(alice, plan.id, 1, nextRule);
+  await reportPublishing("pc", [{ id: jobs[0].spec.id, revision: 1, sequence: 1, state: "processing", offset: 0, total: jobs[0].spec.asset.size, updatedAt: Date.now() }]);
+  await confirmPublishingReschedule(alice, plan.id, 1, first.schedulePreviewId!);
+  const second = await previewPublishingReschedule(alice, plan.id, 2, { ...nextRule, weeklySlots: [{ weekday: 7, time: "11:00" }] });
+  await reportPublishing("pc", [{ id: jobs[0].spec.id, revision: 2, sequence: 2, state: "published", observedPrivacy: "public", offset: 0, total: jobs[0].spec.asset.size, updatedAt: Date.now() }]);
+  await expect(confirmPublishingReschedule(alice, plan.id, 2, second.schedulePreviewId!)).rejects.toMatchObject({ code: "REVISION" });
+  const third = await previewPublishingReschedule(alice, plan.id, 2, nextRule); await changePublishingJob(alice, jobs[1].spec.id, "pause"); await expect(confirmPublishingReschedule(alice, plan.id, 2, third.schedulePreviewId!)).rejects.toMatchObject({ code: "REVISION" });
+});
+
+it("rejects another batch occupying the shown replacement time without partially applying", async () => {
+  const plan = await preview(); await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  const draft = await previewPublishingReschedule(alice, plan.id, 1, { ...rule, weeklySlots: [{ weekday: 6, time: "14:00" }] });
+  batch = { ...packageBatch(1), id: "e".repeat(64), name: "Another batch", packages: [{ ...packageBatch(1).packages[0], id: "f".repeat(64), batchName: "Another batch" }] };
+  const other = await preview(); const fixed = await updatePublishingPlan(alice, other.id, 1, [{ ...other.items[0], scheduleSource: "manual", publishAt: draft.items[0].publishAt }]); await confirmPublishingPlan(alice, fixed.id, fixed.revision, false, true);
+  const before = (await publishingView(alice)).jobs; await expect(confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!)).rejects.toMatchObject({ code: "CONFLICT" }); expect((await publishingView(alice)).jobs).toEqual(before);
+});
+
+it("preserves progress with the final output and permits offline schedule confirmation", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const prepared = { version: "e".repeat(64), sha256: "f".repeat(64), size: 999 };
+  await reportPublishing("pc", [{ id: jobs[0].spec.id, revision: 1, sequence: 1, state: "uploading", offset: 0, total: prepared.size, prepared, updatedAt: Date.now() }]);
+  vi.setSystemTime(new Date("2026-10-01T01:00:00Z")); const draft = await previewPublishingReschedule(alice, plan.id, 1, { ...rule, weeklySlots: [{ weekday: 6, time: "15:00" }] });
+  await reportPublishing("pc", [{ id: jobs[0].spec.id, revision: 1, sequence: 2, state: "uploading", offset: 500, total: prepared.size, updatedAt: Date.now() }]);
+  await confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!); const current = (await publishingView(alice)).jobs[0]; expect(current.prepared).toEqual(prepared); expect(current.observed?.offset).toBe(500); expect(current.spec.id).toBe(jobs[0].spec.id); expect(current.spec.revision).toBe(2);
+});
+
+it("releases a rejected new time only after the Agent confirms the actual published result", async () => {
+  const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); const actual = job.spec.originalPublishAt!;
+  await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "scheduled", effectivePublishAt: actual, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const future = "2026-10-04T18:00:00Z"; const revised = await changePublishingJob(alice, job.spec.id, "reschedule", future);
+  await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 2, state: "published", effectivePublishAt: actual, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  let current = (await publishingView(alice)).jobs[0]; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(actual), Date.parse(future)]));
+  await reportPublishing("pc", [{ id: job.spec.id, revision: revised.spec.revision, sequence: 3, state: "published", effectivePublishAt: actual, observedPrivacy: "public", message: "视频已公开，改期未应用。", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  current = (await publishingView(alice)).jobs[0]; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(actual)])); expect(current.spec.originalPublishAt).toBe(future); expect(current.initialPublishAt).toBe(actual); expect(current.pendingPublishAt).toBeUndefined();
+  expect(occupiedPublishingSlots([{ ...current, observed: { ...current.observed!, effectivePublishAt: undefined } }], "channel_one")).toEqual(new Set([Date.parse(actual)]));
+});
+
+it("keeps automatic times unchanged when the confirmed rule has not changed", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  const draft = await previewPublishingReschedule(alice, plan.id, 1, rule); expect(draft.items.map(item => item.publishAt)).toEqual(jobs.map(job => job.spec.originalPublishAt));
+  await confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!); expect((await publishingView(alice)).jobs.map(job => job.spec.revision)).toEqual([1, 1]);
+});
+
+it.each(["original", "remote", "pending"] as const)("does not let a new item steal another same-batch Job's unacknowledged %s time", async kind => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  const remoteAt = "2026-10-01T22:00:00Z"; const oldAt = kind === "remote" ? remoteAt : jobs[1].spec.originalPublishAt!;
+  if (kind === "remote") await reportPublishing("pc", [{ id: jobs[1].spec.id, revision: 1, sequence: 1, state: "scheduled", effectivePublishAt: remoteAt, offset: 0, total: jobs[1].spec.asset.size, updatedAt: Date.now() }]);
+  if (kind === "pending") await changePublishingJob(alice, jobs[1].spec.id, "reschedule", "2026-10-03T16:00:00Z");
+  const current = (await publishingView(alice)).plans.find(value => value.id === plan.id)!;
+  const nextRule = { ...rule, weeklySlots: [{ weekday: 4, time: oldAt.slice(11, 16) }] };
+  const draft = await previewPublishingReschedule(alice, plan.id, current.revision, nextRule);
+  expect(draft.items[0].publishAt).not.toBe(oldAt); expect(Date.parse(draft.items[0].publishAt!)).toBeGreaterThan(Date.parse(oldAt));
+  await expect(previewPublishingReschedule(alice, plan.id, current.revision, nextRule, current.items.map((item, index) => index === 0 ? { ...item, scheduleSource: "manual", publishAt: oldAt } : item))).rejects.toMatchObject({ code: "CONFLICT" });
+  await confirmPublishingReschedule(alice, plan.id, current.revision, draft.schedulePreviewId!); const changed = (await publishingView(alice)).jobs;
+  expect(changed[0].spec.originalPublishAt).not.toBe(oldAt); expect(occupiedPublishingSlots([changed[1]], "channel_one").has(Date.parse(oldAt))).toBe(true);
+});
+
+it("allows a same-batch old Slot to be reused only after its owner acknowledges the new schedule", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const oldAt = jobs[1].spec.originalPublishAt!;
+  const changedJob = await changePublishingJob(alice, jobs[1].spec.id, "reschedule", "2026-10-03T17:00:00Z");
+  await reportPublishing("pc", [{ id: changedJob.spec.id, revision: changedJob.spec.revision, sequence: 1, state: "scheduled", effectivePublishAt: changedJob.spec.originalPublishAt, offset: 0, total: changedJob.spec.asset.size, updatedAt: Date.now() }]);
+  const current = (await publishingView(alice)).plans.find(value => value.id === plan.id)!;
+  const draft = await previewPublishingReschedule(alice, plan.id, current.revision, rule, current.items.map((item, index) => index === 0 ? { ...item, scheduleSource: "manual", publishAt: oldAt } : item));
+  expect(draft.items[0].publishAt).toBe(oldAt); await confirmPublishingReschedule(alice, plan.id, current.revision, draft.schedulePreviewId!);
+});
+
+it("rejects an older persisted preview that reused another Job's still-active Slot", async () => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); const oldAt = jobs[1].spec.originalPublishAt!;
+  const draft = await previewPublishingReschedule(alice, plan.id, 1, { ...rule, weeklySlots: [{ weekday: 4, time: "21:00" }] });
+  const state = await publishingStore().read<{ schedulePreviews: { plan: { items: { publishAt?: string }[] } }[] }>("state.json"); state!.schedulePreviews[0].plan.items[0].publishAt = oldAt; await publishingStore().write("state.json", state);
+  await expect(confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!)).rejects.toMatchObject({ code: "CONFLICT" }); expect((await publishingView(alice)).jobs.map(job => job.spec.originalPublishAt)).toEqual(jobs.map(job => job.spec.originalPublishAt));
+});
+
+it("shows a completed Job at its actual time when a late reschedule was rejected", async () => {
+  const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true); const actual = job.spec.originalPublishAt!;
+  const changed = await changePublishingJob(alice, job.spec.id, "reschedule", "2026-10-04T19:00:00Z");
+  await reportPublishing("pc", [{ id: job.spec.id, revision: changed.spec.revision, sequence: 1, state: "published", observedPrivacy: "public", effectivePublishAt: actual, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const current = (await publishingView(alice)).plans.find(value => value.id === plan.id)!; const draft = await previewPublishingReschedule(alice, plan.id, current.revision, rule); expect(draft.scheduleLockedPackageIds).toContain(plan.items[0].packageId); expect(draft.items[0].publishAt).toBe(actual);
 });

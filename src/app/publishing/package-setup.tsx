@@ -10,7 +10,7 @@ export function Pagination({ page, total, change }: { page: number; total: numbe
   return count > 1 ? <div className="publishing-pagination"><span>{current + 1} / {count} 页 · {total} 条</span><div><button aria-label="上一页" disabled={current === 0} onClick={() => change(current - 1)}>上一页</button><button aria-label="下一页" disabled={current >= count - 1} onClick={() => change(current + 1)}>下一页</button></div></div> : null;
 }
 /** 无效发布包只能经用户明确排除后继续；它们始终列在正常包前面。 */
-export function PackageReview({ batch, excluded, change }: { batch: PackageBatch; excluded: string[]; change(ids: string[]): void }) {
+export function PackageReview({ batch, excluded, change, readOnly = false }: { batch: PackageBatch; excluded: string[]; readOnly?: boolean; change(ids: string[]): void }) {
   const [page, setPage] = useState(0);
   const ordered = [...batch.packages].sort((a, b) => Number(a.validationState === "valid") - Number(b.validationState === "valid"));
   const invalid = batch.packages.filter(p => p.validationState === "invalid").length;
@@ -20,7 +20,7 @@ export function PackageReview({ batch, excluded, change }: { batch: PackageBatch
     <div className="publishing-package-list">{ordered.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(item => <article className={"publishing-package-row " + (item.validationState === "invalid" ? "is-invalid" : "")} key={item.id}>
       <div className="publishing-package-name"><strong>{item.name}</strong><span>{item.validationState === "valid" ? ["视频", item.sourceMusic && "音乐", item.cover && "封面"].filter(Boolean).join(" + ") : item.issues.join("；")}</span></div>
       <span className={"publishing-status " + (item.validationState === "invalid" ? "state-failed" : "state-completed")}>{item.validationState === "valid" ? "正常" : "有问题"}</span>
-      <label className="publishing-check"><input type="checkbox" checked={excluded.includes(item.id)} onChange={e => change(e.target.checked ? [...excluded, item.id] : excluded.filter(id => id !== item.id))} />暂不发布<span className="sr-only">{item.name}</span></label>
+      <label className="publishing-check"><input type="checkbox" disabled={readOnly} checked={excluded.includes(item.id)} onChange={e => change(e.target.checked ? [...excluded, item.id] : excluded.filter(id => id !== item.id))} />暂不发布<span className="sr-only">{item.name}</span></label>
     </article>)}</div>
     <Pagination page={page} total={ordered.length} change={setPage} />
   </section>;

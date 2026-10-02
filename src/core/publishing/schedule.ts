@@ -7,8 +7,8 @@ export type ScheduleSlot = { publishAt: string; local: string; overlapping: bool
 export function scheduleSlots(rule: PublishingProfile["schedule"], count: number, now = Date.now()) {
   return schedulePlanSlots({ timezone: rule.timezone, startDate: rule.startDate, weeklySlots: rule.weekdays.map(weekday => ({ weekday, time: rule.localTime })), preuploadDays: rule.preuploadDays }, count, [], now);
 }
-/** 多星期、多时刻排期按本地日期排序；已占用的 UTC 时刻与 DST 缺口均不会产生任务。 */
-export function schedulePlanSlots(rule: PublishingPlanRule, count: number, occupied: Iterable<number> = [], now = Date.now()) {
+/** 多星期、多时刻按本地日期排序；改期可按项复用自身占位，其他占位与 DST 缺口均跳过。 */
+export function schedulePlanSlots(rule: PublishingPlanRule, count: number, occupied: Iterable<number> = [], now = Date.now(), allowReserved?: (at: number, index: number) => boolean) {
   let day: Temporal.PlainDate;
   try { day = Temporal.PlainDate.from(rule.startDate); } catch { throw new AppError("INPUT", "排期开始日期无效。"); }
   const slots: ScheduleSlot[] = []; const skipped: string[] = [];
@@ -22,18 +22,19 @@ export function schedulePlanSlots(rule: PublishingPlanRule, count: number, occup
       const last = plain.toZonedDateTime(rule.timezone, { disambiguation: "later" });
       if (!first.toPlainDateTime().equals(plain)) { skipped.push(plain.toString()); continue; }
       if (first.epochMilliseconds <= now) continue;
-      if (used.has(first.epochMilliseconds)) { skippedOccupied++; continue; }
+      if (used.has(first.epochMilliseconds) && !allowReserved?.(first.epochMilliseconds, slots.length)) { skippedOccupied++; continue; }
       used.add(first.epochMilliseconds); slots.push({ publishAt: first.toInstant().toString(), local: plain.toString(), overlapping: first.epochMilliseconds !== last.epochMilliseconds });
     }
   }
   if (slots.length !== count) throw new AppError("INPUT", "无法在十年内生成完整排期，请检查开始日期和规则。");
   return { slots, skipped, skippedOccupied };
 }
-/** 暂停、结果未知和待取消继续占位；只有当前取消修订已被 Agent 确认才释放。 */
+/** 暂停、结果未知和待取消继续占位；终态修订确认后只保留实际时间，拒绝的改期不占新 Slot。 */
 export function occupiedPublishingSlots(jobs: VideoJob[], channelId: string, excluding?: string) {
   const occupied = new Set<number>();
   for (const job of jobs) {
     if (job.spec.id === excluding || job.spec.profile.channelId !== channelId || job.observed?.state === "cancelled" && job.observed.revision === job.spec.revision) continue;
+    if (job.observed?.revision === job.spec.revision && ["published", "completed"].includes(job.observed.state)) { const at = job.observed.effectivePublishAt || job.initialPublishAt || job.spec.originalPublishAt; if (at && Number.isFinite(Date.parse(at))) occupied.add(Date.parse(at)); continue; }
     for (const at of [job.spec.originalPublishAt, job.observed?.effectivePublishAt, job.pendingPublishAt]) if (at && Number.isFinite(Date.parse(at))) occupied.add(Date.parse(at));
   }
   return occupied;
