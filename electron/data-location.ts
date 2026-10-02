@@ -7,14 +7,15 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Settings } from "./settings";
 import { checkRootPath, claimRoot, readRoot, ROOT_MARKER, within, ordinaryEntry } from "./data-root";
 import { Store } from "../src/core/storage";
+import { restoreWindowsFileTimes } from "./windows-file-times";
 export const MIGRATION_FILE = ".livenest-migration.json";
 /** 验证可写，探针只删除本次随机文件。 */
 export async function writableDirectory(root: string) { await mkdir(root, {recursive:true}); const probe=path.join(root,".livenest-probe-"+randomUUID()); await writeFile(probe,"ok",{flag:"wx"}); await unlink(probe); }
 /** 流式散列适用于大视频，不把整份素材加载到内存。 */
 async function checksum(file: string) { const hash=createHash("sha256"); for await (const chunk of createReadStream(file)) hash.update(chunk); return hash.digest("hex"); }
-/** 不跟随目录链接；完整列举相对路径、长度和摘要，包括授权密文。 */
+/** 不跟随目录链接；列举长度和摘要，Windows 精确时间参与复制与源变更校验。 */
 async function manifest(root: string) {
-  const files: Record<string, {size:number; sha256:string}> = {};
+  const files: Record<string, {size:number; sha256:string; mtimeNs?:string}> = {};
   const dirs: string[] = [];
   /** 深度检查每个目录项；排除仅属于本次事务的根标记和日志。 */
   async function walk(dir: string) {
@@ -24,7 +25,7 @@ async function manifest(root: string) {
       const info=await lstat(file);
       if(info.isSymbolicLink() || (!info.isFile()&&!info.isDirectory())) throw new AppError("DATA", "数据目录中存在链接或特殊文件，无法安全迁移；原数据保留。");
       if(info.isDirectory()) { dirs.push(relative); await walk(file); }
-      else files[relative]={size:info.size,sha256:await checksum(file)};
+      else files[relative]={size:info.size,sha256:await checksum(file),...(process.platform==="win32"?{mtimeNs:(await lstat(file,{bigint:true})).mtimeNs.toString()}:{})};
     }
   }
   await walk(root); return { files, dirs: dirs.sort() };
@@ -82,6 +83,8 @@ export async function copyDataLocation(settings: Settings, target: string, progr
       if(name===ROOT_MARKER || name===MIGRATION_FILE)continue;
       await cp(path.join(source,name),path.join(destination,name),{recursive:true,preserveTimestamps:true,force:false,errorOnExist:true,filter:async file=>{if((await lstat(file)).isSymbolicLink())throw new AppError("DATA", "数据目录含链接，复制已中止。");return true;}});
     }
+    // Node cp 使用 Date 会舍入 NTFS 的小数毫秒；固定素材/最终文件快照需要精确保留。
+    if(process.platform==="win32") await restoreWindowsFileTimes(source,destination,Object.entries(before.files).map(([relative,file])=>({relative,mtimeNs:file.mtimeNs!})));
     await progress("正在逐文件校验复制结果");
     if(JSON.stringify(before)!==JSON.stringify(await manifest(destination)) || JSON.stringify(before)!==JSON.stringify(await manifest(source)))throw new AppError("DATA", "复制校验失败或源文件发生变化，没有切换数据位置。");
     await journal.write(MIGRATION_FILE,{...record,stage:"verified"});

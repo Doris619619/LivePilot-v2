@@ -1,10 +1,13 @@
 /** 复制校验与素材重定位回归；中断不切换、旧文件始终保留。 */
-import { mkdtemp,mkdir,writeFile,readFile,rm,symlink,realpath } from "node:fs/promises";
+import { mkdtemp,mkdir,writeFile,readFile,rm,symlink,realpath,stat,utimes } from "node:fs/promises";
 import path from "node:path";import os from "node:os";
 import {beforeEach,afterEach,it,expect} from "vitest";
 import {copyDataLocation,MIGRATION_FILE} from "../electron/data-location";
 import {claimRoot} from "../electron/data-root";
 import type {Settings} from "../electron/settings";
+import { restoreWindowsFileTimes } from "../electron/windows-file-times";
+import { ensurePublishingRoot, hashPackageFile, packageDigest, scanPublishingPackages, validatePackage } from "../src/core/publishing/packages";
+import { preparePackageUpload, validatePreparedUpload, type PackageUpload } from "../src/core/publishing/render";
 let base:string;let source:string;let target:string;let settings:Settings;let scene:string;
 /** 构造真实目录层级和合成授权，不启动 OBS。 */
 beforeEach(async()=>{base=await mkdtemp(path.join(os.tmpdir(),"ln-migrate-"));source=path.join(base,"旧目录");target=path.join(base,"新目录");const marker=await claimRoot(source);const exe=path.join(source,"obs/main/bin/64bit/obs64.exe");await mkdir(path.dirname(exe),{recursive:true});await writeFile(exe,"fixture");scene=path.join(source,"obs/main/config/obs-studio/basic/scenes/LiveNest.json");await mkdir(path.dirname(scene),{recursive:true});await writeFile(scene,JSON.stringify({name:source,sources:[{settings:{local_file:path.join(source,"media/main/videos/a.mp4")}}]}));await mkdir(path.join(source,"state"));await writeFile(path.join(source,"state/youtube.enc"),"synthetic-token-ciphertext");settings={rootId:marker.id,dataRoot:source,encryptionKey:"a".repeat(64),instances:[{id:"main",name:"OBS 1",exe,port:4455,password:"fixture",managed:true,initialized:true}]};});
@@ -26,4 +29,57 @@ it("rejects a canonical external executable located inside an aliased source roo
  settings.instances[0].exe=await realpath(settings.instances[0].exe);settings.instances[0].managed=false;
  await expect(copyDataLocation(settings,target,()=>{})).rejects.toThrow("手动 OBS 位于原数据根目录内");
  expect(await readFile(scene,"utf8")).toContain("local_file");
+});
+
+/** NTFS 100ns 时间必须跨实际复制保持；同时验证原视频和持久生成输出的恢复快照。 */
+it.runIf(process.platform === "win32")("preserves exact NTFS timestamps and both prepared upload checkpoints after migration", async () => {
+  const publishing = path.join(source, "Publishing"); const batchName = "批次' $(literal)";
+  await ensurePublishingRoot(publishing);
+  for (const name of ["001", "002"]) {
+    const directory = path.join(publishing, "Inbox", batchName, name);
+    await mkdir(directory, { recursive: true }); await writeFile(path.join(directory, "video.mp4"), "synthetic-video");
+    await utimes(path.join(directory, "video.mp4"), 1700000000.1234567, 1700000000.1234567);
+  }
+  const musicFile = path.join(publishing, "Inbox", batchName, "002", "music.mp3");
+  await writeFile(musicFile, "synthetic-music"); await utimes(musicFile, 1700000000.2345678, 1700000000.2345678);
+  const packages = (await scanPublishingPackages(publishing)).batches[0].packages;
+  const original = await preparePackageUpload(publishing, packages[0]);
+  expect(original.asset.mtimeMs % 1).not.toBe(0);
+  const pkg = packages[1]; const segments = ["Working", batchName, pkg.name, pkg.version, "output.mp4"];
+  const output = path.join(publishing, ...segments); await mkdir(path.dirname(output), { recursive: true });
+  await writeFile(output, "synthetic-prepared-output"); await utimes(output, 1700000000.3456789, 1700000000.3456789);
+  const info = await stat(output); const sha256 = await hashPackageFile(output);
+  const generated: PackageUpload = { relativePath: segments.join("/"), sha256, asset: { id: packageDigest(segments), filename: "output.mp4", size: info.size, mtimeMs: info.mtimeMs, version: packageDigest([segments, info.size, info.mtimeMs]), sha256, hashState: "verified" } };
+  const video = path.join(publishing, "Inbox", batchName, pkg.name, "video.mp4");
+  await writeFile(path.join(path.dirname(output), "render.json"), JSON.stringify({ version: 1, recipe: 1, packageVersion: pkg.version, state: "ready", sources: { video: await hashPackageFile(video), music: await hashPackageFile(musicFile) }, upload: generated, duration: 10 }));
+  await validatePreparedUpload(publishing, generated, pkg);
+  const originalTimestamp = (await stat(path.join(publishing, original.relativePath), { bigint: true })).mtimeNs;
+  const generatedTimestamp = (await stat(output, { bigint: true })).mtimeNs;
+  const next = await copyDataLocation(settings, target, () => {}); const relocated = path.join(next.dataRoot, "Publishing");
+  expect((await stat(path.join(relocated, original.relativePath), { bigint: true })).mtimeNs).toBe(originalTimestamp);
+  expect((await stat(path.join(relocated, generated.relativePath), { bigint: true })).mtimeNs).toBe(generatedTimestamp);
+  await validatePackage(relocated, packages[0]); await validatePackage(relocated, pkg);
+  expect((await validatePreparedUpload(relocated, original, packages[0])).sha256).toBe(original.sha256);
+  expect((await validatePreparedUpload(relocated, generated, pkg)).sha256).toBe(generated.sha256);
+  expect((await scanPublishingPackages(relocated)).batches[0].packages).toEqual(packages);
+});
+
+/** 仅改变源时间也必须拒绝提交，不能用复制阶段的新时间掩盖已确认版本变化。 */
+it.runIf(process.platform === "win32")("refuses a source timestamp change during copying and preserves the original root", async () => {
+  const file = path.join(source, "state", "youtube.enc"); const before = (await stat(file)).mtimeMs;
+  await expect(copyDataLocation(settings, target, async stage => {
+    if (stage.includes("正在复制")) await utimes(file, before / 1000 + 2, before / 1000 + 2);
+  })).rejects.toThrow("时间校验失败或源文件已改变");
+  expect(settings.dataRoot).toBe(source); expect(await readFile(file, "utf8")).toBe("synthetic-token-ciphertext");
+  expect(JSON.parse(await readFile(path.join(target, MIGRATION_FILE), "utf8")).stage).toBe("failed");
+});
+
+/** 时间 helper 只接受已验证目录内的普通相对文件，不能越界或跟随新换入的 junction。 */
+it.runIf(process.platform === "win32")("rejects escaping or linked paths before restoring file timestamps", async () => {
+  await mkdir(target); const original = path.join(source, "state", "youtube.enc");
+  const mtimeNs = (await stat(original, { bigint: true })).mtimeNs.toString();
+  await expect(restoreWindowsFileTimes(source, target, [{ relative: "../state/youtube.enc", mtimeNs }])).rejects.toThrow("时间记录无效");
+  await symlink(path.join(source, "state"), path.join(target, "state"), "junction");
+  await expect(restoreWindowsFileTimes(source, target, [{ relative: "state/youtube.enc", mtimeNs }])).rejects.toThrow("时间校验失败");
+  expect((await stat(original, { bigint: true })).mtimeNs.toString()).toBe(mtimeNs);
 });
