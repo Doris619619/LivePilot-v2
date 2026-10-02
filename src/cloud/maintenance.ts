@@ -39,6 +39,8 @@ export async function beginMaintenance(id: string, token: string) {
     const previous = await store.read<Maintenance>("maintenance.json") || { activities: {} };
     if (previous.token === token) return { token };
     if (previous.token) throw new AppError("MAINTENANCE", "设备已有维护操作，请从原客户端恢复。", 409);
+    const publishing = await store.read<{ busy: boolean; at: number }>("publishing-runtime.json");
+    if (publishing?.busy) throw new AppError("BUSY", "普通视频正在上传或核对，请在发布队列暂停并等待安全检查点后再维护。", 409);
     const agent = (await listAgents()).find(a => a.id === id); const beat = await store.read<{ snapshots: AgentSnapshot[] }>("heartbeat.json");
     const pending = queue?.records.some(r => !finished.has(r.status) && !(r.status === "queued" && r.expiresAt < Date.now()));
     const safe = agent?.online && agent.instances.every(i => {

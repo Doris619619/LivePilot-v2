@@ -93,6 +93,8 @@ export class SettingsStore {
     const next = this.saving.catch(() => {}).then(async () => {
       const marker = await readRoot(snapshot.dataRoot);
       if (snapshot.rootId !== marker.id) throw new AppError("DATA", "LiveNest 数据根目录归属不匹配，未保存配置。");
+      const { ensurePublishingRoot } = await import("../src/core/publishing/packages");
+      await ensurePublishingRoot(path.join(snapshot.dataRoot, "Publishing"));
       const store = await this.rootStore(snapshot.dataRoot);
       const encrypted = await protectWindows(Buffer.from(JSON.stringify(snapshot), "utf8"), true);
       await store.write("settings.json", "dpapi:" + encrypted.toString("base64"));
@@ -104,7 +106,7 @@ export class SettingsStore {
 }
 /** 映射核心配置；各实例独立素材目录，不加载旧安装的环境文件。 */
 export function environment(settings: Settings): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { NODE_ENV: "production", LIVEPILOT_MODE: "local", LIVEPILOT_ORIGIN: settings.identity?.origin || "https://livenest.duckdns.org", LIVEPILOT_DATA_ROOT: path.join(settings.dataRoot, "state"), LIVEPILOT_ENCRYPTION_KEY: settings.encryptionKey, LIVEPILOT_INSTANCES: settings.instances.map(i => i.id).join(","), GOOGLE_CLIENT_ID: settings.google?.clientId, GOOGLE_CLIENT_SECRET: settings.google?.clientSecret };
+  const env: NodeJS.ProcessEnv = { NODE_ENV: "production", LIVEPILOT_MODE: "local", LIVEPILOT_ORIGIN: settings.identity?.origin || "https://livenest.duckdns.org", LIVEPILOT_DATA_ROOT: path.join(settings.dataRoot, "state"), LIVEPILOT_PUBLISHING_ROOT: path.join(settings.dataRoot, "Publishing"), LIVEPILOT_ENCRYPTION_KEY: settings.encryptionKey, LIVEPILOT_INSTANCES: settings.instances.map(i => i.id).join(","), GOOGLE_CLIENT_ID: settings.google?.clientId, GOOGLE_CLIENT_SECRET: settings.google?.clientSecret };
   for (const i of settings.instances) {
     const prefix = "LIVEPILOT_INSTANCE_" + i.id.toUpperCase() + "_";
     Object.assign(env, { [prefix + "NAME"]: i.name, [prefix + "OBS_EXE"]: i.exe, [prefix + "OBS_WS_URL"]: "ws://127.0.0.1:" + i.port, [prefix + "OBS_WS_PASSWORD"]: i.password, [prefix + "MEDIA_ROOT"]: path.join(settings.dataRoot, "media", i.id) });

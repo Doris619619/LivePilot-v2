@@ -6,6 +6,7 @@ import { api } from "../client-request";
 import { defaultBroadcast, type BroadcastDetails, type Playlist } from "@/shared/broadcast";
 import type { InstanceDescriptor } from "@/shared/types";
 import { ExternalLinkIcon, YouTubeIcon } from "./icons";
+import { titleCharacters, descriptionBytes } from "@/shared/video-metadata";
 
 /** 配置只作用于当前实例；上传中锁定表单，防止异步完成覆盖新草稿。 */
 export default function BroadcastSettings({ id, instance, value, disabled, channel, broadcastId, onChange, onBusyChange, media, controls }: {
@@ -64,8 +65,8 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
       <fieldset disabled={locked} className="broadcast-fields">
         <legend className="visually-hidden">直播详情配置</legend>
-        <div className="field-group"><label htmlFor={`broadcast-title-${id}`}>标题 <span className="field-required">必填</span></label><input id={`broadcast-title-${id}`} maxLength={100} value={details.title} placeholder="例如：东京雨夜 · Lofi 陪你学习与放松" onChange={e => onChange({ ...details, title: e.target.value })} aria-describedby={`title-hint-${id}`} /><span className="field-hint" id={`title-hint-${id}`}>{details.title.length}/100 · 显示在 YouTube 直播页面</span></div>
-        <div className="field-group"><label htmlFor={`broadcast-description-${id}`}>说明</label><textarea id={`broadcast-description-${id}`} rows={5} maxLength={5000} value={details.description} placeholder="介绍这场直播，也可以添加频道介绍和相关链接。" onChange={e => onChange({ ...details, description: e.target.value })} /><span className="field-hint">{details.description.length}/5000</span></div>
+        <div className="field-group"><label htmlFor={`broadcast-title-${id}`}>标题 <span className="field-required">必填</span></label><input id={`broadcast-title-${id}`} value={details.title} placeholder="例如：东京雨夜 · Lofi 陪你学习与放松" onChange={e => onChange({ ...details, title: e.target.value })} aria-describedby={`title-hint-${id}`} /><span className="field-hint" id={`title-hint-${id}`}>{titleCharacters(details.title)}/100 · 显示在 YouTube 直播页面</span></div>
+        <div className="field-group"><label htmlFor={`broadcast-description-${id}`}>说明</label><textarea id={`broadcast-description-${id}`} rows={5} value={details.description} placeholder="介绍这场直播，也可以添加频道介绍和相关链接。" onChange={e => onChange({ ...details, description: e.target.value })} /><span className="field-hint">{descriptionBytes(details.description)}/5000 字节</span></div>
 
       </fieldset>
       </div>

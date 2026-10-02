@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./login.css";
+import LegalLinks from "./legal-links";
 
 // 自托管同一套中英文字形；构建及访问均不需要请求外部字体服务。
 const workspaceFont = localFont({ src: "./fonts/livenest-sans-sc.woff2", variable: "--font-livenest", weight: "100 900", display: "swap", fallback: ["Microsoft YaHei UI", "sans-serif"], adjustFontFallback: false });
@@ -22,7 +23,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="zh-CN" className={workspaceFont.variable}>
-      <body>{children}</body>
+      <body>{children}<LegalLinks /></body>
     </html>
   );
 }

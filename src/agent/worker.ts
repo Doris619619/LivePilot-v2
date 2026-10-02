@@ -58,4 +58,11 @@ export class Worker {
   async acknowledge(ids: string[]) { for (const id of ids) { const entry = await this.read(id); if (entry && !["accepted", "running"].includes(entry.report.status)) { entry.acknowledged = true; await this.write(entry); } } }
   /** 先等待正在落盘的接收事务，再排空执行；不因控制端断线取消任务或丢弃结果。 */
   async drain() { await this.accepting; await Promise.all(this.running.values()); }
+  /** 删除指定授权上下文的日志前仅等待相关执行；独立账号清理不会等待或删除同宿主直播任务。 */
+  async purgeYouTube(instanceId: string, accountId?: string) {
+    await this.accepting; const related: string[] = [];
+    for (const name of await readdir(this.store.dir).catch(e => { if (e.code === "ENOENT") return []; throw e; })) if (/^[a-f0-9-]{36}\.json$/.test(name)) { const id = name.slice(0, -5); const entry = await this.read(id); const payload = entry?.task.payload; const kind = payload?.kind; const publishingAccount = payload?.kind === "publishing-apply" ? payload.job.profile.accountId : payload && "accountId" in payload ? payload.accountId : undefined; if (entry?.task.instanceId === instanceId && publishingAccount === accountId && kind && (kind.startsWith("publishing-") || kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists", "control"].includes(kind))) related.push(id); }
+    await Promise.all(related.map(id => this.running.get(id)));
+    for (const id of related) await this.store.remove(id + ".json");
+  }
 }

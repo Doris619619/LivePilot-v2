@@ -8,7 +8,7 @@ import { AppError } from "@/core/errors";
 import type { Problem } from "@/shared/problems";
 import type { Member } from "./access";
 import { authorizeAgent } from "./ownership";
-export type OAuthResult = { target: Problem["target"]; status: "connected" | "cancelled" | "failed"; problem?: Problem };
+export type OAuthResult = { target: Problem["target"]; accountId?: string; status: "connected" | "cancelled" | "failed"; problem?: Problem };
 /** 短期记录仅包含安全结果，不含一次性授权凭据。 */
 export async function saveOAuthResult(actor: string, result: OAuthResult) {
   const id=randomUUID(); await new Store(path.join(dataRoot(),"oauth-results")).write(id+".json",{actor,expires:Date.now()+10*60_000,result}); return id;

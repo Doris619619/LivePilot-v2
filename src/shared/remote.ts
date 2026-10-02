@@ -1,5 +1,6 @@
 /** 云端与 Agent 的版本化白名单协议；浏览器 DTO 不含密钥和绝对路径。 */
 import { z } from "zod";
+import { jobSpecSchema, packageBatchSchema } from "./publishing";
 import { aiBriefSchema, aiKeySchema } from "./broadcast-ai";
 import { broadcastSchema, thumbnailInputSchema } from "./broadcast";
 import type { Dashboard, InstanceDescriptor } from "./types";
@@ -19,6 +20,13 @@ export const controlSchema = z.discriminatedUnion("action", [
 ]);
 export const uploadInputSchema = z.object({ kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive().max(20 * 1024 ** 3), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const taskPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("publishing-packages"), accountId: uuidSchema.optional() }).strict(),
+  z.object({ kind: z.literal("publishing-account-oauth-begin"), accountId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("publishing-account-oauth-finish"), accountId: uuidSchema, cookie: z.string().regex(/^[a-f0-9]{64}$/), state: z.string().max(160), code: z.string().max(4096), cancelled: z.boolean().optional(), expectedChannel: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional() }).strict(),
+  z.object({ kind: z.literal("publishing-account-playlists"), accountId: uuidSchema }).strict(),
+  z.object({ kind: z.literal("publishing-archive"), batch: packageBatchSchema, archiveId: uuidSchema, accountId: uuidSchema.optional() }).strict(),
+  z.object({ kind: z.literal("publishing-assets"), accountId: uuidSchema.optional() }).strict(),
+  z.object({ kind: z.literal("publishing-apply"), job: jobSpecSchema }).strict(),
   z.object({ kind: z.literal("broadcast-ai-status") }).strict(),
   z.object({ kind: z.literal("broadcast-ai-key"), apiKey: aiKeySchema }).strict(),
   z.object({ kind: z.literal("broadcast-ai-generate"), brief: aiBriefSchema }).strict(),
@@ -34,6 +42,8 @@ export const taskPayloadSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("upload-chunk"), uploadId: uuidSchema, offset: z.number().int().nonnegative(), hash: z.string().regex(/^[a-f0-9]{64}$/), slot: uuidSchema, size: z.number().int().positive().max(8 * 1024 ** 2) }).strict(),
 ]);
 export type TaskPayload = z.infer<typeof taskPayloadSchema>;
+/** 独立账号指令与上传任务共用同一身份提取，清理时不能按宿主实例误删其他账号。 */
+export function publishingTaskAccountId(payload: TaskPayload) { return "accountId" in payload ? payload.accountId : payload.kind === "publishing-apply" ? payload.job.profile.accountId : undefined; }
 export const taskSchema = z.object({ protocol: z.literal(PROTOCOL), id: uuidSchema, agentId: idSchema, instanceId: idSchema, actor: z.string().regex(/^[A-Za-z0-9_]{2,32}$/), expiresAt: z.number(), payload: taskPayloadSchema });
 export type RemoteTask = z.infer<typeof taskSchema>;
 export type DeliveryState = "queued" | "delivering" | "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "expired" | "uncertain";

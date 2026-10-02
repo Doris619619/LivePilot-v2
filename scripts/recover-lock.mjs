@@ -9,10 +9,11 @@ const kind = process.argv[3] || "control";
 const ids = (process.env.LIVEPILOT_INSTANCES || "main").split(",").map(value => value.trim());
 try {
   if (!/^[a-z][a-z0-9_]{0,31}$/.test(id) || !ids.includes(id)) throw new Error("请指定已配置的实例 ID。");
-  if (!["host", "control", "tokens", "oauth-bindings", "commands", "access", "uploads", "upload"].includes(kind) || (kind === "oauth-bindings" && id !== "main")) throw new Error("锁类型无效；oauth-bindings 仅位于 main。");
+  if (!["host", "control", "tokens", "oauth-bindings", "commands", "access", "uploads", "upload", "publishing"].includes(kind) || (kind === "oauth-bindings" && id !== "main")) throw new Error("锁类型无效；oauth-bindings 仅位于 main。");
   const data = path.resolve(process.env.LIVEPILOT_DATA_ROOT || ".data");
   let dir = id === "main" ? data : path.join(data, "instances", id);
   if (kind === "host") dir = data;
+  if (kind === "publishing") { if (id !== "main") throw new Error("publishing 锁只属于 Cloud 全局目录。"); dir = path.join(data, "cloud", "publishing"); }
   if (kind === "commands") dir = path.join(dir, "commands");
   if (kind === "access") dir = path.resolve(process.env.LIVEPILOT_ACCESS_DIR || path.join(data, "access"));
   if (kind === "uploads" || kind === "upload") {

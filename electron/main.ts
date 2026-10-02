@@ -66,7 +66,7 @@ async function launch() {
   ipcMain.handle("desktop:state", async event => { trusted(event); await access.require(false); return manager.state(); });
   ipcMain.handle("desktop:read-state", event => { trusted(event); return access.read(); });
   ipcMain.handle("desktop:copy-problem", (event, value) => { trusted(event); clipboard.writeText(problemSummary(problemSchema.parse(value))); return true; });
-  const action = z.enum(["launch-obs", "restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
+  const action = z.enum(["launch-obs", "restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "open-publishing", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
     try { trusted(event); if (name === "unpair") {
         if (input?.confirmed !== true) throw new AppError("INPUT", "请确认删除这台设备绑定。");

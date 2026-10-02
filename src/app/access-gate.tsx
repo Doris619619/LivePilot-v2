@@ -196,7 +196,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
             <span className="brand-tag">Studio</span>
           </div>
 
-          <div className="header-actions">{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
+          <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
             <div className="user-tag">
               <UserIcon />
               <span title={user.username}>{user.username}</span>

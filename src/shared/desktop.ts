@@ -12,7 +12,7 @@ export type DesktopState = { problems?: Problem[];
 };
 export type ObsCandidate = { exe: string; version: string; running: boolean; processKnown?: boolean; attached: boolean; error?: string };
 export type ObsScan = { running: boolean; canceled: boolean; deep: boolean; results: ObsCandidate[]; drives: string[]; completedDrives: string[]; inaccessible: string[]; visited: number; current?: string; error?: string };
-export type DesktopAction = "launch-obs" | "unpair" | "restore-candidate" | "scan" | "scan-cancel" | "import-obs" | "firewall" | "diagnose-obs" | "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "repair-managed" | "discard" | "directory" | "open-data" | "autostart" | "web" | "update-check" | "update-download" | "update-install" | "update-apply";
+export type DesktopAction = "launch-obs" | "unpair" | "restore-candidate" | "scan" | "scan-cancel" | "import-obs" | "firewall" | "diagnose-obs" | "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "repair-managed" | "discard" | "directory" | "open-data" | "open-publishing" | "autostart" | "web" | "update-check" | "update-download" | "update-install" | "update-apply";
 export type DesktopResult = { ok: true; state: DesktopState; cancelled?: boolean } | { ok: false; problem: Problem; fields?: Record<string,string> };
 export type LocalUpdateState = Pick<DesktopState, "version" | "busy" | "update">;
 export type UpdateCommand = "update-check" | "update-download" | "update-install" | "update-apply";

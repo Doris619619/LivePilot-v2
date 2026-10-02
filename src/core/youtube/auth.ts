@@ -1,6 +1,6 @@
 /** 每个实例独立保存 OAuth 事务和加密令牌；客户端密钥只在服务端交换。 */
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { rename, readFile, unlink } from "node:fs/promises";
+import { rename, readFile, unlink, readdir } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config";
 import { store, Store, seal, unseal } from "../storage";
@@ -36,6 +36,7 @@ export class YouTubeAuth {
   /** 令牌保存与刷新写入共用短锁，避免旧刷新覆盖新授权。 */
   private async save(tokens: Tokens) {
     await this.storage.exclusive(async () => {
+      if (await this.storage.read("youtube-revoke.enc")) throw new AppError("GOOGLE_AUTH", "撤销尚未完成，请等待设备清理后重新授权。", 409);
       if (this.saveBinding) await this.saveBinding(tokens);
       else await this.storage.write("youtube.enc", seal(tokens));
     }, "tokens.lock");
@@ -45,8 +46,28 @@ export class YouTubeAuth {
     const value = await this.storage.read<string>("youtube.enc");
     return value ? unseal<Tokens>(value) : null;
   }
+  /** 先封存待撤销凭据并禁止新调用；网络失败后可重试 Google 撤销，不回显 Token。 */
+  async revoke() {
+    let pending = await this.storage.read<string>("youtube-revoke.enc");
+    if (!pending) await this.storage.exclusive(async () => {
+      const token = await this.tokens();
+      if (token) { pending = seal({ token: token.refreshToken || token.accessToken }); await this.storage.write("youtube-revoke.enc", pending); }
+      await this.storage.remove("youtube.enc");
+    }, "tokens.lock");
+    if (pending) {
+      let response: Response;
+      try { response = await fetch("https://oauth2.googleapis.com/revoke", { method: "POST", body: new URLSearchParams({ token: unseal<{ token: string }>(pending).token }), redirect: "error", signal: AbortSignal.timeout(20_000) }); }
+      catch { throw new AppError("GOOGLE_NETWORK", "本机授权已停用，Google 撤销仍等待网络恢复。", 503); }
+      // invalid_token 说明该凭据已失效，不需要继续持有它。
+      const body = response.ok ? null : await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok && body?.error !== "invalid_token") throw new AppError("GOOGLE_UNAVAILABLE", "Google 撤销尚未确认，本机授权已停用。", 503);
+      if (!response.bodyUsed) await response.body?.cancel(); await this.storage.remove("youtube-revoke.enc");
+    }
+    for (const name of await readdir(this.storage.dir).catch(e => { if (e.code === "ENOENT") return []; throw e; })) if (/^oauth-[a-f0-9]{64}\.enc(?:\.claimed)?$/.test(name)) await this.storage.remove(name);
+  }
   /** 保存绑定操作者与实例的一次性 PKCE 事务和浏览器 Cookie。 */
   async begin(actor?: string) {
+    if (await this.storage.read("youtube-revoke.enc")) throw new AppError("GOOGLE_AUTH", "Google 撤销尚未完成，请等待设备清理。", 409);
     const c = config();
     if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "请联系管理员配置 Google 频道连接应用。");
     const cookie = randomBytes(32).toString("hex");
@@ -95,6 +116,7 @@ export class YouTubeAuth {
       const next = { ...tokens, accessToken: reply.access_token!, refreshToken: reply.refresh_token || tokens.refreshToken, expiresAt: Date.now() + (reply.expires_in || 3600) * 1000 };
       return this.storage.exclusive(async () => {
         const current = await this.tokens();
+        if (!current) throw new AppError("GOOGLE_AUTH", "授权已撤销，旧刷新结果未重新保存。", 409);
         if (current && (current.refreshToken !== tokens.refreshToken || current.channelId !== tokens.channelId || current.expiresAt > next.expiresAt)) return current;
         await this.storage.write("youtube.enc", seal(next));
         return next;
