@@ -4,9 +4,10 @@ import { useState } from "react";
 import type { PublishingPlan, VideoJob } from "@/shared/publishing";
 import JobList from "./job-list";
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
+import { publicationBucket } from "./publishing-overview";
 export type JobOperation = (id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string) => Promise<void>;
-/** 公开任务须观察到真实public，私密任务须完成；旧修订不能证明当前任务完成。 */
-function remoteComplete(job: VideoJob) { return ["published", "completed"].includes(job.observed?.state || "") && job.observed?.revision === job.spec.revision && (job.spec.profile.privacy !== "public" || job.observed?.observedPrivacy === "public"); }
+/** 当前修订的持久公开/完成事实不因 API 观察字段过期消失。 */
+function remoteComplete(job: VideoJob) { return ["published", "completed"].includes(publicationBucket(job)); }
 /** 按真实报告统计，不把受理、上传结束或时间已到认作公开。 */
 export default function BatchExecution({ plan, jobs, allJobs = jobs, busy, operate, archive }: { plan?: PublishingPlan; jobs: VideoJob[]; allJobs?: VideoJob[]; busy: boolean; operate: JobOperation; archive?(id: string): Promise<void> }) {
   const [page, setPage] = useState(0);

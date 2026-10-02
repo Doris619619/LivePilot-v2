@@ -15,6 +15,7 @@ import { AppError } from "@/core/errors";
 import { makeProblem } from "@/shared/problems";
 import { defaultPolicy, PRIVACY_VERSION, type PackageBatch, type PublishingPlanRule } from "@/shared/publishing";
 import { fixtureJob } from "./publishing-fixtures";
+import { createPublishingAccount, claimPublishingAccount } from "@/cloud/publishing-accounts";
 let root: string; let batch: PackageBatch; let profile: ReturnType<typeof fixtureJob>["profile"];
 const alice = { username: "alice", role: "customer" as const }; const admin = { username: "admin", role: "admin" as const };
 const rule: PublishingPlanRule = { timezone: "UTC", startDate: "2026-10-01", weeklySlots: [{ weekday: 4, time: "20:00" }, { weekday: 4, time: "21:00" }, { weekday: 5, time: "09:00" }], preuploadDays: 28 };
@@ -31,9 +32,10 @@ it("requires planned publication for a new public package batch without changing
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "publishing-plans-")); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-01T00:00:00Z")); vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_INSTANCES", "main");
   const access = emptyAccess(); access.users.push(...[alice, admin].map(user => ({ ...user, salt: "synthetic", hash: "synthetic", revision: randomUUID(), disabled: false }))); await accessStore().write("access.json", access);
-  const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2"]);
+  const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
   await cloudStore().write("bindings.json", [{ agentId: "pc", instanceId: "main", channelId: "channel_one", confirmed: true }]); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, publicVerified: true, privacyContact: "synthetic@example.invalid", verificationNote: "Synthetic fixture only" }); await acceptPublishingPrivacy(alice, PRIVACY_VERSION);
-  batch = packageBatch(); profile = { ...fixtureJob().profile, privacy: "public", scheduled: true, titleTemplate: "{{packageName}}" }; await savePublishingProfile(alice, profile);
+  const account = await createPublishingAccount(alice, "pc", "main", "Package fixture"); await claimPublishingAccount("pc", account.id, "main", "channel_one", "Test", true, Date.now());
+  batch = packageBatch(); profile = { ...fixtureJob().profile, accountId: account.id, privacy: "public", scheduled: true, titleTemplate: "{{packageName}}" }; await savePublishingProfile(alice, profile);
   remote.rpc.mockReset(); remote.rpc.mockImplementation(async (_target, _actor, payload) => payload.kind === "publishing-archive" ? { state: "complete", destination: "Synthetic/Publishing/Completed/Batch01" } : { root: "Synthetic/Publishing/Inbox", batches: [structuredClone(batch)], thumbnails: [], channelId: "channel_one", channel: "Test" });
 });
 /** 删除仅属于本次测试的临时目录，不接触用户源视频。 */
@@ -67,7 +69,7 @@ it("fixes final output size before progress and ignores stale pre-preparation re
 });
 it("dispatches package jobs only to v2 and respects the plan window instead of the old Profile window", async () => {
   const plan = await preview(); const changed = await updatePublishingPlan(alice, plan.id, 1, plan.items, { ...rule, startDate: "2026-10-08", preuploadDays: 2 }); await confirmPublishingPlan(alice, changed.id, changed.revision, false, true); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();
-  await agentStore("pc").write("capabilities.json", ["publishing-v1"]); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull(); await agentStore("pc").write("capabilities.json", ["publishing-v2"]);
+  await agentStore("pc").write("capabilities.json", ["publishing-v1"]); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull(); await agentStore("pc").write("capabilities.json", ["publishing-v2", "publishing-accounts-v1"]);
   await updateToDueWindow(); await publishingTick(); expect((await agentStore("pc").read<{ records: unknown[] }>("tasks.json"))?.records).toHaveLength(2);
 });
 /** 修改测试存储中的窗口，只用于验证调度能力，不替代真实 API 验收。 */
@@ -80,6 +82,15 @@ it("requires explicit replacement for a cancelled old remote video and keeps the
 it("archives only true published/completed batches, records pending failures and retries safely", async () => {
   const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); await expect(archivePublishingPlan(alice, plan.id)).rejects.toMatchObject({ code: "ARCHIVE" }); for (const job of jobs) await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "published", observedPrivacy: "public", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
   remote.rpc.mockRejectedValueOnce(new Error("Synthetic interruption")); expect(await archivePublishingPlan(alice, plan.id)).toMatchObject({ state: "pending" }); expect((await publishingView(alice)).plans[0].archivePending).toBe(true); const result = await archivePublishingPlan(alice, plan.id); expect(result.state).toBe("complete"); expect((await publishingView(alice)).plans[0].archivedAt).toBe(Date.now()); const count = remote.rpc.mock.calls.length; expect(await archivePublishingPlan(alice, plan.id)).toEqual(result); expect(remote.rpc.mock.calls).toHaveLength(count);
+});
+it.each(["published", "completed"] as const)("keeps durable publication evidence after API cache expiry (%s)", async state => {
+  const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  for (const job of jobs) await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state, observedPrivacy: "public", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  vi.setSystemTime(new Date("2026-11-02T00:00:00Z")); await publishingTick(); const current = (await publishingView(alice)).jobs;
+  expect(current.every(job => job.observed?.state === state && job.observed.observedPrivacy === undefined)).toBe(true);
+  const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []);
+  if (state === "published") expect(await archivePublishingPlan(alice, plan.id)).toMatchObject({ state: "complete" });
+  else await expect(archivePublishingPlan(alice, plan.id)).rejects.toMatchObject({ code: "ARCHIVE" });
 });
 it("loads state created by the old implementation without a plans property", async () => { const state = await publishingStore().read<Record<string, unknown>>("state.json"); delete state!.plans; await publishingStore().write("state.json", state); expect((await publishingView(alice)).plans).toEqual([]); });
 it("archives by completed current package coverage and invalidates abandoned drafts", async () => {

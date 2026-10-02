@@ -1,0 +1,49 @@
+/* 我的发布按频道分组的清晰列表与发布进度；只使用 LiveNest 语义变量，不影响向导样式。 */
+.toolbar { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
+.toolbar nav { margin-bottom: 12px; }
+.channelFilter { width: 260px; max-width: 100%; }
+.channel { margin-bottom: 32px; }
+.channelHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0 20px; border-bottom: 1px solid var(--border-default); }
+.channelHeading h2 { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.channelHeading p, .channelHeading > span { color: var(--text-muted); font-size: 14px; }
+.channelHeading p { margin-top: 4px; }
+.channelHeading > span { flex: none; }
+.batch { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.25fr) minmax(180px, .8fr); align-items: center; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
+.batchHeading { min-width: 0; display: grid; justify-items: start; gap: 8px; }
+.batchHeading h3 { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
+.status { font-size: 14px; line-height: 1.5; padding: 3px 8px; border-radius: var(--radius-xs); background: var(--surface-hover); color: var(--text-secondary); }
+.normal { background: var(--accent-subtle); color: var(--accent-primary); }
+.success { background: var(--success-green-subtle); color: var(--success-green); }
+.warning { background: var(--warning-amber-subtle); color: var(--warning-amber); }
+.error { color: var(--error-rose); }
+.status.error { background: var(--error-rose-subtle); }
+.progressArea { min-width: 0; }
+.counts { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.counts strong { color: var(--text-primary); font-weight: 500; }
+.progressArea progress { display: block; width: 100%; height: 5px; border: 0; border-radius: var(--radius-pill); overflow: hidden; margin: 12px 0 0; accent-color: var(--success-green); background: var(--bg-subtle); }
+.progressArea progress::-webkit-progress-bar { background: var(--bg-subtle); }
+.progressArea progress::-webkit-progress-value { background: var(--success-green); }
+.progressArea progress::-moz-progress-bar { background: var(--success-green); }
+.excluded { display: block; margin-top: 8px; font-size: 14px; color: var(--text-muted); }
+.batchAction { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+.batchAction > span { color: var(--text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
+.batchAction button { padding-inline: 10px; margin-right: -10px; }
+@media (max-width: 1150px) {
+  .batch { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px 24px; }
+  .batchAction { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
+  .batchAction > span { text-align: left; }
+  .batchAction button { margin-left: auto; }
+}
+@media (max-width: 600px) {
+  .toolbar { display: block; margin-bottom: 16px; }
+  .channelFilter { width: 100%; }
+  .channelHeading { align-items: flex-start; gap: 12px; }
+  .channelHeading h2 { font-size: 18px; }
+  .channelHeading > span { padding-top: 3px; }
+  .batch { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .batchHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .batchHeading h3 { flex: 1; }
+  .status { flex: none; }
+  .batchAction { gap: 8px; }
+  .counts { gap: 4px 12px; }
+}

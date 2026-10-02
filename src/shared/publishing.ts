@@ -15,6 +15,11 @@ export type ContentPackage = z.infer<typeof contentPackageSchema>;
 export const packageBatchSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/), name: z.string().min(1).max(255), version: z.string().regex(/^[a-f0-9]{64}$/), packages: z.array(contentPackageSchema).max(10000), issues: z.array(z.string().max(500)).default([]) }).strict();
 export type PackageBatch = z.infer<typeof packageBatchSchema>;
 export const packagesResultSchema = z.object({ root: z.string().max(1000), batches: z.array(packageBatchSchema).max(1000), thumbnails: z.array(safeName).max(10000).optional(), channelId: z.string().optional(), channel: z.string().optional() }).strict();
+/** 独立发布账号只公开设备路由和频道绑定，OAuth 凭据始终保存在 Agent。 */
+export const publishingAccountSchema = z.object({ id: z.string().uuid(), agentId: identity, instanceId: identity, name: z.string().trim().min(1).max(80), owner: z.string().min(1).max(32), status: z.enum(["unbound", "connected", "cleanup_pending", "deleted"]), channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), channelCheckedAt: z.number().nonnegative().optional(), createdAt: z.number().nonnegative(), updatedAt: z.number().nonnegative(), connectedAt: z.number().nonnegative().optional(), deletedAt: z.number().nonnegative().optional() }).strict();
+export type PublishingAccount = z.infer<typeof publishingAccountSchema>;
+export const publishingAccountReportSchema = z.object({ id: z.string().uuid(), instanceId: identity, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), channelCheckedAt: z.number().nonnegative().optional(), connectedAt: z.number().nonnegative().optional(), cleanupPending: z.boolean().optional() }).strict();
+export type PublishingAccountReport = z.infer<typeof publishingAccountReportSchema>;
 /** 排期归属计划，支持同日多个时刻；旧 Profile 排期只用作初始默认值。 */
 export const planRuleSchema = z.object({ timezone: z.string().min(1).max(100).refine(v => { try { new Intl.DateTimeFormat("en", { timeZone: v }); return true; } catch { return false; } }, "时区无效"), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), weeklySlots: z.array(z.object({ weekday: z.number().int().min(1).max(7), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/) }).strict()).min(1).max(100), preuploadDays: z.number().int().min(1).max(365).default(28) }).strict();
 export type PublishingPlanRule = z.infer<typeof planRuleSchema>;
@@ -25,7 +30,7 @@ export type PublishingPlan = { id: string; revision: number; owner: string; acto
 export const preparedUploadSchema = z.object({ version: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(256 * 1024 ** 3), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export type PreparedUpload = z.infer<typeof preparedUploadSchema>;
 export const profileSchema = z.object({
-  id: z.string().uuid(), revision: z.number().int().positive(), name: z.string().min(1).max(80), agentId: identity, instanceId: identity, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  id: z.string().uuid(), revision: z.number().int().positive(), name: z.string().min(1).max(80), agentId: identity, instanceId: identity, accountId: z.string().uuid().optional(), channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
   titleTemplate: z.string().min(1).max(1000), descriptionTemplate: z.string().max(10000), tags: videoTagsSchema, categoryId: z.string().regex(/^\d{1,3}$/), playlistIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)).max(20),
   privacy: z.enum(["public", "private", "unlisted"]), scheduled: z.boolean(), madeForKids: z.boolean(), license: z.enum(["youtube", "creativeCommon"]).default("youtube"), embeddable: z.boolean().default(true), containsSyntheticMedia: z.boolean().default(false), notifySubscribers: z.boolean().default(true),
   thumbnailMode: z.enum(["matching", "fixed", "none"]), thumbnailFilename: safeName.optional(),

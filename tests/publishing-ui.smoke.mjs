@@ -1,4 +1,4 @@
-/** 四步发布浏览器验收：模拟100个本地发布包和Cloud响应，不连接真实Agent、OBS或YouTube。 */
+/** 四步发布浏览器验收：覆盖可点击步骤、草稿保留与100个模拟发布包，不连接真实Agent、OBS或YouTube。 */
 import { chromium } from "playwright";
 import { Temporal } from "@js-temporal/polyfill";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -17,9 +17,16 @@ function batch(name, index, invalid) {
   }) };
 }
 const batches = [batch("2030-10-Batch-01", 1, true), batch("2030-10-Batch-02", 2, false)];
-const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", channelId: "channel_one", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching", ai: { enabled: false, language: "English", prompt: "Generate accurate copy", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1, 3, 5, 7], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
-const view = { profiles: [profile], jobs: [], plans: [], cleanups: [], policy, administrator: false };
-let confirmed; let latestPlan; const errors = []; const actions = []; const screenshots = []; const archiveRequests = [];
+const accountOne = "11111111-1111-4111-8111-111111111111"; const accountTwo = "22222222-2222-4222-8222-222222222222"; const accountThree = "33333333-3333-4333-8333-333333333333";
+const accounts = [
+  { id: accountOne, agentId: "pc", instanceId: "main", name: "音乐发布账号", owner: "alice", status: "connected", channelId: "channel_one", channel: "Rainy Night Radio", createdAt: 1, updatedAt: 1, connectedAt: 1 },
+  { id: accountTwo, agentId: "pc_two", instanceId: "main", name: "第二发布账号", owner: "alice", status: "connected", channelId: "channel_two", channel: "第二频道", createdAt: 1, updatedAt: 1, connectedAt: 1 },
+  { id: accountThree, agentId: "pc", instanceId: "main", name: "同机独立账号", owner: "alice", status: "connected", channelId: "channel_three", channel: "第三频道", createdAt: 1, updatedAt: 1, connectedAt: 1 },
+];
+const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", accountId: accountOne, channelId: "channel_one", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching", ai: { enabled: false, language: "English", prompt: "Generate accurate copy", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1, 3, 5, 7], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
+const thirdProfile = { ...structuredClone(profile), id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", accountId: accountThree, channelId: "channel_three" };
+const view = { accounts, profiles: [profile, thirdProfile], jobs: [], plans: [], cleanups: [], policy, administrator: false };
+let confirmed; let latestPlan; let createdAccount; const errors = []; const actions = []; const screenshots = []; const archiveRequests = []; const legacyRequests = []; const accountConnectRequests = []; const oauthResultRequests = [];
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
 /** 模拟服务端自动排期；首六个时刻已占用，manual覆盖固定保留。 */
 function allocate(plan) {
@@ -41,13 +48,18 @@ async function mock(route) {
   const url = new URL(route.request().url()); const body = route.request().postDataJSON(); let result;
   if (url.pathname === "/api/session") result = { user: { username: "alice", role: "customer" } };
   else if (url.pathname === "/api/instances") result = { instances: [{ id: "main", name: "音乐频道", agentId: "pc", agentName: "工作室电脑" }, { id: "main", name: "第二频道", agentId: "pc_two", agentName: "另一台电脑" }] };
-  else if (url.pathname === "/api/broadcast-assets") result = { playlists: [{ id: "PLsynthetic", title: "Rainy Night Sessions" }] };
+  else if (url.pathname === "/api/status") { legacyRequests.push(url.pathname); result = { youtube: { connected: true, authorization: "present", channelId: "live_channel", channel: "Existing Live Channel" } }; }
+  else if (url.pathname === "/api/broadcast-assets") { legacyRequests.push(url.pathname); result = { playlists: [{ id: "PLsynthetic", title: "Rainy Night Sessions" }] }; }
+  else if (url.pathname === "/api/youtube/result") { assert.equal(url.searchParams.get("id"), "55555555-5555-4555-8555-555555555555"); oauthResultRequests.push(url.searchParams.get("id")); result = { target: { agentId: "pc_two", instanceId: "main" }, accountId: accountTwo, status: "connected" }; }
   else if (url.pathname === "/api/publishing") {
     if (!body) result = view;
     else {
       actions.push(body.action);
       if (body.action === "consent") { view.consent = { version: body.version }; result = { ok: true }; }
-      if (body.action === "packages") result = { root: body.agentId === "pc" ? "D:\\LIVENEST\\Publishing" : "E:\\LiveNest\\Publishing", batches: body.agentId === "pc" ? batches : [batches[1]], thumbnails: [], channelId: "channel_one", channel: "Rainy Night Radio" };
+      if (body.action === "packages") { const account = view.accounts.find(value => value.id === body.accountId); assert.ok(account); assert.equal(account.agentId, body.agentId); assert.equal(account.instanceId, body.instanceId); result = { root: body.agentId === "pc" ? "D:\\LIVENEST\\Publishing" : "E:\\LiveNest\\Publishing", batches: body.agentId === "pc" ? batches : [batches[1]], thumbnails: [], channelId: account.channelId, channel: account.channel }; }
+      if (body.action === "account-playlists") { assert.equal(body.accountId, accountOne); result = { playlists: [{ id: "PLsynthetic", title: "Rainy Night Sessions" }] }; }
+      if (body.action === "account-create") { assert.equal(body.agentId, "pc"); assert.equal(body.instanceId, "main"); createdAccount = { id: "44444444-4444-4444-8444-444444444444", agentId: body.agentId, instanceId: body.instanceId, name: body.name, owner: "alice", status: "unbound", createdAt: Date.now(), updatedAt: Date.now() }; view.accounts.push(createdAccount); result = createdAccount; }
+      if (body.action === "account-connect") { accountConnectRequests.push(body.accountId); assert.equal(body.accountId, createdAccount.id); result = { url: origin + "/publishing?synthetic-account=" + body.accountId }; }
       if (body.action === "profile") { const index = view.profiles.findIndex(value => value.id === body.profile.id); if (index >= 0) view.profiles[index] = body.profile; else view.profiles.push(body.profile); result = body.profile; }
       if (body.action === "plan-preview") {
         latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(view.profiles.find(value => value.id === body.profileId)), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
@@ -70,22 +82,42 @@ async function mock(route) {
         if (body.operation === "resume") job.observed.revision = job.spec.revision; result = job;
       }
       if (body.action === "plan-archive") { archiveRequests.push(body.planId); const plan = view.plans.find(value => value.id === body.planId); plan.archivePending = true; result = { state: "pending" }; }
-      if (body.action === "cleanup") { view.jobs = []; view.profiles = []; view.plans = []; view.cleanups = [{ id: "cleanup", agentId: "pc", instanceId: "main", deadline: Date.now() + 7 * 86400000, state: "pending" }]; result = view.cleanups[0]; }
+      if (body.action === "account-cleanup") { assert.equal(body.accountId, accountOne); assert.equal(body.confirmed, true); view.jobs = view.jobs.filter(job => job.spec.profile.accountId !== body.accountId); view.profiles = view.profiles.filter(profile => profile.accountId !== body.accountId); view.plans = view.plans.filter(plan => plan.profile.accountId !== body.accountId); const account = view.accounts.find(value => value.id === body.accountId); account.status = "cleanup_pending"; result = { id: "cleanup", accountId: account.id, agentId: account.agentId, instanceId: account.instanceId, deadline: Date.now() + 7 * 86400000, state: "pending" }; view.cleanups.push(result); }
     }
   }
   assert.ok(result, "Unexpected mocked request: " + url.pathname); await route.fulfill({ json: result });
 }
-/** 截图前清除焦点并检查整体没有横向溢出。 */
+/** 步骤导航按标签定位，排除页面内同名标题和操作按钮。 */
+function stepButton(page, name) { return page.locator(".publishing-steps").getByRole("button", { name: new RegExp(name) }); }
+/** 每次切换都核对当前步骤的辅助技术语义和实际内容区域。 */
+async function expectStep(page, name) {
+  await page.getByRole("heading", { name, exact: true }).waitFor();
+  assert.equal(await page.locator('.publishing-steps button[aria-current="step"]').count(), 1);
+  assert.equal(await stepButton(page, name).getAttribute("aria-current"), "step");
+  assert.equal(await page.locator("#publishing-step-content").count(), 1);
+}
+/** 截图前清除焦点，检查无横向溢出，以及小屏步骤导航可触摸且关联内容。 */
 async function capture(page, name) {
   await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.scrollTo({ top: 0, left: 0, behavior: "instant" }); });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   await page.screenshot({ path: path.join(output, name), fullPage: true }); screenshots.push(name);
   const overflowing = await page.evaluate(() => [...document.querySelectorAll("body *")].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && getComputedStyle(element).position !== "absolute").map(element => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right, width: element.getBoundingClientRect().width })).slice(0, 20));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "Overflow in " + name + ": " + JSON.stringify(overflowing));
+  if (await page.locator(".publishing-steps:visible").count()) {
+    const buttons = page.locator(".publishing-steps:visible button"); assert.equal(await buttons.count(), 4);
+    for (const button of await buttons.all()) {
+      assert.equal(await button.getAttribute("aria-controls"), "publishing-step-content");
+      if (page.viewportSize().width <= 390) {
+        const bounds = await button.boundingBox(); assert.ok(bounds && bounds.width >= 44 && bounds.height >= 44, "Step touch target under 44px in " + name);
+      }
+    }
+  }
 }
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.on("pageerror", error => errors.push(error.message)); await page.route("**/api/**", mock);
   await page.goto(origin + "/publishing"); await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
+  await expectStep(page, "准备素材"); assert.equal(await stepButton(page, "设置时间").isDisabled(), true); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
+  assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne); assert.equal(await page.getByLabel("发布账号", { exact: true }).locator("option").count(), 3);
   assert.equal(await page.locator('nav[aria-label="发布功能"] button').count(), 2); assert.equal(await page.getByRole("button", { name: "发布策略", exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "检测素材", exact: true }).isDisabled(), true);
   await page.getByRole("button", { name: "同意并继续" }).click(); await page.getByRole("button", { name: "检测素材", exact: true }).click();
@@ -101,25 +133,53 @@ try {
   await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("heading", { name: "设置时间", exact: true }).waitFor();
   await page.getByRole("button", { name: "新建配置", exact: true }).click(); await page.getByRole("heading", { name: "新建配置", exact: true }).waitFor();
   assert.equal(await page.getByLabel("标题模板").inputValue(), "{{packageName}}"); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
+  await page.getByText("标签与播放列表", { exact: true }).click(); await page.getByRole("button", { name: "读取播放列表", exact: true }).click(); await page.getByRole("checkbox", { name: "Rainy Night Sessions", exact: true }).check(); assert.equal(actions.filter(action => action === "account-playlists").length, 1);
   await page.getByLabel("是否专为儿童制作").selectOption("false"); await page.getByRole("button", { name: "保存配置", exact: true }).click();
-  await page.getByRole("heading", { name: "设置时间", exact: true }).waitFor(); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await page.getByLabel("时区", { exact: true }).fill("UTC");
+  await page.getByRole("heading", { name: "设置时间", exact: true }).waitFor(); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await page.getByLabel("时区", { exact: true }).fill("Asia/Shanghai");
   await page.getByLabel("周一发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("20:00"); await page.getByLabel("周五发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周日发布时间", { exact: true }).fill("12:00");
   await page.getByRole("button", { name: "周一添加时间", exact: true }).click(); assert.equal(await page.getByLabel("周一发布时间 2", { exact: true }).count(), 1); await page.getByRole("button", { name: "删除周一时间 2", exact: true }).click();
+  await stepButton(page, "准备素材").focus(); await page.keyboard.press("Enter"); await expectStep(page, "准备素材");
+  assert.equal(await page.getByRole("heading", { name: "准备素材", exact: true }).evaluate(element => element === document.activeElement), true);
+  assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true); assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*007/ }).isChecked(), true);
+  await page.getByRole("checkbox", { name: /暂不发布.*003/ }).uncheck(); assert.equal(await stepButton(page, "设置时间").isDisabled(), true); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
+  await page.getByRole("checkbox", { name: /暂不发布.*003/ }).check(); await stepButton(page, "设置时间").click(); await expectStep(page, "设置时间");
+  assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); assert.equal(await page.getByLabel("时区", { exact: true }).inputValue(), "Asia/Shanghai"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00");
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "schedule-" + width + ".png"); }
+  await page.getByLabel("发布账号", { exact: true }).selectOption(accountThree); await expectStep(page, "准备素材"); await page.getByRole("button", { name: "检测素材", exact: true }).click();
+  assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), false); await page.getByRole("radio", { name: /2030-10-Batch-02/ }).check(); await page.getByRole("button", { name: "下一步", exact: true }).click();
+  assert.equal(await page.getByLabel("发布频道", { exact: true }).inputValue(), "第三频道"); await page.getByLabel("开始日期", { exact: true }).fill("2030-11-01"); await page.getByLabel("周三发布时间", { exact: true }).fill("09:00");
+  await page.getByLabel("发布账号", { exact: true }).selectOption(accountOne); await expectStep(page, "准备素材"); assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true);
+  await page.getByRole("button", { name: "下一步", exact: true }).click(); assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00"); assert.equal(await page.getByLabel("时区", { exact: true }).inputValue(), "Asia/Shanghai");
   await page.getByRole("button", { name: "生成排期", exact: true }).click(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
-  assert.equal(latestPlan.items.filter(item => !item.excluded).length, 98); assert.equal(latestPlan.skippedOccupied, 6); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "20:00");
-  assert.equal(await page.locator(".publishing-plan-item").count(), 25); await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click();
+  assert.equal(latestPlan.profile.accountId, accountOne); assert.equal(latestPlan.items.filter(item => !item.excluded).length, 98); assert.equal(latestPlan.skippedOccupied, 6); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "20:00");
+  assert.equal(await page.getByRole("button", { name: "日历", exact: true }).getAttribute("aria-pressed"), "true"); await page.locator('[aria-label="发布排期日历"]').waitFor();
+  await page.getByRole("button", { name: "下个月", exact: true }).click(); assert.equal(await page.getByRole("button", { name: "编辑发布包 001", exact: true }).count(), 0);
+  await page.getByRole("button", { name: "上个月", exact: true }).click(); await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click();
   const title = page.getByLabel("标题", { exact: true }); await title.fill("🌙".repeat(101)); assert.equal(await page.getByRole("button", { name: "保存修改", exact: true }).isDisabled(), true);
   await title.fill("🌙".repeat(100)); assert.equal(await title.getAttribute("maxlength"), null); assert.equal(await page.getByRole("button", { name: "保存修改", exact: true }).isDisabled(), false);
-  await title.fill("东京雨夜 · Tokyo Rainy Night"); await page.getByLabel("发布时间 · UTC", { exact: true }).fill("2030-10-10T14:30"); await page.getByRole("button", { name: "保存修改", exact: true }).click();
-  await page.getByText("手动", { exact: true }).waitFor(); const manualAt = latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).publishAt;
-  await page.reload(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor(); await page.getByText("手动", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "返回设置", exact: true }).click(); await page.getByLabel("周三发布时间", { exact: true }).fill("21:00"); await page.getByRole("button", { name: "生成排期", exact: true }).click(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
+  await title.fill("东京雨夜 · Tokyo Rainy Night"); await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).fill("2030-10-10T00:30"); await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.locator(".publishing-plan-month").getByText("手动", { exact: true }).waitFor(); const manualAt = latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).publishAt;
+  assert.equal(manualAt, "2030-10-09T16:30:00.000Z");
+  const manualDay = page.locator('[data-date="2030-10-10"]'); assert.equal(await manualDay.getByRole("button", { name: "编辑发布包 001", exact: true }).count(), 1);
+  await page.reload(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor(); await page.locator(".publishing-plan-month").getByText("手动", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click(); await page.getByLabel("标题", { exact: true }).fill("未保存的午夜标题");
+  await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); await stepButton(page, "确认计划").click(); await expectStep(page, "确认计划");
+  assert.equal(await page.getByLabel("标题", { exact: true }).inputValue(), "未保存的午夜标题"); assert.equal(await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).inputValue(), "2030-10-10T00:30");
+  assert.equal(latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).title, "东京雨夜 · Tokyo Rainy Night"); await page.locator(".publishing-plan-editor").getByRole("button", { name: "返回", exact: true }).click();
+  assert.equal(actions.filter(action => action === "plan-preview").length, 1);
+  await stepButton(page, "设置时间").click(); await expectStep(page, "设置时间"); await page.getByLabel("周三发布时间", { exact: true }).fill("21:00"); await page.getByRole("button", { name: "生成排期", exact: true }).click(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   assert.equal(latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).publishAt, manualAt); assert.equal(actions.filter(action => action === "plan-preview").length, 1);
+  await page.getByRole("button", { name: "列表", exact: true }).click(); assert.equal(await page.locator(".publishing-plan-item").count(), 25);
+  const firstPageNames = await page.locator(".publishing-plan-item button").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label")));
+  await page.getByRole("button", { name: "下一页", exact: true }).click(); assert.equal(await page.locator(".publishing-plan-item").count(), 25);
+  const secondPageNames = await page.locator(".publishing-plan-item button").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label"))); assert.equal(secondPageNames.some(name => firstPageNames.includes(name)), false);
+  await page.getByRole("button", { name: "上一页", exact: true }).click(); assert.deepEqual(await page.locator(".publishing-plan-item button").evaluateAll(elements => elements.map(element => element.getAttribute("aria-label"))), firstPageNames);
   await page.getByRole("button", { name: "编辑发布包 002", exact: true }).click(); await page.getByRole("checkbox", { name: "暂不发布", exact: true }).check(); await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.getByRole("button", { name: "日历", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "确认上传并按计划发布", exact: true }).isDisabled(), true); await page.getByRole("checkbox", { name: /^确认频道、内容和时间/ }).check();
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "confirmation-" + width + ".png"); }
   await page.getByRole("button", { name: "确认上传并按计划发布", exact: true }).click(); await page.getByRole("heading", { name: "自动执行", exact: true }).waitFor();
+  await expectStep(page, "自动执行"); for (const name of ["准备素材", "设置时间", "确认计划"]) assert.equal(await stepButton(page, name).isDisabled(), true);
   assert.equal(confirmed.revision, latestPlan.revision); assert.equal(view.jobs.length, 97); assert.equal(await page.getByRole("button", { name: "归档批次", exact: true }).isDisabled(), true);
   assert.equal(await page.locator(".publishing-execution-details").getAttribute("open"), null);
   await page.getByText("任务与操作", { exact: true }).click(); await page.getByRole("button", { name: "暂停", exact: true }).first().click(); await page.getByText("暂停待设备确认", { exact: true }).waitFor();
@@ -129,19 +189,47 @@ try {
   await page.getByRole("button", { name: "发布下一批", exact: true }).click(); await page.getByRole("button", { name: "检测素材", exact: true }).click();
   await page.getByRole("radio", { name: /2030-10-Batch-02/ }).check(); await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("button", { name: "生成排期", exact: true }).click();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor(); assert.equal(latestPlan.items.filter(item => !item.excluded).length, 100);
+  await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); await page.getByRole("radio", { name: /2030-10-Batch-01/ }).check();
+  assert.equal(await stepButton(page, "设置时间").isDisabled(), true); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
+  await page.getByRole("radio", { name: /2030-10-Batch-02/ }).check(); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
+  await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("button", { name: "生成排期", exact: true }).click(); await expectStep(page, "确认计划");
   await page.getByRole("checkbox", { name: /^确认频道、内容和时间/ }).check(); await page.getByRole("button", { name: "确认上传并按计划发布", exact: true }).click(); await page.getByRole("heading", { name: "自动执行", exact: true }).waitFor();
   assert.equal(view.jobs.filter(job => job.spec.batchId === latestPlan.id).length, 100);
-  const archivePlanId = latestPlan.id; for (const job of view.jobs.filter(value => value.spec.batchId === archivePlanId)) { job.observed.state = "published"; job.observed.revision = job.spec.revision; }
+  const archivePlanId = latestPlan.id; for (const job of view.jobs.filter(value => value.spec.batchId === archivePlanId)) { job.observed.state = "scheduled"; job.observed.revision = job.spec.revision; }
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); assert.equal(await page.getByRole("button", { name: "归档批次", exact: true }).isDisabled(), true);
-  for (const job of view.jobs.filter(value => value.spec.batchId === archivePlanId)) job.observed.observedPrivacy = "public";
+  for (const job of view.jobs.filter(value => value.spec.batchId === archivePlanId)) { job.observed.state = "published"; job.observed.observedPrivacy = "public"; }
+  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator("button:not([disabled])").filter({ hasText: /^归档批次$/ }).waitFor(); assert.equal(await page.getByRole("button", { name: "归档批次", exact: true }).isDisabled(), false);
+  // 已公开是持久完成事实，API缓存字段过期不能让批次永久失去归档入口。
+  for (const job of view.jobs.filter(value => value.spec.batchId === archivePlanId)) { delete job.observed.observedPrivacy; delete job.observed.videoId; delete job.observed.remoteCheckedAt; }
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.getByRole("button", { name: "归档批次", exact: true }).click(); await page.getByText("归档待设备确认", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "核对归档", exact: true }).isDisabled(), false); await page.getByRole("button", { name: "核对归档", exact: true }).click(); assert.deepEqual(archiveRequests, [archivePlanId, archivePlanId]);
-  await page.getByRole("button", { name: "我的发布", exact: true }).click(); await page.getByRole("button", { name: "日历", exact: true }).click();
+  // 另一台客户设备的任务已经到时，仍需远端公开证据；跨频道总览应展示它而非误记成功。
+  const secondProfile = { ...structuredClone(profile), id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", agentId: "pc_two", accountId: accountTwo, channelId: "channel_two" };
+  const secondPlan = { ...structuredClone(latestPlan), id: crypto.randomUUID(), profile: secondProfile, batch: { ...structuredClone(batches[1]), name: "2030-10-Channel-02", packages: [structuredClone(batches[1].packages[0])] }, items: [structuredClone(latestPlan.items[0])], archivePending: false };
+  const secondJob = structuredClone(view.jobs.find(job => job.spec.batchId === archivePlanId)); secondJob.spec.id = crypto.randomUUID(); secondJob.spec.batchId = secondPlan.id; secondJob.spec.profile = secondProfile;
+  secondJob.observed = { ...secondJob.observed, id: secondJob.spec.id, revision: secondJob.spec.revision, state: "scheduled", observedPrivacy: "private", effectivePublishAt: new Date(Date.now() - 60000).toISOString() };
+  view.profiles.push(secondProfile); view.plans.push(secondPlan); view.jobs.push(secondJob);
+  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.getByRole("button", { name: "我的发布", exact: true }).click();
+  assert.equal(await page.getByRole("button", { name: "总览", exact: true }).getAttribute("aria-pressed"), "true");
+  const secondBatch = page.locator('[aria-label="批次 2030-10-Channel-02"]'); await secondBatch.waitFor(); await secondBatch.getByText("已公开 0", { exact: true }).waitFor(); await secondBatch.getByText("待发布 1", { exact: true }).waitFor(); await secondBatch.getByText(/^待核对 /).waitFor();
+  for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "overview-" + width + ".png"); }
+  await page.getByLabel("发布频道", { exact: true }).selectOption("channel_two"); assert.equal(await page.locator('[aria-label="批次 2030-10-Batch-01"]').count(), 0); await secondBatch.waitFor();
+  await secondBatch.getByRole("button", { name: "查看详情", exact: true }).click(); await page.getByRole("button", { name: "返回总览", exact: true }).click(); await secondBatch.waitFor();
+  await page.getByLabel("发布频道", { exact: true }).selectOption(""); await page.getByRole("button", { name: "日历", exact: true }).click();
   await page.getByRole("button", { name: "下个月", exact: true }).click(); await page.getByRole("button", { name: "上个月", exact: true }).click(); await page.getByRole("button", { name: "今天", exact: true }).click();
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "calendar-" + width + ".png"); }
-  await page.getByRole("button", { name: "设置", exact: true }).click(); await page.getByRole("button", { name: "授权与数据", exact: true }).click(); await page.getByRole("button", { name: "撤销授权与删除数据", exact: true }).click(); await page.getByRole("button", { name: "确认撤销与删除", exact: true }).click(); await page.getByText(/等待设备清理，期限/).waitFor();
+  await page.getByRole("button", { name: "设置", exact: true }).click(); await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByText("授权与数据 · Rainy Night Radio", { exact: true }).click(); await page.getByRole("button", { name: "撤销授权与删除数据", exact: true }).click(); await page.getByRole("button", { name: "确认撤销与删除", exact: true }).click(); await page.getByText(/等待设备清理，期限/).waitFor();
   assert.equal(await page.getByText("授权撤销与设备清理已确认", { exact: true }).count(), 0);
+  assert.equal(view.jobs.filter(job => job.spec.profile.accountId === accountTwo).length, 1); assert.equal(view.accounts.find(account => account.id === accountTwo).status, "connected"); assert.equal(view.accounts.find(account => account.id === accountThree).status, "connected");
+  await page.getByRole("button", { name: "添加账号", exact: true }).click(); await page.waitForURL(url => url.searchParams.get("synthetic-account") === "44444444-4444-4444-8444-444444444444"); await page.getByLabel("发布账号", { exact: true }).waitFor(); await page.getByLabel("设备", { exact: true }).selectOption("pc:main");
+  assert.deepEqual(accountConnectRequests, [createdAccount.id]); assert.equal(createdAccount.status, "unbound"); assert.equal(await page.getByLabel("发布账号", { exact: true }).locator('option[value="' + createdAccount.id + '"]').count(), 1);
+  assert.deepEqual(legacyRequests, []); assert.equal(actions.includes("cleanup"), false);
+  // 授权结果回到原设备/账号，不能被另一设备的更新草稿或默认设备覆盖。
+  const newerDraft = { ...structuredClone(latestPlan), id: crypto.randomUUID(), profile: structuredClone(thirdProfile), createdAt: Date.now() + 1000 }; delete newerDraft.confirmedAt; delete newerDraft.archivedAt; delete newerDraft.archivePending; view.plans.push(newerDraft);
+  const callbackPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); callbackPage.on("pageerror", error => errors.push(error.message)); await callbackPage.route("**/api/**", mock);
+  await callbackPage.goto(origin + "/publishing?oauthResult=55555555-5555-4555-8555-555555555555"); await callbackPage.getByText("发布账号已连接", { exact: true }).waitFor(); await expectStep(callbackPage, "准备素材");
+  assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]); await callbackPage.close();
   await page.goto(origin + "/privacy"); await page.getByRole("heading", { name: "LiveNest 隐私政策" }).waitFor(); await page.goto(origin + "/terms"); await page.getByRole("heading", { name: "LiveNest 服务条款" }).waitFor();
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-public-proof", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "step-confirmed-lock", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
 } finally { await browser.close(); }

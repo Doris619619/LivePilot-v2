@@ -39,7 +39,7 @@ async function main() {
   claimHost();
   const transport = new Transport(identity.origin, identity.agentId, identity.token); const executor = new Executor(transport);
   const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task), identity.agentId);
-  executor.purgeYouTubeTasks = id => worker.purgeYouTube(id);
+  executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let stopped = false; let connected = false;
   process.once("SIGINT", () => { stopped = true; }); process.once("SIGTERM", () => { stopped = true; });
@@ -57,9 +57,9 @@ async function main() {
   while (!stopped) {
     try {
       if (!connected) {
-        const session = await transport.post<{ session: string; protocol: number; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2"] });
+        const session = await transport.post<{ session: string; protocol: number; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"] });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
-        executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"));
+        executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
         await transport.post("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
       }
       const response = await transport.request("/api/agent/poll"); const result = await response.json() as { tasks: unknown[] };

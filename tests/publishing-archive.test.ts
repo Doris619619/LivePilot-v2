@@ -6,6 +6,9 @@ import os from "node:os";
 import { ensurePublishingRoot, scanPublishingPackages } from "@/core/publishing/packages";
 import { archivePublishingBatch } from "@/core/publishing/archive";
 import { PublishingStore } from "@/core/publishing/storage";
+import { PublishingRunner } from "@/core/publishing/runner";
+import { seal } from "@/core/storage";
+import { fixtureApi, fixtureJob } from "./publishing-fixtures";
 
 let root: string;
 /** 单一合法发布包代表 Cloud 已核对全部终态的批次，目录放在独立测试根。 */
@@ -56,4 +59,29 @@ it("treats a change discovered after rename as uncertain and preserves the prepa
   await expect(archivePublishingBatch(root, batch, "archive-08")).rejects.toMatchObject({ code: "ARCHIVE_UNCERTAIN" }); expect(await readdir(path.join(root, "Inbox"))).toEqual([]);
   expect(await readFile(path.join(root, "Completed", "Batch--archive-08", "001", "description.txt"), "utf8")).toBe("changed during archive");
   const saved = JSON.parse(await readFile(path.join(root, "Completed", ".archives", "archive-08.json"), "utf8")); expect(saved.state).toBe("prepared");
+});
+
+it("archives a publicly completed batch after API observations expire and the Agent restarts", async () => {
+  vi.stubEnv("LIVEPILOT_PUBLISHING_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64));
+  try {
+    const now = Date.parse("2026-11-02T00:00:00Z"); const batch = (await scanPublishingPackages(root)).batches[0]; const spec = fixtureJob(batch.packages[0].sourceVideo); spec.contentPackage = batch.packages[0]; spec.profile.privacy = "public";
+    const store = new PublishingStore(path.join(root, "agent-checkpoints")); const { api } = fixtureApi();
+    await store.write("entries.enc", seal([{ spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "published", videoId: "video_one", observedPrivacy: "public", remoteCheckedAt: now - 31 * 86400_000, offset: spec.asset.size, total: spec.asset.size, updatedAt: now }, playlistsDone: [], failures: 0 }]));
+    const first = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await first.tick(); expect((await first.reports())[0]).toMatchObject({ state: "published", videoId: undefined, observedPrivacy: undefined }); await first.stop();
+    const restored = new PublishingRunner(new Map(), { store, now: () => now, api: () => api });
+    try {
+      const result = await restored.archiveBatch(batch, "archive-ttl"); expect(result.state).toBe("complete"); expect(await readFile(path.join(result.destination, "001", "video.mp4"), "utf8")).toBe("source-video"); expect(await readdir(path.join(root, "Inbox"))).toEqual([]); expect(api.begin).not.toHaveBeenCalled(); expect(api.list).not.toHaveBeenCalled();
+    } finally { await restored.stop(); }
+  } finally { vi.unstubAllEnvs(); }
+});
+
+it.each([{ state: "scheduled", revision: 1 }, { state: "published", revision: 0 }, { state: "completed", revision: 1 }])("keeps source files when public completion is unconfirmed: $state revision $revision", async ({ state, revision }) => {
+  vi.stubEnv("LIVEPILOT_PUBLISHING_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64));
+  try {
+    const batch = (await scanPublishingPackages(root)).batches[0]; const spec = fixtureJob(batch.packages[0].sourceVideo); spec.contentPackage = batch.packages[0]; spec.profile.privacy = "public";
+    const store = new PublishingStore(path.join(root, "agent-checkpoints")); await store.write("entries.enc", seal([{ spec, report: { id: spec.id, revision, sequence: 1, state, effectivePublishAt: "2020-01-01T00:00:00Z", offset: spec.asset.size, total: spec.asset.size, updatedAt: Date.now() }, playlistsDone: [], failures: 0 }]));
+    const runner = new PublishingRunner(new Map(), { store });
+    try { await expect(runner.archiveBatch(batch, "archive-unconfirmed")).rejects.toMatchObject({ code: "ARCHIVE_BUSY" }); expect(await readdir(path.join(root, "Inbox"))).toEqual(["Batch"]); }
+    finally { await runner.stop(); }
+  } finally { vi.unstubAllEnvs(); }
 });

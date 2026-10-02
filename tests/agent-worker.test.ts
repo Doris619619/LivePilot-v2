@@ -61,3 +61,11 @@ it("keeps old-identity reports local after re-pairing", async () => {
   const fresh = new Worker(store, vi.fn(), "studio_b"); expect(await fresh.reports()).toEqual([]);
   expect((await old.reports()).map(r => r.id)).toEqual([value.id]);
 });
+
+it("cleans one publishing account without waiting for or deleting host live work and another account", async () => {
+  const id = randomUUID(); const other = randomUUID(); const live = task(); const accountTask = { ...task(), payload: { kind: "publishing-account-oauth-begin" as const, accountId: id } }; const otherTask = { ...task(), payload: { kind: "publishing-account-playlists" as const, accountId: other } };
+  let finishLive!: () => void; const worker = new Worker(new Store(dir), async value => value.id === live.id ? new Promise<void>(resolve => { finishLive = resolve; }) : { ok: true });
+  await worker.receive(live); await worker.receive(accountTask); await worker.receive(otherTask); await vi.waitFor(() => expect(finishLive).toBeTypeOf("function"));
+  await worker.purgeYouTube("main", id); expect(await new Store(dir).read(accountTask.id + ".json")).toBeNull(); expect(await new Store(dir).read(live.id + ".json")).not.toBeNull(); expect(await new Store(dir).read(otherTask.id + ".json")).not.toBeNull();
+  finishLive(); await worker.drain(); await worker.purgeYouTube("main"); expect(await new Store(dir).read(live.id + ".json")).toBeNull(); expect(await new Store(dir).read(otherTask.id + ".json")).not.toBeNull();
+});

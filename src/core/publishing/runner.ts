@@ -14,14 +14,16 @@ import { publishingRoot, resolvePackageFile, validatePackage } from "./packages"
 import { preparePackageUpload, validatePreparedUpload } from "./render";
 import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
+import type { YouTubeAuth } from "../youtube/auth";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
 type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"] };
-type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
+type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
 /** RFC3339 的不同等价格式按同一时刻比较，避免 .000Z 与 Z 导致误判排期。 */
 function sameMoment(a?: unknown, b?: string) { return typeof a === "string" && !!b && Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b); }
 export class PublishingRunner {
   private entries = new Map<string, Entry>(); private loaded = false; private writes: Promise<unknown> = Promise.resolve(); private active = new Map<string, Promise<void>>(); private aborters = new Map<string, AbortController>(); private stopped = false;
   private archives = new Map<string, Promise<unknown>>();
+  private purging = new Set<string>();
   private accepting: Promise<unknown> = Promise.resolve(); private loading?: Promise<void>;
   readonly storage: PublishingStore; private now: () => number;
   /** 每台物理机器创建一次；API 与时钟可注入以验证崩溃恢复而不访问真实频道。 */
@@ -36,7 +38,7 @@ export class PublishingRunner {
   }
   /** 串行检查版本和落盘，防止同时接收两条修订时旧版本覆盖新版本。 */
   private async applyOnce(value: JobSpec) {
-    await this.load(); const spec = jobSpecSchema.parse(value); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
+    await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
     if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
     if (old) {
@@ -59,7 +61,7 @@ export class PublishingRunner {
   /** 公开报告只含状态和最终文件指纹，不包含 session URI、本机文件路径或 Token。 */
   async reports() { await this.load(); return [...this.entries.values()].filter(e => e.report.sequence > (e.acknowledged || 0)).slice(0, 32).map(e => structuredClone(e.report)); }
   /** 新授权必须仍属于尚未完成任务的频道。 */
-  async expectedChannel(instanceId: string) { await this.load(); return [...this.entries.values()].find(e => e.spec.profile.instanceId === instanceId && !publishingTerminal(e.report.state))?.spec.profile.channelId; }
+  async expectedChannel(instanceId: string, accountId?: string) { await this.load(); return [...this.entries.values()].find(e => e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId && !publishingTerminal(e.report.state))?.spec.profile.channelId; }
   /** 已验证 Hash 按文件版本缓存；索引读取不重新打开视频流。 */
   async assetHashes(instanceId: string) { await this.load(); return Object.fromEntries([...this.entries.values()].filter(e => e.spec.profile.instanceId === instanceId && e.sha256).map(e => [e.spec.asset.version, e.sha256!])); }
   /** 改变状态后先持久化；远端副作用必须发生在对应检查点之后。 */
@@ -67,18 +69,22 @@ export class PublishingRunner {
   /** 对真实频道身份做独立检查，不依赖任何 OBS readiness。 */
   private async checkChannel(entry: Entry) {
     if (this.options.api && !this.services.size) return;
-    const app = this.services.get(entry.spec.profile.instanceId); const token = await app?.auth.tokens();
+    const token = await this.auth(entry).tokens();
     if (!token || token.channelId !== entry.spec.profile.channelId) throw new AppError("CHANNEL", "任务频道与当前授权不一致，请连接原频道。");
   }
   /** 每次 API admission 使用当前项目策略；不在 Cloud 保存 Google 凭据。 */
-  private api(entry: Entry) { if (this.options.api) return this.options.api(entry.spec); const app = this.services.get(entry.spec.profile.instanceId); if (!app) throw new AppError("INSTANCE", "发布实例不存在。"); return new VideoApi(app.auth, (units, upload) => { if (!this.options.charge) throw new AppError("VIDEO_QUOTA", "发布配额尚未连接 Cloud。", 503); return this.options.charge(entry.spec, units, upload); }); }
+  private api(entry: Entry) { if (this.options.api) return this.options.api(entry.spec); return new VideoApi(this.auth(entry), (units, upload) => { if (!this.options.charge) throw new AppError("VIDEO_QUOTA", "发布配额尚未连接 Cloud。", 503); return this.options.charge(entry.spec, units, upload); }); }
+  /** 新任务只使用明确账号的独立授权；旧任务继续原实例授权，不进行隐式回退。 */
+  private auth(entry: Entry) { if (entry.spec.profile.accountId) { if (!this.options.accountAuth) throw new AppError("ACCOUNT", "发布账号授权模块尚未连接。", 409); return this.options.accountAuth(entry.spec.profile.accountId); } const app = this.services.get(entry.spec.profile.instanceId); if (!app) throw new AppError("INSTANCE", "发布实例不存在。"); return app.auth; }
+  /** 本地清理锁标识授权上下文；同设备多个发布账号与旧直播实例互不占用。 */
+  private authorizationKey(spec: JobSpec) { return spec.profile.accountId ? "account:" + spec.profile.accountId : "legacy:" + spec.profile.instanceId; }
   /** 后台一次 tick 只启动允许的上传数量；processing/scheduled 查询统一按频道批量执行。 */
   async tick() {
     await this.load(); if (this.stopped) return;
-    for (const e of this.entries.values()) if (!this.active.has(e.spec.id) && !e.expiredData && e.report.remoteCheckedAt && e.report.remoteCheckedAt < this.now() - 30 * 86400_000) { e.expiredData = true; e.session = undefined; e.playlistsDone = []; e.resumeState = undefined; await this.update(e, { state: "needs_attention", videoId: undefined, metadata: undefined, processingStatus: undefined, observedPrivacy: undefined, message: "过期 YouTube 数据已清除；请在 Studio 核对，本任务禁止重新上传。" }); }
+    for (const e of this.entries.values()) if (!this.active.has(e.spec.id) && !e.expiredData && e.report.remoteCheckedAt && e.report.remoteCheckedAt < this.now() - 30 * 86400_000) { const terminal = publishingTerminal(e.report.state); e.expiredData = true; e.session = undefined; e.playlistsDone = []; e.resumeState = undefined; await this.update(e, { state: terminal ? e.report.state : "needs_attention", videoId: undefined, metadata: undefined, processingStatus: undefined, observedPrivacy: undefined, nextAttemptAt: undefined, message: terminal ? "过期 YouTube 观察数据已清除，执行结果保留。" : "过期 YouTube 数据已清除；请在 Studio 核对，本任务禁止重新上传。" }); }
     const entries = [...this.entries.values()].sort((a, b) => (a.spec.originalPublishAt || "").localeCompare(b.spec.originalPublishAt || "") || a.spec.index - b.spec.index);
     for (const entry of entries) {
-      if (this.active.has(entry.spec.id) || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && entry.report.state === "paused" || entry.spec.desired === "cancel" && entry.report.state === "cancelled" || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
+      if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && entry.report.state === "paused" || entry.spec.desired === "cancel" && entry.report.state === "cancelled" || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
       if (entry.report.nextAttemptAt && entry.report.nextAttemptAt > this.now()) continue;
       if (this.active.size >= entry.spec.policy.concurrency) break;
       const promise = this.execute(entry).catch(e => this.failure(entry, e)).finally(() => { this.active.delete(entry.spec.id); this.aborters.delete(entry.spec.id); });
@@ -206,7 +212,7 @@ export class PublishingRunner {
   /** 同一实例/频道合并查询，不为每个任务建立独立轮询定时器。 */
   private async poll(entries: Entry[]) {
     const groups = new Map<string, Entry[]>();
-    for (const e of entries) if (!this.active.has(e.spec.id) && e.spec.desired === "run" && e.report.videoId && ["processing", "scheduled", "published", "completed"].includes(e.report.state) && (e.report.nextAttemptAt || 0) <= this.now()) { const key = e.spec.profile.instanceId + ":" + e.spec.profile.channelId; groups.set(key, [...(groups.get(key) || []), e]); }
+    for (const e of entries) if (!this.purging.has(this.authorizationKey(e.spec)) && !this.active.has(e.spec.id) && e.spec.desired === "run" && e.report.videoId && ["processing", "scheduled", "published", "completed"].includes(e.report.state) && (e.report.nextAttemptAt || 0) <= this.now()) { const key = e.spec.profile.agentId + ":" + e.spec.profile.instanceId + ":" + (e.spec.profile.accountId || "legacy") + ":" + e.spec.profile.channelId; groups.set(key, [...(groups.get(key) || []), e]); }
     for (const group of groups.values()) for (let start = 0; start < group.length; start += group[0].spec.policy.pollBatchSize) {
       const batch = group.slice(start, start + group[0].spec.policy.pollBatchSize);
       try { await this.checkChannel(batch[0]); const results = await this.api(batch[0]).list(batch.map(e => e.report.videoId!)); for (const e of batch) await this.observe(e, results.find(v => v.id === e.report.videoId)); }
@@ -235,7 +241,9 @@ export class PublishingRunner {
     const references = [...this.entries.values()].filter(e => e.spec.contentPackage?.batchName === batch.name);
     /** 只有当前修订被明确取消的历史任务才不再阻塞整批归档。 */
     const safelyCancelled = (e: Entry) => e.spec.desired === "cancel" && e.report.state === "cancelled" && e.report.revision === e.spec.revision;
-    if (references.some(e => this.active.has(e.spec.id) || !safelyCancelled(e) && !["published", "completed"].includes(e.report.state)) || batch.packages.some(pkg => !references.some(e => e.spec.contentPackage?.id === pkg.id && e.spec.contentPackage.version === pkg.version && ["published", "completed"].includes(e.report.state) && (e.spec.profile.privacy !== "public" || e.report.observedPrivacy === "public")))) throw new AppError("ARCHIVE_BUSY", "批次仍有未完成任务或内容版本没有完成记录，不能移动源文件。");
+    /** published 是真实公开后的持久结果，不随 API 观察字段到期删除而失效。 */
+    const complete = (e: Entry) => e.report.revision === e.spec.revision && (e.report.state === "published" || e.report.state === "completed" && (e.spec.profile.privacy !== "public" || e.report.observedPrivacy === "public"));
+    if (references.some(e => this.active.has(e.spec.id) || !safelyCancelled(e) && !complete(e)) || batch.packages.some(pkg => !references.some(e => e.spec.contentPackage?.id === pkg.id && e.spec.contentPackage.version === pkg.version && complete(e)))) throw new AppError("ARCHIVE_BUSY", "批次仍有未完成任务或内容版本没有完成记录，不能移动源文件。");
     const promise = archivePublishingBatch(publishingRoot(), batch, archiveId);
     this.archives.set(batch.name, promise);
     try { return await promise; } finally { this.archives.delete(batch.name); }
@@ -245,5 +253,5 @@ export class PublishingRunner {
   /** 停止时中断当前 HTTP 并保存检查点，不等待数小时视频传完。 */
   async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values()]); await this.writes; }
   /** 撤销或删除授权前停止该实例任务并清除本地 API 数据；源素材保留。 */
-  async purge(instanceId: string) { await this.accepting; await this.load(); const active: Promise<void>[] = []; for (const e of this.entries.values()) if (e.spec.profile.instanceId === instanceId) { e.spec.desired = "pause"; this.aborters.get(e.spec.id)?.abort(); const task = this.active.get(e.spec.id); if (task) active.push(task); } await Promise.allSettled(active); for (const [id, e] of this.entries) if (e.spec.profile.instanceId === instanceId) this.entries.delete(id); await this.save(); }
+  async purge(instanceId: string, accountId?: string) { const key = accountId ? "account:" + accountId : "legacy:" + instanceId; this.purging.add(key); try { await this.accepting; await this.load(); const active: Promise<void>[] = []; for (const e of this.entries.values()) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) { e.spec.desired = "pause"; this.aborters.get(e.spec.id)?.abort(); const task = this.active.get(e.spec.id); if (task) active.push(task); } await Promise.allSettled(active); for (const [id, e] of this.entries) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) this.entries.delete(id); await this.save(); } finally { this.purging.delete(key); } }
 }

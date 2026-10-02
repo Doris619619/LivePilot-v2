@@ -7,13 +7,19 @@ import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
 import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema } from "@/shared/publishing";
 import { idSchema, uuidSchema } from "@/shared/remote";
-import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup } from "@/cloud/publishing";
+import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
+import { oauthCookie } from "@/cloud/oauth";
+import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("consent"), version: z.string().max(40) }).strict(),
-  z.object({ action: z.literal("assets"), agentId: idSchema, instanceId: idSchema }).strict(),
-  z.object({ action: z.literal("packages"), agentId: idSchema, instanceId: idSchema }).strict(),
+  z.object({ action: z.literal("account-create"), agentId: idSchema, instanceId: idSchema, name: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ action: z.literal("account-connect"), accountId: uuidSchema }).strict(),
+  z.object({ action: z.literal("account-cleanup"), accountId: uuidSchema, confirmed: z.literal(true) }).strict(),
+  z.object({ action: z.literal("account-playlists"), accountId: uuidSchema }).strict(),
+  z.object({ action: z.literal("assets"), agentId: idSchema, instanceId: idSchema, accountId: uuidSchema.optional() }).strict(),
+  z.object({ action: z.literal("packages"), agentId: idSchema, instanceId: idSchema, accountId: uuidSchema.optional() }).strict(),
   z.object({ action: z.literal("plan-preview"), profileId: uuidSchema, batchId: z.string().regex(/^[a-f0-9]{64}$/), rule: planRuleSchema, items: z.array(planItemSchema).max(10000).optional() }).strict(),
   z.object({ action: z.literal("plan-update"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema.optional(), items: z.array(planItemSchema).max(10000) }).strict(),
   z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
@@ -35,8 +41,12 @@ export async function POST(request: Request) {
     guard(request, true); const user = await authenticate(request); if (!cloudMode()) throw new AppError("MODE", "视频发布请使用 Cloud 控制端。", 409);
     const value = command.parse(await readJson(request, 2 * 1024 ** 2)); let result: unknown;
     if (value.action === "consent") result = await acceptPublishingPrivacy(user, value.version);
-    else if (value.action === "assets") result = await publishingAssets(user, value.agentId, value.instanceId);
-    else if (value.action === "packages") result = await publishingPackages(user, value.agentId, value.instanceId);
+    else if (value.action === "account-create") result = await createPublishingAccount(user, value.agentId, value.instanceId, value.name);
+    else if (value.action === "account-connect") { const oauth = await connectPublishingAccount(user, value.accountId); const response = NextResponse.json({ url: oauth.url }); response.cookies.set(oauthCookie(oauth.state), oauth.cookie, { httpOnly: true, sameSite: "lax", secure: true, path: "/api/youtube", maxAge: 600 }); return response; }
+    else if (value.action === "account-cleanup") result = await requestPublishingAccountCleanup(user, value.accountId);
+    else if (value.action === "account-playlists") result = await publishingAccountPlaylists(user, value.accountId);
+    else if (value.action === "assets") result = await publishingAssets(user, value.agentId, value.instanceId, value.accountId);
+    else if (value.action === "packages") result = await publishingPackages(user, value.agentId, value.instanceId, value.accountId);
     else if (value.action === "plan-preview") result = await previewPublishingPlan(user, value.profileId, value.batchId, value.rule, value.items);
     else if (value.action === "plan-update") result = await updatePublishingPlan(user, value.planId, value.revision, value.items, value.rule);
     else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds);

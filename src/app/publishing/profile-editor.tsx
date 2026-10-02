@@ -4,12 +4,12 @@ import { useState, type FormEvent } from "react";
 import type { PublishingProfile } from "@/shared/publishing";
 import { api } from "../client-request";
 import type { Playlist } from "@/shared/broadcast";
-export type PublishingTarget = { agentId: string; instanceId: string; name: string; channelId?: string; channel?: string };
+export type PublishingTarget = { agentId: string; instanceId: string; name: string; accountId?: string; channelId?: string; channel?: string };
 type Props = { initial?: PublishingProfile; target: PublishingTarget; thumbnails: string[]; save(profile: PublishingProfile): Promise<void>; cancel(): void; busy: boolean };
 /** 默认值可编辑；儿童内容仍须在表单中明确选择。 */
 export function newProfile(target: PublishingTarget): PublishingProfile {
   return {
-    id: crypto.randomUUID(), revision: 1, name: "常规发布", agentId: target.agentId, instanceId: target.instanceId, channelId: target.channelId || "",
+    id: crypto.randomUUID(), revision: 1, name: "常规发布", agentId: target.agentId, instanceId: target.instanceId, ...(target.accountId ? { accountId: target.accountId } : {}), channelId: target.channelId || "",
     titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false,
     license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching",
     ai: { enabled: false, language: "English", prompt: "根据素材主题生成准确、自然的视频标题和说明。", fallbackTitle: "{{packageName}}", fallbackDescription: "" },
@@ -25,7 +25,7 @@ export default function ProfileEditor({ initial, target, thumbnails, save, cance
   async function loadPlaylists() {
     setReading(true); setPlaylistError("");
     try {
-      const data = await api<{ playlists: Playlist[] }>("/api/broadcast-assets", { method: "POST", timeoutMs: 60000, headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ action: "playlists", agentId: target.agentId, instanceId: target.instanceId }) });
+      const data = await api<{ playlists: Playlist[] }>(target.accountId ? "/api/publishing" : "/api/broadcast-assets", { method: "POST", timeoutMs: 60000, headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify(target.accountId ? { action: "account-playlists", accountId: target.accountId } : { action: "playlists", agentId: target.agentId, instanceId: target.instanceId }) });
       setPlaylists(data.playlists);
     } catch (e) { setPlaylistError((e as Error).message); } finally { setReading(false); }
   }

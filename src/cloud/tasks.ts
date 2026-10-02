@@ -2,12 +2,12 @@
 import { members } from "@/server/access";
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
-import { assetsResultSchema } from "@/shared/publishing";
+import { assetsResultSchema, packagesResultSchema } from "@/shared/publishing";
 import { aiCopySchema } from "@/shared/broadcast-ai";
 import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
 import { AppError, sleep } from "@/core/errors";
-import { ACCEPT_MS, PROTOCOL, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
+import { ACCEPT_MS, PROTOCOL, publishingTaskAccountId, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
 import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
 import type { CommandStatus } from "@/shared/types";
 import { requireTarget, agentStore, assertAgentActive } from "./agents";
@@ -17,8 +17,8 @@ import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
 export type TaskRecord = Target & { customer?: string; id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; problem?: import("../shared/problems").Problem; httpStatus?: number; uploadStable?: boolean };
 type Queue = { records: TaskRecord[] };
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
-/** 控制和授权共享实例互斥，上传有独立任务并发。 */
-const exclusive = (kind: TaskPayload["kind"]) => kind === "control" || kind.startsWith("oauth-");
+/** 直播控制按实例互斥，独立发布授权仅锁自己的 accountId，避免阻塞其他账号或直播。 */
+function exclusiveKey(payload: TaskPayload, instanceId: string) { return payload.kind === "control" || payload.kind.startsWith("oauth-") ? "instance:" + instanceId : payload.kind.startsWith("publishing-account-oauth-") ? "account:" + publishingTaskAccountId(payload) : undefined; }
 /** 未送达可过期；已送达必须由 Agent 回报是否接收，不能猜成失败。 */
 function expire(record: TaskRecord) {
   if (record.expiresAt >= Date.now()) return;
@@ -30,7 +30,7 @@ function fingerprint(target: Target, actor: string, payload: TaskPayload) { retu
 /** 持久化后才返回受理；重复请求即便设备离线也能读取原结果。 */
 export async function enqueue(target: Target, actor: string, payload: TaskPayload, id: string = randomUUID()) {
   payload = taskPayloadSchema.parse(payload);
-  if (payload.kind.startsWith("publishing-") || payload.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(payload.kind) || payload.kind === "control" && payload.input.action === "start") await (await import("./publishing")).assertNoPublishingCleanup(target.agentId, target.instanceId);
+  if (payload.kind.startsWith("publishing-") || payload.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(payload.kind) || payload.kind === "control" && payload.input.action === "start") await (await import("./publishing")).assertNoPublishingCleanup(target.agentId, target.instanceId, publishingTaskAccountId(payload));
   const store = agentStore(target.agentId); const hash = fingerprint(target, actor, payload);
   return transaction(store, async () => {
     const queue = await store.read<Queue>("tasks.json") || { records: [] };
@@ -47,7 +47,8 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     }
     if (payload.kind === "upload-cancel" && !queue.records.some(r => uploadId(r) === payload.uploadId && r.actor === actor && r.instanceId === target.instanceId && (r.kind === "upload-create" || (r.kind === "upload-status" && r.status === "succeeded")))) throw new AppError("UPLOAD", "上传归属尚未确认，请先在原账号和目标实例查询上传。", 409);
     if (payload.kind === "upload-cancel" && queue.records.some(r => uploadId(r) === payload.uploadId && r.kind !== "upload-status" && !terminal(r.status))) throw new AppError("BUSY", "该上传仍有执行中或待确认的任务，请先查询状态，确认后再取消。", 409);
-    if (exclusive(payload.kind) && queue.records.some(r => r.instanceId === target.instanceId && exclusive(r.kind) && !terminal(r.status))) throw new AppError("BUSY", "该实例仍有未完成或待核对任务，请等待设备回报。", 409);
+    const exclusive = exclusiveKey(payload, target.instanceId);
+    if (exclusive && queue.records.some(r => !terminal(r.status) && exclusiveKey(unseal<TaskPayload>(r.payload), r.instanceId) === exclusive)) throw new AppError("BUSY", "该目标仍有未完成或待核对任务，请等待设备回报。", 409);
     const activities = (await store.read<MaintenanceState>("maintenance.json"))?.activities || {};
     queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000 || !!activities["upload:" + uploadId(r)]);
     const record: TaskRecord = { ...target, customer: destination.owner, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
@@ -71,18 +72,20 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
   if (record.kind === "publishing-assets") return assetsResultSchema.parse(value);
+  if (record.kind === "publishing-packages") return packagesResultSchema.parse(value);
+  if (record.kind === "publishing-archive") return z.object({ state: z.literal("complete"), destination: z.string().min(1).max(1000) }).strict().parse(value);
   if (record.kind === "publishing-apply") return z.object({ ok: z.literal(true) }).strict().parse(value);
   if (record.kind === "broadcast-ai-generate") return aiCopySchema.parse(value);
   if (record.kind === "broadcast-ai-status" || record.kind === "broadcast-ai-key") return z.object({ configured: z.boolean() }).strict().parse(value);
-  if (record.kind === "broadcast-playlists") return playlistResultSchema.parse(value);
+  if (record.kind === "broadcast-playlists" || record.kind === "publishing-account-playlists") return playlistResultSchema.parse(value);
   if (record.kind === "broadcast-thumbnail") return broadcastSchema.shape.thumbnail.unwrap().parse(value);
   if (record.kind === "control") return operationSchema.parse(value);
-  if (record.kind === "oauth-begin") {
-    const result = z.object({ cookie: z.string().regex(/^[a-f0-9]{64}$/), url: z.string().max(8192) }).parse(value);
+  if (record.kind === "oauth-begin" || record.kind === "publishing-account-oauth-begin") {
+    const result = z.object({ cookie: z.string().regex(/^[a-f0-9]{64}$/), url: z.string().max(8192) }).strict().parse(value);
     if (new URL(result.url).origin !== "https://accounts.google.com") throw new AppError("OAUTH", "设备返回了无效授权地址。", 502);
     return result;
   }
-  if (record.kind === "oauth-finish" || record.kind === "upload-cancel") return { ok: true };
+  if (record.kind === "oauth-finish" || record.kind === "publishing-account-oauth-finish" || record.kind === "upload-cancel") return { ok: true };
   const result = uploadStatusSchema.parse(value);
   if (result.instanceId !== record.instanceId || result.id !== uploadId(record)) throw new AppError("INSTANCE", "设备上报了其他实例的上传。", 403);
   return result;

@@ -2,7 +2,8 @@
 import { authenticate } from "@/server/access";
 import { problemSchema } from "@/shared/problems";
 import { z } from "zod";
-import { publishingReportSchema } from "@/shared/publishing";
+import { publishingReportSchema, publishingAccountReportSchema } from "@/shared/publishing";
+import { agentPublishingAccounts, claimPublishingAccount, syncPublishingAccounts } from "@/cloud/publishing-accounts";
 import { reportPublishing, chargePublishing, publishingCleanups, completePublishingCleanup } from "@/cloud/publishing";
 import { agentStore } from "@/cloud/agents";
 import { PROTOCOL, idSchema, uuidSchema, reportSchema } from "@/shared/remote";
@@ -50,7 +51,8 @@ export async function POST(request: Request, context: Context) {
       return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId, customer.username));
     }
     const agent = await authenticateAgent(request, route !== "session");
-    if (route === "publishing/sync") { const v = z.object({ reports: z.array(publishingReportSchema).max(32), busy: z.boolean() }).strict().parse(raw); const acknowledged = await reportPublishing(agent.id, v.reports); await agentStore(agent.id).write("publishing-runtime.json", { busy: v.busy, at: Date.now() }); return Response.json({ acknowledged, cleanups: await publishingCleanups(agent.id) }); }
+    if (route === "publishing/sync") { const v = z.object({ reports: z.array(publishingReportSchema).max(32), busy: z.boolean(), accounts: z.array(publishingAccountReportSchema).max(1000).optional() }).strict().parse(raw); const acknowledged = await reportPublishing(agent.id, v.reports); const accounts = v.accounts ? await syncPublishingAccounts(agent.id, v.accounts) : await agentPublishingAccounts(agent.id); await agentStore(agent.id).write("publishing-runtime.json", { busy: v.busy, at: Date.now() }); return Response.json({ acknowledged, accounts, cleanups: await publishingCleanups(agent.id) }); }
+    if (route === "publishing/accounts-binding") { const v = z.object({ accountId: uuidSchema, instanceId: idSchema, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), channel: z.string().min(1).max(200), channelCheckedAt: z.number().nonnegative().optional(), confirm: z.boolean() }).strict().parse(raw); return Response.json(await claimPublishingAccount(agent.id, v.accountId, v.instanceId, v.channelId, v.channel, v.confirm, v.channelCheckedAt)); }
     if (route === "publishing/quota") { const v = z.object({ id: uuidSchema, receipt: uuidSchema, units: z.number().int().min(0).max(400), upload: z.boolean() }).strict().parse(raw); return Response.json(await chargePublishing(agent.id, v.id, v.receipt, v.units, v.upload)); }
     if (route === "publishing/cleanup") { const v = z.object({ id: uuidSchema }).strict().parse(raw); return Response.json(await completePublishingCleanup(agent.id, v.id)); }
     // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。
@@ -68,12 +70,12 @@ export async function POST(request: Request, context: Context) {
       return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret }, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2"])).max(2).optional() }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1"])).max(3).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       const session = await openSession(agent.id, value.bootId, value.instances); await agentStore(agent.id).write("capabilities.json", value.capabilities || []);
-      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2"] });
+      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1"] });
     }
     if (route === "heartbeat") {
       const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);
