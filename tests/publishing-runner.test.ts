@@ -17,6 +17,65 @@ afterEach(async () => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); if (path.dirn
 async function settle(runner: PublishingRunner) { for (let i = 0; i < 500 && runner.busy; i++) await new Promise(r => setTimeout(r, 5)); expect(runner.busy).toBe(false); }
 /** 构造断电前的加密检查点，恢复必须读取而非重放 insert。 */
 async function checkpoint(state: PublishingReport["state"], extra: Record<string, unknown> = {}) { await store.write("entries.enc", seal([{ spec: job, report: { id: job.id, revision: 1, sequence: 1, state, offset: 0, total: job.asset.size, updatedAt: now, metadata: { title: "movie", description: "Description" } }, playlistsDone: [], failures: 0, ...extra }])); }
+/** 核对是独立本次修订，不修改原任务的运行、暂停或取消意图。 */
+function reconcileSpec(spec: JobSpec = job) { return { ...spec, revision: spec.revision + 1, reconcileRevision: spec.revision + 1 }; }
+it.each(["paused", "needs_attention"] as const)("read-only reconciliation preserves %s across ticks and restart without resuming finalization", async state => {
+  if (state === "paused") job.desired = "pause";
+  await checkpoint(state, { finalized: true, resumeState: "finalizing", report: { id: job.id, revision: 1, sequence: 1, state, videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now, message: "Original reason" } });
+  const { api, videos } = fixtureApi(); videos.set("v1", { id: "v1", snippet: { channelId: job.profile.channelId }, status: { privacyStatus: "private" }, processingDetails: { processingStatus: "succeeded" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.tick(); await runner.tick();
+  expect((await runner.reports())[0]).toMatchObject({ revision: 2, state, message: "Original reason", observedPrivacy: "private" });
+  const entries = unseal<{ spec: JobSpec; finalized: boolean; resumeState: string; reconciliation?: unknown }[]>((await store.read<string>("entries.enc"))!);
+  expect(entries[0]).toMatchObject({ spec: { desired: job.desired }, finalized: true, resumeState: "finalizing" }); expect(entries[0].reconciliation).toBeUndefined(); await runner.stop();
+  const restarted = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await restarted.tick(); expect((await restarted.reports())[0].state).toBe(state); expect(api.list).toHaveBeenCalledExactlyOnceWith(["v1"]); expect(api.begin).not.toHaveBeenCalled(); expect(api.finalize).not.toHaveBeenCalled(); await restarted.stop();
+});
+it("read-only reconciliation of an unknown session cannot probe, recreate or retry the upload", async () => {
+  await checkpoint("needs_attention", { session: "uncertain-session", finalChunkPossible: true });
+  const { api } = fixtureApi(); const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.tick(); await runner.tick(); await runner.stop();
+  const restarted = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await restarted.tick();
+  expect((await restarted.reports())[0]).toMatchObject({ state: "needs_attention", message: expect.stringContaining("尚无可核对的视频 ID") }); expect((await restarted.reports())[0].videoId).toBeUndefined();
+  expect(api.begin).not.toHaveBeenCalled(); expect(api.probe).not.toHaveBeenCalled(); expect(api.chunk).not.toHaveBeenCalled(); expect(api.recover).not.toHaveBeenCalled(); expect(api.list).not.toHaveBeenCalled();
+  expect(unseal<[{ session: string; finalChunkPossible: boolean }]>((await store.read<string>("entries.enc"))!)[0]).toMatchObject({ session: "uncertain-session", finalChunkPossible: true }); await restarted.stop();
+});
+it("a reconciliation without an Agent checkpoint cannot create an upload after repeated ticks, restart or resume", async () => {
+  const { api } = fixtureApi(); const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.tick(); await runner.tick();
+  expect((await runner.reports())[0]).toMatchObject({ state: "needs_attention", message: expect.stringContaining("检查点缺失") }); await runner.stop();
+  const restarted = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await restarted.tick(); await restarted.apply({ ...job, revision: 3 }); await restarted.tick(); await settle(restarted); await restarted.tick();
+  expect((await restarted.reports())[0].state).toBe("needs_attention"); expect(api.begin).not.toHaveBeenCalled(); expect(api.probe).not.toHaveBeenCalled(); expect(api.chunk).not.toHaveBeenCalled(); expect(api.list).not.toHaveBeenCalled(); await restarted.stop();
+});
+it("batches read-only reconciliation and retries only missing IDs while preserving the original states", async () => {
+  job.desired = "pause"; const other = { ...structuredClone(job), id: fixtureJob().id };
+  await store.write("entries.enc", seal([job, other].map((spec, index) => ({ spec, report: { id: spec.id, revision: 1, sequence: 1, state: "paused", videoId: "v" + index, offset: spec.asset.size, total: spec.asset.size, updatedAt: now }, playlistsDone: [], failures: 0 }))));
+  const { api, videos } = fixtureApi(); videos.set("v0", { id: "v0", status: { privacyStatus: "private" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.apply(reconcileSpec(other)); await runner.tick();
+  expect(api.list).toHaveBeenCalledExactlyOnceWith(["v0", "v1"]); expect((await runner.reports()).every(report => report.state === "paused")).toBe(true);
+  now += 60_001; videos.set("v1", { id: "v1", status: { privacyStatus: "private" } }); await runner.tick(); expect(api.list.mock.calls[1]).toEqual([["v1"]]); expect(api.begin).not.toHaveBeenCalled(); expect(api.finalize).not.toHaveBeenCalled(); await runner.stop();
+});
+it("persists a failed read-only request for retry across restart without the upload failure state machine", async () => {
+  job.desired = "pause"; await checkpoint("paused", { report: { id: job.id, revision: 1, sequence: 1, state: "paused", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now } });
+  const { api, videos } = fixtureApi(); api.list.mockRejectedValueOnce(new VideoApiError("VIDEO_NETWORK", "Synthetic read failure", true)); videos.set("v1", { id: "v1", status: { privacyStatus: "private" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.tick(); expect((await runner.reports())[0].state).toBe("paused"); expect((await runner.reports())[0].nextAttemptAt).toBeUndefined(); await runner.stop();
+  const restarted = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await restarted.tick(); expect(api.list).toHaveBeenCalledOnce(); now += 60_001; await restarted.tick();
+  expect(api.list).toHaveBeenCalledTimes(2); expect((await restarted.reports())[0]).toMatchObject({ state: "paused", observedPrivacy: "private" }); expect(unseal<[{ failures: number }]>((await store.read<string>("entries.enc"))!)[0].failures).toBe(0); expect(api.finalize).not.toHaveBeenCalled(); await restarted.stop();
+});
+it("discards a delayed read-only result after a newer cancel revision instead of confirming stale public data", async () => {
+  await checkpoint("needs_attention", { report: { id: job.id, revision: 1, sequence: 1, state: "needs_attention", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now } });
+  const { api } = fixtureApi(); let started!: () => void; let release!: () => void; const entered = new Promise<void>(resolve => { started = resolve; }); const gate = new Promise<void>(resolve => { release = resolve; });
+  api.list.mockImplementationOnce(async () => { started(); await gate; return [{ id: "v1", status: { privacyStatus: "public" } }]; });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); const pending = runner.tick(); await entered; await runner.apply({ ...job, revision: 3, desired: "cancel" }); release(); await pending;
+  expect((await runner.reports())[0]).toMatchObject({ revision: 3, state: "processing" }); expect((await runner.reports())[0].observedPrivacy).toBeUndefined(); expect(api.unschedule).not.toHaveBeenCalled(); await runner.stop();
+});
+it.each(["public", "failed"] as const)("read-only reconciliation records real %s facts without finalization or cancellation writes", async result => {
+  job.desired = "pause"; await checkpoint("paused", { report: { id: job.id, revision: 1, sequence: 1, state: "paused", videoId: "v1", offset: job.asset.size, total: job.asset.size, updatedAt: now } });
+  const { api, videos } = fixtureApi(); videos.set("v1", { id: "v1", status: { privacyStatus: result === "public" ? "public" : "private", uploadStatus: result === "failed" ? "rejected" : "processed" } });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(reconcileSpec()); await runner.tick(); await runner.tick(); expect((await runner.reports())[0]).toMatchObject({ state: result === "public" ? "published" : "failed" }); expect(api.finalize).not.toHaveBeenCalled(); expect(api.unschedule).not.toHaveBeenCalled(); expect(api.begin).not.toHaveBeenCalled(); await runner.stop();
+});
+it("waits for an existing active upload before reading its video ID and never starts a second session", async () => {
+  const { api } = fixtureApi(); const chunk = api.chunk.getMockImplementation()!; let started!: () => void; let release!: () => void; const entered = new Promise<void>(resolve => { started = resolve; }); const gate = new Promise<void>(resolve => { release = resolve; });
+  api.chunk.mockImplementationOnce(async (...args) => { started(); await gate; return chunk(...args); });
+  const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(job); await runner.tick(); await entered; await runner.apply(reconcileSpec()); await runner.tick(); expect(api.list).not.toHaveBeenCalled(); release(); await settle(runner); await runner.tick();
+  expect(api.begin).toHaveBeenCalledOnce(); expect(api.list).toHaveBeenCalledExactlyOnceWith(["video_one"]); expect(api.finalize).not.toHaveBeenCalled(); await runner.stop();
+});
 it("uploads with no OBS using regular bandwidth, persists private session, then finalizes without SMTP", async () => {
   const { api, videos } = fixtureApi(); const runner = new PublishingRunner(new Map(), { store, now: () => now, api: () => api }); await runner.apply(job); await runner.tick(); await settle(runner);
   expect(api.begin).toHaveBeenCalledOnce(); expect(api.chunk).toHaveBeenCalledTimes(2); expect(api.chunk.mock.calls[0][5]).toBe(20); expect((await runner.reports())[0]).toMatchObject({ state: "processing", videoId: "video_one", offset: job.asset.size }); expect(await readFile(path.join(store.dir, "entries.enc"), "utf8")).not.toContain("upload_id");

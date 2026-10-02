@@ -2,6 +2,7 @@
 import { expect, it } from "vitest";
 import type { PublishingPlan, PublishingReport, VideoJob } from "@/shared/publishing";
 import { nextPublication, publicationBucket, publicationCounts, publishingOverview } from "@/app/publishing/publishing-overview";
+import { jobStatus } from "@/app/publishing/display";
 import { fixtureJob } from "./publishing-fixtures";
 
 /** 合成普通视频任务，可独立设置公开方式和报告状态。 */
@@ -40,9 +41,74 @@ it("keeps cancellation waiting until its current revision is acknowledged", () =
   expect(publicationCounts([value])).toMatchObject({ pending: 0, cancelled: 1, cancelPending: 0 });
 });
 
+it("keeps pause pending until the current revision reports an actual paused state", () => {
+  const value = job("paused"); value.spec.desired = "pause"; value.spec.revision++;
+  expect(publicationCounts([value])).toMatchObject({ pending: 1, paused: 0, pausePending: 1 });
+  expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0]).toMatchObject({ state: "暂停待确认", tone: "warning" });
+  value.observed!.revision = value.spec.revision; value.observed!.state = "uploading";
+  expect(publicationCounts([value])).toMatchObject({ pending: 1, paused: 0, pausePending: 1 });
+  expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0].state).toBe("暂停待确认");
+  value.observed!.state = "paused";
+  expect(publicationCounts([value])).toMatchObject({ pending: 1, paused: 1, pausePending: 0 });
+  expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0].state).toBe("本地已暂停");
+  delete value.observed;
+  expect(publicationCounts([value])).toMatchObject({ pending: 1, paused: 0, pausePending: 1 });
+});
+
+it("prioritizes actual attention and pending cancellation over an unconfirmed pause", () => {
+  const pendingPause = job("ready"); pendingPause.spec.desired = "pause"; pendingPause.budgetWaiting = true;
+  const attention = job("needs_attention"); attention.spec.batchId = pendingPause.spec.batchId;
+  expect(publishingOverview([plan(pendingPause)], [pendingPause, attention], [], 0)[0].batches[0].state).toBe("需要处理");
+  const pendingCancel = job("ready"); pendingCancel.spec.desired = "cancel"; pendingCancel.spec.batchId = pendingPause.spec.batchId;
+  expect(publishingOverview([plan(pendingPause)], [pendingPause, pendingCancel], [], 0)[0].batches[0].state).toBe("取消待确认");
+});
+
 it("distinguishes non-public completion and blocked or failed work from waiting publication", () => {
   const privateJob = job("completed", "private"); const unlisted = job("completed", "unlisted"); const failed = job("failed"); const blocked = job("ready"); blocked.blockReason = "频道授权失效";
   expect(publicationCounts([privateJob, unlisted, failed, blocked, job("scheduled")])).toMatchObject({ total: 5, published: 0, completed: 2, pending: 1, attention: 2, scheduled: 1 });
+});
+
+it("keeps the exact legacy budget wait pending and labels it as automatic waiting instead of an error", () => {
+  const value = job("ready"); delete value.observed;
+  value.blockReason = "等待项目发布预算及太平洋时间配额日重置。";
+  expect(publicationBucket(value)).toBe("pending");
+  expect(publicationCounts([value])).toMatchObject({ pending: 1, attention: 0, budgetWaiting: 1 });
+  expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0]).toMatchObject({ state: "等待预算/配额", tone: "warning" });
+  expect(jobStatus(value)).toBe("等待预算");
+  value.blockReason = "等待项目发布预算及太平洋时间配额日重置。请检查账号";
+  expect(publicationBucket(value)).toBe("attention");
+  expect(publicationCounts([value])).toMatchObject({ attention: 1, budgetWaiting: 0 });
+});
+
+it("uses the structured budget marker while keeping actual failures and remote terminal results authoritative", () => {
+  const value = job("ready"); value.budgetWaiting = true; value.blockReason = "项目预算暂不可用";
+  expect(publicationBucket(value)).toBe("pending"); expect(jobStatus(value)).toBe("等待预算");
+  for (const state of ["failed", "needs_attention"] as const) {
+    value.observed!.state = state;
+    expect(publicationBucket(value)).toBe("attention");
+    expect(publicationCounts([value])).toMatchObject({ attention: 1, budgetWaiting: 0 });
+    expect(jobStatus(value)).toBe(state === "failed" ? "失败" : "需要处理");
+    expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0].state).toBe("需要处理");
+  }
+  for (const state of ["published", "cancelled"] as const) {
+    value.observed!.state = state;
+    expect(publicationBucket(value)).toBe(state);
+    expect(publicationCounts([value]).budgetWaiting).toBe(0);
+    expect(jobStatus(value)).toBe(state === "published" ? "已公开" : "已取消");
+  }
+  value.spec.profile.privacy = "private"; value.observed!.state = "completed";
+  expect(publicationBucket(value)).toBe("completed"); expect(jobStatus(value)).toBe("已完成");
+});
+
+it("keeps pending pause and cancellation ahead of the budget-wait badge and batch status", () => {
+  const value = job("ready"); value.budgetWaiting = true; value.spec.revision++;
+  for (const [desired, status, batchStatus] of [["pause", "暂停待设备确认", "暂停待确认"], ["cancel", "取消待设备确认", "取消待确认"]] as const) {
+    value.spec.desired = desired;
+    expect(jobStatus(value)).toBe(status);
+    expect(publishingOverview([plan(value)], [value], [], 0)[0].batches[0].state).toBe(batchStatus);
+    value.observed!.revision = value.spec.revision;
+    expect(jobStatus(value)).toBe(status);
+  }
 });
 
 it("excludes unpublished plan items while keeping missing admitted jobs and pauses in the remaining count", () => {

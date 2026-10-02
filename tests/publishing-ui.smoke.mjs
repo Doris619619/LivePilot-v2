@@ -102,7 +102,10 @@ async function mock(route) {
         const next = structuredClone(preview); delete next.schedulePreviewId; delete next.scheduleLockedPackageIds; next.revision = plan.revision + 1; Object.assign(plan, next); latestPlan = plan; result = plan;
       }
       if (body.action === "job") {
-        const job = view.jobs.find(value => value.spec.id === body.id); job.spec.desired = body.operation === "pause" ? "pause" : body.operation === "resume" ? "run" : body.operation === "cancel" ? "cancel" : "run"; job.spec.revision++;
+        const job = view.jobs.find(value => value.spec.id === body.id);
+        if (body.operation === "reconcile" && !job.hadUpload && !job.observed?.videoId) { await route.fulfill({ status: 409, json: { error: "视频尚未上传，暂无远端状态可核对。" } }); return; }
+        if (body.operation !== "reconcile") job.spec.desired = body.operation === "pause" ? "pause" : body.operation === "cancel" ? "cancel" : "run"; job.spec.revision++;
+        if (body.operation === "reconcile") job.spec.reconcileRevision = job.spec.revision; else delete job.spec.reconcileRevision;
         if (body.operation === "resume") job.observed.revision = job.spec.revision; result = job;
       }
       if (body.action === "plan-archive") { archiveRequests.push(body.planId); const plan = view.plans.find(value => value.id === body.planId); plan.archivePending = true; result = { state: "pending" }; }
@@ -119,6 +122,12 @@ async function expectStep(page, name) {
   assert.equal(await page.locator('.publishing-steps button[aria-current="step"]').count(), 1);
   assert.equal(await stepButton(page, name).getAttribute("aria-current"), "step");
   assert.equal(await page.locator("#publishing-step-content").count(), 1);
+}
+/** 等待刷新后的精确指标，避免读取异步请求完成前的旧概览或任务详情文字。 */
+async function executionValue(page, label, expected) {
+  const value = page.locator(".publishing-execution-summary > div").filter({ has: page.locator("dt").getByText(label, { exact: true }) }).locator("dd");
+  await value.filter({ hasText: new RegExp("^" + expected + "$") }).waitFor();
+  return Number(await value.innerText());
 }
 /** 截图前清除焦点，检查无横向溢出，以及小屏步骤导航可触摸且关联内容。 */
 async function capture(page, name) {
@@ -159,6 +168,8 @@ async function channelVisual(page, channelId) {
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.on("pageerror", error => errors.push(error.message)); await page.route("**/api/**", mock);
   await page.goto(origin + "/publishing"); await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
+  const folderGuide = page.locator(".publishing-folder-guide"); assert.equal(await folderGuide.getAttribute("open"), null); await folderGuide.getByText("素材怎么放", { exact: true }).click();
+  const folderExample = await folderGuide.locator("pre").innerText(); assert.match(folderExample, /001\/\n\s+video\.mp4/); assert.equal(folderExample.includes("files"), false); await folderGuide.getByText("素材怎么放", { exact: true }).click();
   await expectStep(page, "准备素材"); assert.equal(await stepButton(page, "设置时间").isDisabled(), true); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne); assert.equal(await page.getByLabel("发布账号", { exact: true }).locator("option").count(), 3);
   assert.equal(await page.locator('nav[aria-label="发布功能"] button').count(), 2); assert.equal(await page.getByRole("button", { name: "发布策略", exact: true }).count(), 0);
@@ -232,7 +243,9 @@ try {
   firstJobs[4].spec.desired = "cancel"; firstJobs[4].observed.state = "cancelled"; firstJobs[5].observed.state = "needs_attention"; firstJobs[6].observed.state = "failed";
   for (const job of [firstJobs[1], firstJobs[2]]) { job.prepared = { version: "a".repeat(64), size: 32000000, sha256: "9".repeat(64) }; job.observed.prepared = structuredClone(job.prepared); }
   const immutableUploads = uploadFacts(firstJobs); const fixedJobs = [firstJobs[0], ...firstJobs.slice(3, 7)].map(job => ({ id: job.spec.id, time: job.spec.originalPublishAt }));
-  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await stepButton(page, "确认计划").click(); await expectStep(page, "确认计划");
+  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
+  assert.equal(await executionValue(page, "已公开", 1), 1); assert.equal(await executionValue(page, "已排期", 10), 10); assert.equal(await executionValue(page, "处理中", 2), 2);
+  await stepButton(page, "确认计划").click(); await expectStep(page, "确认计划");
   assert.equal(await page.getByRole("button", { name: "确认上传并按计划发布", exact: true }).count(), 0); assert.equal(await page.getByRole("checkbox", { name: /^确认频道、内容和时间/ }).count(), 0);
   await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行"); await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材");
   for (const checkbox of await page.getByRole("checkbox", { name: /暂不发布/ }).all()) assert.equal(await checkbox.isDisabled(), true);
@@ -254,7 +267,11 @@ try {
   assert.equal(firstJobs.some(job => job.spec.scheduleSource === "auto" && job.spec.originalPublishAt !== beforeReschedule.items.find(item => item.packageId === job.spec.contentPackage.id).publishAt), true); assert.equal(actions.filter(action => action === "plan-confirm").length, 1);
   console.log("Publishing smoke: confirmed reschedule preserved jobs, upload identity and fixed times.");
   assert.equal(await page.locator(".publishing-execution-details").getAttribute("open"), null);
-  await page.getByText("任务与操作", { exact: true }).click(); await page.getByRole("button", { name: "暂停", exact: true }).first().click(); await page.getByText("暂停待设备确认", { exact: true }).waitFor();
+  await page.getByText("任务与操作", { exact: true }).click(); await page.getByRole("button", { name: "暂停处理", exact: true }).first().click(); await page.getByText("暂停待设备确认", { exact: true }).waitFor();
+  assert.equal(await page.locator(".publishing-job").first().getByRole("button", { name: "核对状态", exact: true }).count(), 0);
+  const knownPauseRevision = firstJobs[2].spec.revision;
+  await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/publishing" && response.request().method() === "POST" && response.request().postDataJSON().operation === "reconcile"), page.locator(".publishing-job").nth(2).getByRole("button", { name: "核对状态", exact: true }).click()]);
+  assert.equal(firstJobs[2].spec.desired, "pause"); assert.equal(firstJobs[2].spec.revision, knownPauseRevision + 1); assert.equal(firstJobs[2].spec.reconcileRevision, firstJobs[2].spec.revision);
   await page.getByRole("button", { name: "继续", exact: true }).first().click(); await page.getByRole("button", { name: "取消任务", exact: true }).first().click(); await page.getByRole("button", { name: "确认取消", exact: true }).click(); await page.getByText("取消待设备确认", { exact: true }).waitFor();
   await page.getByText("任务与操作", { exact: true }).click();
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "execution-" + width + ".png"); }
@@ -322,9 +339,55 @@ try {
   // 授权结果回到原设备/账号，不能被另一设备的更新草稿或默认设备覆盖。
   const newerDraft = { ...structuredClone(latestPlan), id: crypto.randomUUID(), profile: structuredClone(thirdProfile), createdAt: Date.now() + 1000 }; delete newerDraft.confirmedAt; delete newerDraft.archivedAt; delete newerDraft.archivePending; view.plans.push(newerDraft);
   const callbackPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); callbackPage.on("pageerror", error => errors.push(error.message)); await callbackPage.route("**/api/**", mock);
-  await callbackPage.goto(origin + "/publishing?oauthResult=55555555-5555-4555-8555-555555555555"); await callbackPage.getByText("发布账号已连接", { exact: true }).waitFor(); await expectStep(callbackPage, "准备素材");
-  assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]); await callbackPage.close();
+  await callbackPage.goto(origin + "/publishing?oauthResult=55555555-5555-4555-8555-555555555555&source=oauth-smoke#accounts"); await callbackPage.getByText("发布账号已连接", { exact: true }).waitFor(); await expectStep(callbackPage, "准备素材");
+  assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]);
+  const consumedCallback = new URL(callbackPage.url()); assert.equal(consumedCallback.searchParams.has("oauthResult"), false); assert.equal(consumedCallback.searchParams.get("source"), "oauth-smoke"); assert.equal(consumedCallback.hash, "#accounts");
+  await callbackPage.getByLabel("设备", { exact: true }).selectOption("pc:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree);
+  await callbackPage.reload(); await callbackPage.getByLabel("发布账号", { exact: true }).waitFor(); assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]); await callbackPage.close();
+  // 已确认批次刷新仍回到客户当前账号；另一账号的较新草稿不能抢走控制台选择。
+  const thirdPlan = { ...structuredClone(secondPlan), id: crypto.randomUUID(), profile: structuredClone(thirdProfile), batch: { ...structuredClone(secondPlan.batch), name: "2030-10-Channel-03" } };
+  const thirdJob = structuredClone(secondJob); thirdJob.spec.id = crypto.randomUUID(); thirdJob.spec.batchId = thirdPlan.id; thirdJob.spec.profile = structuredClone(thirdProfile); thirdJob.spec.contentPackage.batchName = thirdPlan.batch.name; thirdJob.observed.id = thirdJob.spec.id;
+  view.plans.push(thirdPlan); view.jobs.push(thirdJob);
+  const restorationPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); restorationPage.on("pageerror", error => errors.push(error.message)); await restorationPage.route("**/api/**", mock);
+  await restorationPage.goto(origin + "/publishing"); await restorationPage.getByLabel("设备", { exact: true }).waitFor();
+  await restorationPage.evaluate(({ second, third, secondAccount, thirdAccount }) => {
+    for (const [plan, account] of [[second, secondAccount], [third, thirdAccount]]) localStorage.setItem("livenest-publishing-draft:alice:" + plan.profile.agentId + ":" + plan.profile.instanceId + ":" + account, JSON.stringify({ planId: plan.id, batchId: plan.batch.id, profileId: plan.profile.id, rule: plan.rule, excluded: plan.items.filter(item => item.excluded).map(item => item.packageId), step: 4 }));
+  }, { second: secondPlan, third: thirdPlan, secondAccount: accountTwo, thirdAccount: accountThree });
+  await restorationPage.getByLabel("设备", { exact: true }).selectOption("pc_two:main"); await expectStep(restorationPage, "自动执行");
+  await restorationPage.reload(); await expectStep(restorationPage, "自动执行"); assert.equal(await restorationPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await restorationPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo);
+  await restorationPage.getByLabel("设备", { exact: true }).selectOption("pc:main"); await expectStep(restorationPage, "自动执行"); assert.equal(await restorationPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree);
+  view.plans.push({ ...structuredClone(newerDraft), id: crypto.randomUUID(), profile: structuredClone(secondProfile), createdAt: Date.now() + 2000 });
+  await restorationPage.reload(); await expectStep(restorationPage, "自动执行"); assert.equal(await restorationPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree);
+  await restorationPage.getByRole("button", { name: "发布下一批", exact: true }).click(); await expectStep(restorationPage, "准备素材"); await restorationPage.reload(); await expectStep(restorationPage, "准备素材"); assert.equal(await stepButton(restorationPage, "确认计划").isDisabled(), true);
+  view.accounts.find(account => account.id === accountThree).status = "cleanup_pending";
+  await restorationPage.reload(); await expectStep(restorationPage, "准备素材"); assert.equal(await restorationPage.getByLabel("设备", { exact: true }).inputValue(), "pc:main"); assert.equal(await restorationPage.getByLabel("发布账号", { exact: true }).inputValue(), "");
+  view.accounts.find(account => account.id === accountThree).status = "connected"; await restorationPage.close();
+  console.log("Publishing smoke: second-device and same-device account refresh preserved execution; cleanup cannot restore authorization.");
+  // 从已有A预览选择B且尚未生成新预览时，刷新必须保留B的时间与排除项并重新检查素材。
+  const originalDraft = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(thirdProfile), batch: structuredClone(batches[0]), rule: { timezone: "UTC", startDate: "2030-10-01", weeklySlots: [{ weekday: 1, time: "18:00" }, { weekday: 3, time: "18:00" }], preuploadDays: 28 }, items: batches[0].packages.map(pkg => ({ packageId: pkg.id, scheduleSource: "auto", excluded: pkg.validationState === "invalid" })), copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() + 3000 }); view.plans.push(originalDraft);
+  const draftPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); draftPage.on("pageerror", error => errors.push(error.message)); await draftPage.route("**/api/**", mock); await draftPage.goto(origin + "/publishing"); await expectStep(draftPage, "确认计划");
+  await stepButton(draftPage, "准备素材").click(); await draftPage.getByRole("button", { name: "检测素材", exact: true }).click(); await draftPage.getByRole("radio", { name: /2030-10-Batch-02/ }).check(); await draftPage.getByRole("checkbox", { name: /暂不发布.*005/ }).check(); await draftPage.getByRole("button", { name: "下一步", exact: true }).click(); await draftPage.getByLabel("开始日期", { exact: true }).fill("2031-02-01"); await draftPage.getByLabel("周一发布时间", { exact: true }).fill("06:45");
+  await draftPage.reload(); await expectStep(draftPage, "准备素材"); assert.equal(await stepButton(draftPage, "确认计划").isDisabled(), true); await draftPage.getByRole("button", { name: "检测素材", exact: true }).click(); assert.equal(await draftPage.getByRole("radio", { name: /2030-10-Batch-02/ }).isChecked(), true); assert.equal(await draftPage.getByRole("checkbox", { name: /暂不发布.*005/ }).isChecked(), true);
+  await draftPage.getByRole("button", { name: "下一步", exact: true }).click(); await expectStep(draftPage, "设置时间"); assert.equal(await draftPage.getByLabel("开始日期", { exact: true }).inputValue(), "2031-02-01"); assert.equal(await draftPage.getByLabel("周一发布时间", { exact: true }).inputValue(), "06:45"); await draftPage.close();
+  console.log("Publishing smoke: selecting another batch before preview preserves new draft, exclusions and schedule after reload.");
+  // 后台读取成功保留业务错误，客户明确刷新成功才清除旧横幅，不能自动重放失败POST。
+  const errorPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); errorPage.on("pageerror", error => errors.push(error.message)); await errorPage.clock.install();
+  let failScan = true; let publishingReads = 0;
+  await errorPage.route("**/api/**", async route => {
+    const request = route.request(); const url = new URL(request.url());
+    if (url.pathname === "/api/publishing" && request.method() === "GET") publishingReads++;
+    if (url.pathname === "/api/publishing" && request.method() === "POST" && request.postDataJSON().action === "packages" && failScan) { failScan = false; await route.fulfill({ status: 503, json: { error: "素材检测暂时不可用，请重试。" } }); return; }
+    await mock(route);
+  });
+  await errorPage.goto(origin + "/publishing"); await errorPage.getByLabel("设备", { exact: true }).waitFor();
+  if (!await stepButton(errorPage, "准备素材").isDisabled()) await stepButton(errorPage, "准备素材").click();
+  await errorPage.getByRole("button", { name: "检测素材", exact: true }).click(); await errorPage.getByText("素材检测暂时不可用，请重试。", { exact: true }).waitFor();
+  const beforePolling = publishingReads; const poll = errorPage.waitForResponse(response => new URL(response.url()).pathname === "/api/publishing" && response.request().method() === "GET"); await errorPage.clock.fastForward(10_000); await poll;
+  assert.ok(publishingReads > beforePolling); assert.equal(await errorPage.getByText("素材检测暂时不可用，请重试。", { exact: true }).count(), 1);
+  const scanAttempts = actions.filter(action => action === "packages").length; await errorPage.getByRole("button", { name: "刷新状态", exact: true }).click(); await errorPage.locator(".publishing-error").waitFor({ state: "hidden" }); assert.equal(actions.filter(action => action === "packages").length, scanAttempts);
+  failScan = true; await errorPage.getByRole("button", { name: "检测素材", exact: true }).click(); await errorPage.getByText("素材检测暂时不可用，请重试。", { exact: true }).waitFor(); await errorPage.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await errorPage.locator(".publishing-error").waitFor({ state: "hidden" }); await errorPage.close();
+  assert.deepEqual(legacyRequests, []); console.log("Publishing smoke: background polling preserves errors; manual retry and refresh clear recovered errors.");
   await page.goto(origin + "/privacy"); await page.getByRole("heading", { name: "LiveNest 隐私政策" }).waitFor(); await page.goto(origin + "/terms"); await page.getByRole("heading", { name: "LiveNest 服务条款" }).waitFor();
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "confirmed-step-navigation", "confirmed-materials-readonly", "confirmed-rules-draft-reload", "confirmed-return-execution-without-save", "confirmed-schedule-preview-confirm", "reschedule-same-jobs-upload-facts", "reschedule-manual-terminal-fixed", "reschedule-paused-intent-preserved", "history-100-record-pagination", "history-full-search", "history-result-filter", "history-single-detail", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-visible-channel-boundaries", "overview-distinct-channel-colors", "overview-channel-color-filter-stability", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "oauth-result-consumed-once", "account-selection-refresh", "new-batch-before-preview-refresh", "execution-exclusive-counts", "pause-reconcile-preserves-intent", "polling-preserves-operation-error", "manual-refresh-clears-error", "folder-guide-folded-direct-files", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "confirmed-step-navigation", "confirmed-materials-readonly", "confirmed-rules-draft-reload", "confirmed-return-execution-without-save", "confirmed-schedule-preview-confirm", "reschedule-same-jobs-upload-facts", "reschedule-manual-terminal-fixed", "reschedule-paused-intent-preserved", "history-100-record-pagination", "history-full-search", "history-result-filter", "history-single-detail", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-visible-channel-boundaries", "overview-distinct-channel-colors", "overview-channel-color-filter-stability", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
 } finally { await browser.close(); }

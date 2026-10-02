@@ -14,6 +14,7 @@ import PublishingWizard from "./publishing-wizard";
 import MyPublishing from "./my-publishing";
 import { visibilityLabel } from "./display";
 import ChannelBinding from "./channel-binding";
+import { publishingTargetStorageKey, restorePublishingTarget } from "./publishing-target-selection";
 import "./publishing.css";
 type View = { profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
 type PackageIndex = { root: string; batches: PackageBatch[]; thumbnails?: string[]; channelId?: string; channel?: string };
@@ -35,8 +36,8 @@ export default function PublishingConsole() {
   const plans = view?.plans?.filter(plan => plan.profile.agentId + ":" + plan.profile.instanceId === chosen && !!account && plan.profile.accountId === account.id) || [];
   const cleanups = view?.cleanups.filter(cleanup => !cleanup.accountId && cleanup.agentId + ":" + cleanup.instanceId === chosen) || [];
   const accepted = view?.consent?.version === PRIVACY_VERSION;
-  /** 页面只读取Cloud缓存，不逐条调用YouTube。 */
-  const refresh = useCallback(async () => { try { const next = await api<View>("/api/publishing"); setView(next); setReadAt(Date.now()); return next; } catch (e) { setError((e as Error).message); } }, []);
+  /** 手动刷新成功可关闭旧错误；后台轮询不能静默抹去上传、授权或表单错误。 */
+  const refresh = useCallback(async (clearError = false) => { try { const next = await api<View>("/api/publishing"); setView(next); setReadAt(Date.now()); if (clearError) setError(""); return next; } catch (e) { setError((e as Error).message); } }, []);
   useEffect(() => {
     let cancelled = false;
     /** 账号与设备清单用于隔离本地草稿，不读取Token或本机任意路径。 */
@@ -50,15 +51,19 @@ export default function PublishingConsole() {
         if (reference) {
           try { authorization = await api<OAuthResult>("/api/youtube/result?id=" + encodeURIComponent(reference)); } catch (e) { if (!cancelled) setError((e as Error).message); }
           if (cancelled) return;
+          // 成功读取后只消费本次授权结果；保留其他 URL 状态，后续刷新尊重客户的新账号选择。
+          if (authorization) { const destination = new URL(window.location.href); destination.searchParams.delete("oauthResult"); window.history.replaceState(window.history.state, "", destination.pathname + destination.search + destination.hash); }
           if (authorization?.problem) setError(authorization.problem.message);
           else if (authorization) setNotice(authorization.status === "connected" ? "发布账号已连接" : "本次授权已取消");
         }
-        const latest = [...(next.plans || [])].filter(plan => !plan.confirmedAt && !plan.archivedAt).sort((a, b) => b.createdAt - a.createdAt).find(plan => values.some(value => value.agentId === plan.profile.agentId && value.instanceId === plan.profile.instanceId) && next.accounts?.some(account => account.id === plan.profile.accountId && account.status === "connected"));
-        const returnedAccount = next.accounts?.find(account => account.id === authorization?.accountId && account.status !== "deleted" && values.some(value => value.agentId === account.agentId && value.instanceId === account.instanceId));
-        const initialAccount = returnedAccount || next.accounts?.find(account => account.id === latest?.profile.accountId) || next.accounts?.find(account => account.status === "connected" && values.some(value => value.agentId === account.agentId && value.instanceId === account.instanceId));
+        let saved: unknown;
+        try { saved = JSON.parse(localStorage.getItem(publishingTargetStorageKey(session.user.username)) || "null"); } catch { /* 缓存损坏或不可用时，以最新授权清单和Cloud草稿恢复。 */ }
+        const selection = restorePublishingTarget(values, next.accounts || [], next.plans || [], saved, authorization?.accountId);
         setView(next); setReadAt(Date.now()); setUsername(session.user.username); setTargets(values);
-        setChosen(initialAccount ? initialAccount.agentId + ":" + initialAccount.instanceId : values[0] ? values[0].agentId + ":" + values[0].instanceId : "");
-        setAccountId(initialAccount?.id || "");
+        setChosen(selection ? selection.agentId + ":" + selection.instanceId : ""); setAccountId(selection?.accountId || "");
+        if (selection && next.consent?.version === PRIVACY_VERSION) {
+          try { localStorage.setItem(publishingTargetStorageKey(session.user.username), JSON.stringify(selection)); } catch { /* 禁止本地存储时仍可手动选择账号。 */ }
+        }
       } catch (e) { if (!cancelled) setError((e as Error).message); }
     }
     void load(); const timer = setInterval(() => void refresh(), 10_000); return () => { cancelled = true; clearInterval(timer); };
@@ -68,10 +73,16 @@ export default function PublishingConsole() {
     if (busy) return; setBusy(true); setError(""); setNotice("");
     try { return await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
+  /** 选择即时保存，OAuth 跳转或页面刷新前也能保留目标；真实权限仍由下一次清单验证。 */
+  function rememberSelection(value: string, selectedAccount: string) {
+    const selectedTarget = targets.find(target => target.agentId + ":" + target.instanceId === value);
+    if (!username || !selectedTarget) return;
+    try { localStorage.setItem(publishingTargetStorageKey(username), JSON.stringify({ agentId: selectedTarget.agentId, instanceId: selectedTarget.instanceId, accountId: selectedAccount })); } catch { /* 本地存储不可用不阻止本次发布。 */ }
+  }
   /** 切换设备清除内存扫描结果，新向导按账号和目标恢复对应草稿。 */
-  function choose(value: string) { setChosen(value); setAccountId(view?.accounts?.find(account => account.agentId + ":" + account.instanceId === value && account.status === "connected")?.id || ""); setIndex(undefined); setProfileId(""); setEditing(undefined); setNotice(""); }
+  function choose(value: string) { const nextAccount = view?.accounts?.find(account => account.agentId + ":" + account.instanceId === value && account.status === "connected")?.id || ""; rememberSelection(value, nextAccount); setChosen(value); setAccountId(nextAccount); setIndex(undefined); setProfileId(""); setEditing(undefined); setNotice(""); }
   /** 发布账号固定其处理设备；切换账号只恢复它自己的草稿，不继承直播频道。 */
-  function chooseAccount(id: string) { const next = view?.accounts?.find(value => value.id === id); setAccountId(id); if (next && chosen !== next.agentId + ":" + next.instanceId) { setChosen(next.agentId + ":" + next.instanceId); setIndex(undefined); } setProfileId(""); setEditing(undefined); setNotice(""); }
+  function chooseAccount(id: string) { const next = view?.accounts?.find(value => value.id === id); const destination = next ? next.agentId + ":" + next.instanceId : chosen; rememberSelection(destination, id); setAccountId(id); if (destination !== chosen) { setChosen(destination); setIndex(undefined); } setProfileId(""); setEditing(undefined); setNotice(""); }
   /** 本机目录扫描由选定Agent执行，网页只收到批次索引。 */
   async function scan() {
     await perform(async () => {
@@ -93,7 +104,7 @@ export default function PublishingConsole() {
   }
   /** 一个新账号有独立授权目录；连接失败保留未绑定账号，重试不重新创建。 */
   async function addAccount() {
-    await perform(async () => { if (!host) return; const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1) }); setView(old => old && { ...old, accounts: [...(old.accounts || []), created] }); setAccountId(created.id); setProfileId(""); const result = await post<{ url: string }>({ action: "account-connect", accountId: created.id }); window.location.assign(result.url); });
+    await perform(async () => { if (!host) return; const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1) }); setView(old => old && { ...old, accounts: [...(old.accounts || []), created] }); setAccountId(created.id); rememberSelection(chosen, created.id); setProfileId(""); const result = await post<{ url: string }>({ action: "account-connect", accountId: created.id }); window.location.assign(result.url); });
   }
   /** 删除范围只包含这个发布账号；离线时保留账号清理状态而不提前声称完成。 */
   async function removeAccount(id: string) {
@@ -119,8 +130,8 @@ export default function PublishingConsole() {
     <nav aria-label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</nav>
     <div className="publishing-settings-navigation"><button className={"sidebar-link " + (tab === "设置" ? "is-active" : "")} aria-current={tab === "设置" ? "page" : undefined} onClick={() => navigate("设置")}>设置</button></div>
     {view?.administrator && <div className="publishing-admin-navigation"><div className="sidebar-heading">管理员</div><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></div>}
-  </aside><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={() => void refresh()} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
-    {error && <div className="publishing-error" role="alert"><span>{error}</span><button onClick={() => void refresh()}>重试</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
+  </aside><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={() => void refresh(true)} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
+    {error && <div className="publishing-error" role="alert"><span>{error}</span><button onClick={() => void refresh(true)}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
     {!view || !username ? <p className="publishing-empty" role="status">正在读取…</p> : <>
       {!accepted && <section className="publishing-warning publishing-onboarding"><p>使用前请同意 <Link href="/privacy">隐私政策</Link> 和 <Link href="/terms">服务条款</Link>。</p><button disabled={busy} onClick={() => void perform(async () => { await post({ action: "consent", version: PRIVACY_VERSION }); await refresh(); })}>同意并继续</button></section>}
       {!editing && tab !== "我的发布" && <div className="publishing-target"><label>设备<select aria-label="设备" disabled={busy} value={chosen} onChange={e => choose(e.target.value)}><option value="">请选择设备</option>{targets.map(value => <option key={value.agentId + ":" + value.instanceId} value={value.agentId + ":" + value.instanceId}>{value.name}</option>)}</select></label>{target && <><label>发布账号<select aria-label="发布账号" disabled={busy} value={account?.id || ""} onChange={e => chooseAccount(e.target.value)}><option value="">请选择发布账号</option>{accounts.map(value => <option key={value.id} value={value.id}>{value.channel || value.name}{value.status === "cleanup_pending" ? " · 清理中" : value.status !== "connected" ? " · 未连接" : ""}</option>)}</select></label><button disabled={busy || !accepted} onClick={() => void addAccount()}>添加账号</button>{tab === "发布视频" && account && <button className="btn-ghost" disabled={busy} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>管理账号</button>}</>}</div>}
