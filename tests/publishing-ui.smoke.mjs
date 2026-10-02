@@ -1,4 +1,4 @@
-/** 四步发布浏览器验收：覆盖可点击步骤、草稿保留与100个模拟发布包，不连接真实Agent、OBS或YouTube。 */
+/** 四步发布浏览器验收：覆盖草稿、100个模拟发布包和频道分区辨识，不连接真实Agent、OBS或YouTube。 */
 import { chromium } from "playwright";
 import { Temporal } from "@js-temporal/polyfill";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -137,6 +137,25 @@ async function capture(page, name) {
     }
   }
 }
+/** 读取浏览器实际呈现的频道标识，并检查分区、标题底色和头像可见；不复刻配色选择算法。 */
+async function channelVisual(page, channelId) {
+  const section = page.locator('[data-channel-id="' + channelId + '"]'); await section.waitFor({ state: "visible" });
+  assert.equal(await section.locator("header").isVisible(), true); assert.equal(await section.locator('header [aria-hidden="true"]').isVisible(), true);
+  const visual = await section.evaluate(element => {
+    const header = element.querySelector("header"); const avatar = header.querySelector('[aria-hidden="true"]');
+    const sectionStyle = getComputedStyle(element); const headerStyle = getComputedStyle(header); const avatarStyle = getComputedStyle(avatar); const avatarBounds = avatar.getBoundingClientRect();
+    return { accent: element.dataset.channelAccent, headerBackground: headerStyle.backgroundColor, markerColor: headerStyle.borderLeftColor, avatarBackground: avatarStyle.backgroundColor,
+      title: header.querySelector("h2").textContent.trim(), avatar: avatar.textContent.trim(), borderWidth: parseFloat(sectionStyle.borderTopWidth), borderStyle: sectionStyle.borderTopStyle,
+      markerWidth: parseFloat(headerStyle.borderLeftWidth), markerStyle: headerStyle.borderLeftStyle, radius: parseFloat(sectionStyle.borderTopLeftRadius), avatarWidth: avatarBounds.width, avatarHeight: avatarBounds.height };
+  });
+  assert.ok(visual.title && visual.avatar, "Channel name and avatar missing for " + channelId); assert.ok(visual.accent, "Channel accent missing for " + channelId);
+  assert.ok(visual.borderWidth >= 1 && visual.borderStyle === "solid" && visual.radius > 0, "Channel boundary missing for " + channelId);
+  assert.ok(visual.markerWidth >= 3 && visual.markerStyle === "solid", "Channel identity marker missing for " + channelId);
+  assert.ok(visual.avatarWidth >= 40 && visual.avatarHeight >= 40, "Channel avatar too small for " + channelId);
+  assert.ok(!["rgba(0, 0, 0, 0)", "transparent", "rgb(255, 255, 255)"].includes(visual.headerBackground), "Channel header has no visible tint for " + channelId);
+  assert.equal(visual.markerColor, visual.avatarBackground);
+  return { accent: visual.accent, headerBackground: visual.headerBackground, markerColor: visual.markerColor, avatarBackground: visual.avatarBackground };
+}
 try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.on("pageerror", error => errors.push(error.message)); await page.route("**/api/**", mock);
   await page.goto(origin + "/publishing"); await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
@@ -265,10 +284,17 @@ try {
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.getByRole("button", { name: "我的发布", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "总览", exact: true }).getAttribute("aria-pressed"), "true");
   const secondBatch = page.locator('[aria-label="批次 2030-10-Channel-02"]'); await secondBatch.waitFor(); await secondBatch.getByText("已公开 0", { exact: true }).waitFor(); await secondBatch.getByText("待发布 1", { exact: true }).waitFor(); await secondBatch.getByText(/^待核对 /).waitFor();
-  for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "overview-" + width + ".png"); }
+  const firstChannelVisual = await channelVisual(page, "channel_one"); const secondChannelVisual = await channelVisual(page, "channel_two");
+  assert.notEqual(firstChannelVisual.accent, secondChannelVisual.accent); assert.notEqual(firstChannelVisual.headerBackground, secondChannelVisual.headerBackground); assert.notEqual(firstChannelVisual.avatarBackground, secondChannelVisual.avatarBackground);
+  for (const width of [320, 390, 1024, 1440]) {
+    await page.setViewportSize({ width, height: 900 }); assert.deepEqual(await channelVisual(page, "channel_one"), firstChannelVisual); assert.deepEqual(await channelVisual(page, "channel_two"), secondChannelVisual); await capture(page, "overview-" + width + ".png");
+  }
   await page.getByLabel("发布频道", { exact: true }).selectOption("channel_two"); assert.equal(await page.locator('[aria-label="批次 2030-10-Batch-01"]').count(), 0); await secondBatch.waitFor();
+  assert.equal(await page.locator('[data-channel-id="channel_one"]').count(), 0); assert.deepEqual(await channelVisual(page, "channel_two"), secondChannelVisual);
   await secondBatch.getByRole("button", { name: "查看详情", exact: true }).click(); await page.getByRole("button", { name: "返回总览", exact: true }).click(); await secondBatch.waitFor();
-  await page.getByLabel("发布频道", { exact: true }).selectOption(""); await page.getByRole("button", { name: "日历", exact: true }).click();
+  assert.deepEqual(await channelVisual(page, "channel_two"), secondChannelVisual);
+  await page.getByLabel("发布频道", { exact: true }).selectOption(""); assert.deepEqual(await channelVisual(page, "channel_one"), firstChannelVisual); assert.deepEqual(await channelVisual(page, "channel_two"), secondChannelVisual);
+  await page.getByRole("button", { name: "日历", exact: true }).click();
   await page.getByRole("button", { name: "下个月", exact: true }).click(); await page.getByRole("button", { name: "上个月", exact: true }).click(); await page.getByRole("button", { name: "今天", exact: true }).click();
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "calendar-" + width + ".png"); }
   await page.getByRole("button", { name: "历史", exact: true }).click(); await page.getByLabel("搜索发布历史", { exact: true }).fill("2030-10-Batch-02"); await page.getByLabel("发布结果", { exact: true }).selectOption("published"); await page.getByText("100 条记录", { exact: true }).waitFor();
@@ -300,5 +326,5 @@ try {
   assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]); await callbackPage.close();
   await page.goto(origin + "/privacy"); await page.getByRole("heading", { name: "LiveNest 隐私政策" }).waitFor(); await page.goto(origin + "/terms"); await page.getByRole("heading", { name: "LiveNest 服务条款" }).waitFor();
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "confirmed-step-navigation", "confirmed-materials-readonly", "confirmed-rules-draft-reload", "confirmed-return-execution-without-save", "confirmed-schedule-preview-confirm", "reschedule-same-jobs-upload-facts", "reschedule-manual-terminal-fixed", "reschedule-paused-intent-preserved", "history-100-record-pagination", "history-full-search", "history-result-filter", "history-single-detail", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "confirmed-step-navigation", "confirmed-materials-readonly", "confirmed-rules-draft-reload", "confirmed-return-execution-without-save", "confirmed-schedule-preview-confirm", "reschedule-same-jobs-upload-facts", "reschedule-manual-terminal-fixed", "reschedule-paused-intent-preserved", "history-100-record-pagination", "history-full-search", "history-result-filter", "history-single-detail", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-visible-channel-boundaries", "overview-distinct-channel-colors", "overview-channel-color-filter-stability", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");
 } finally { await browser.close(); }

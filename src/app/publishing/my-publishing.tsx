@@ -1,4 +1,4 @@
-/** 我的发布以频道和已确认批次为导览，公开进度来自真实报告，日历与历史共享原任务。 */
+/** 我的发布以带稳定频道标识的分区汇总批次，公开进度来自真实报告，日历与历史共享原任务。 */
 "use client";
 import { useEffect, useState } from "react";
 import { type PublishingPlan, type VideoJob } from "@/shared/publishing";
@@ -11,6 +11,14 @@ import { publishingOverview, type OverviewTarget, type PublishingOverviewBatch }
 import styles from "./my-publishing.module.css";
 
 type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void> };
+
+/** 由不可变频道 ID 选择标识色；更名、筛选、分页不会变色，身份仍以名称和分区边界表示。 */
+function channelAccent(channelId: string) {
+  const accents = ["blue", "violet", "teal", "indigo", "slate"];
+  let hash = 2166136261;
+  for (const character of channelId) hash = Math.imul(hash ^ character.codePointAt(0)!, 16777619);
+  return accents[(hash >>> 0) % accents.length];
+}
 
 /** 一行批次展示真实完成量与剩余状态，详细任务及恢复操作在查看后再展开。 */
 function OverviewBatch({ batch, now, open }: { batch: PublishingOverviewBatch; now: number; open(): void }) {
@@ -45,8 +53,8 @@ export default function MyPublishing({ plans, jobs, allJobs, targets = [], busy,
     </div>
     {tab === "日历" ? <PublishingCalendar jobs={scopedJobs} /> : tab === "历史" ? <PublishingHistory key={choice} plans={plans} jobs={scopedJobs} targets={targets} busy={busy} operate={operate} />
       : batch ? <><button className="btn-ghost" onClick={() => setSelected("")}>返回总览</button><BatchExecution key={batch.key} plan={batch.plan} jobs={batch.jobs} allJobs={allJobs} busy={busy} operate={operate} archive={batch.plan ? archive : undefined} /></>
-        : <>{visible.map(value => { const pageBatches = value.batches.filter(item => pageKeys.has(item.key)); if (!pageBatches.length) return null; return <section className={styles.channel} key={value.id} aria-label={"频道 " + value.name}>
-          <header className={styles.channelHeading}><div><h2>{value.name}</h2>{value.device && <p>{value.device}</p>}</div><span>{value.batches.length} 个发布包</span></header>
+        : <>{visible.map(value => { const pageBatches = value.batches.filter(item => pageKeys.has(item.key)); if (!pageBatches.length) return null; const accent = channelAccent(value.id); return <section className={styles.channel + " " + styles[accent]} key={value.id} data-channel-id={value.id} data-channel-accent={accent} aria-label={"频道 " + value.name}>
+          <header className={styles.channelHeading}><div className={styles.channelIdentity}><span className={styles.channelAvatar} aria-hidden="true">{Array.from(value.name.trim())[0]?.toLocaleUpperCase() || "Y"}</span><div className={styles.channelTitle}><h2>{value.name}</h2>{value.device && <p>{value.device}</p>}</div></div><span className={styles.packageCount}>{value.batches.length} 个发布包</span></header>
           {pageBatches.map(item => <OverviewBatch key={item.key} batch={item} now={now} open={() => setSelected(item.key)} />)}
         </section>; })}<Pagination page={page} total={batches.length} change={setPage} />
           {!batches.length && <div className="publishing-empty"><h2>还没有配置好的发布包</h2></div>}

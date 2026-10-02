@@ -1,14 +1,23 @@
-/* 我的发布按频道分组的清晰列表与发布进度；只使用 LiveNest 语义变量，不影响向导样式。 */
+/* 我的发布使用独立频道分区和固定标识色；频道色只表示身份，状态与进度沿用 LiveNest 语义变量。 */
 .toolbar { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 16px; margin-bottom: 8px; }
 .toolbar nav { margin-bottom: 12px; }
 .channelFilter { width: 260px; max-width: 100%; }
-.channel { margin-bottom: 32px; }
-.channelHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 0 20px; border-bottom: 1px solid var(--border-default); }
+.channel { margin-bottom: 28px; border: 1px solid var(--border-default); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-base); }
+.blue { --channel-accent: var(--accent-primary); --channel-surface: var(--accent-subtle); --channel-border: var(--accent-border); }
+.violet { --channel-accent: #6f45c1; --channel-surface: #f4effc; --channel-border: #ddd0f4; }
+.teal { --channel-accent: #087f8c; --channel-surface: #eaf6f7; --channel-border: #bde0e4; }
+.indigo { --channel-accent: #495ab9; --channel-surface: #eff1fc; --channel-border: #d1d7f4; }
+.slate { --channel-accent: var(--text-secondary); --channel-surface: var(--bg-subtle); --channel-border: var(--border-default); }
+.channelHeading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; padding: 20px 24px; border-left: 4px solid var(--channel-accent); border-bottom: 1px solid var(--channel-border); background: var(--channel-surface); }
+.channelIdentity { display: flex; align-items: center; gap: 14px; min-width: 0; flex: 1; }
+.channelAvatar { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: var(--radius-md); background: var(--channel-accent); color: var(--surface-base); font-size: 20px; font-weight: 600; }
+.channelTitle { min-width: 0; }
 .channelHeading h2 { font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
-.channelHeading p, .channelHeading > span { color: var(--text-muted); font-size: 14px; }
+.channelHeading p { color: var(--text-secondary); font-size: 14px; }
 .channelHeading p { margin-top: 4px; }
-.channelHeading > span { flex: none; }
-.batch { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.25fr) minmax(180px, .8fr); align-items: center; gap: 24px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
+.packageCount { flex: none; margin-left: auto; padding: 4px 10px; border: 1px solid var(--channel-border); border-radius: var(--radius-pill); background: var(--surface-base); color: var(--text-secondary); font-size: 14px; }
+.batch { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.25fr) minmax(180px, .8fr); align-items: center; gap: 24px; padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); }
+.batch:last-child { border-bottom: 0; }
 .batchHeading { min-width: 0; display: grid; justify-items: start; gap: 8px; }
 .batchHeading h3 { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .status { font-size: 14px; line-height: 1.5; padding: 3px 8px; border-radius: var(--radius-xs); background: var(--surface-hover); color: var(--text-secondary); }
@@ -37,10 +46,11 @@
 @media (max-width: 600px) {
   .toolbar { display: block; margin-bottom: 16px; }
   .channelFilter { width: 100%; }
-  .channelHeading { align-items: flex-start; gap: 12px; }
+  .channelHeading { align-items: center; gap: 12px; padding: 16px; }
+  .channelIdentity { gap: 12px; flex-basis: 100%; }
   .channelHeading h2 { font-size: 18px; }
-  .channelHeading > span { padding-top: 3px; }
-  .batch { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .packageCount { margin-left: 56px; }
+  .batch { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px 16px; }
   .batchHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   .batchHeading h3 { flex: 1; }
   .status { flex: none; }
