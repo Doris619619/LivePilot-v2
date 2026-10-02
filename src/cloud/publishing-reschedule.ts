@@ -66,7 +66,7 @@ export function applyConfirmedSchedule(plan: PublishingPlan, preview: SchedulePr
       job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt;
       job.pendingPublishAts = [...new Set([job.spec.originalPublishAt, job.observed?.effectivePublishAt, job.pendingPublishAt, ...job.pendingPublishAts || []].filter((at): at is string => !!at))];
     }
-    job.spec.originalPublishAt = item.publishAt; job.spec.scheduleSource = item.scheduleSource; job.spec.plan = structuredClone(preview.plan.rule); job.spec.actor = actor; job.spec.revision++;
+    job.spec.originalPublishAt = item.publishAt; job.spec.scheduleSource = item.scheduleSource; job.spec.plan = structuredClone(preview.plan.rule); job.spec.actor = actor; job.spec.revision++; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal;
   }
   plan.rule = structuredClone(preview.plan.rule); plan.items = structuredClone(preview.plan.items); plan.skipped = [...preview.plan.skipped]; plan.skippedOccupied = preview.plan.skippedOccupied; plan.revision++;
   return plan;

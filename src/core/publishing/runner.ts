@@ -16,7 +16,8 @@ import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
 import type { YouTubeAuth } from "../youtube/auth";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
-type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"] };
+type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number } };
+type Reconciliation = { entry: Entry; revision: number; videoId?: string };
 type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
 /** RFC3339 的不同等价格式按同一时刻比较，避免 .000Z 与 Z 导致误判排期。 */
 function sameMoment(a?: unknown, b?: string) { return typeof a === "string" && !!b && Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b); }
@@ -25,6 +26,7 @@ export class PublishingRunner {
   private archives = new Map<string, Promise<unknown>>();
   private purging = new Set<string>();
   private accepting: Promise<unknown> = Promise.resolve(); private loading?: Promise<void>;
+  private reconciling = new Map<string, Promise<void>>();
   readonly storage: PublishingStore; private now: () => number;
   /** 每台物理机器创建一次；API 与时钟可注入以验证崩溃恢复而不访问真实频道。 */
   constructor(private services: Map<string, Service>, private options: Options = {}) { this.storage = options.store || new PublishingStore(path.join(dataRoot(), "agent", "publishing")); this.now = options.now || Date.now; }
@@ -41,7 +43,15 @@ export class PublishingRunner {
     await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
     if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
+    // 查询修订只保存最新意图和持久查询请求，不能以 run 标记恢复暂停、异常或重做发布设置。
+    if (spec.reconcileRevision === spec.revision) {
+      const entry: Entry = old || { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "needs_attention", offset: 0, total: spec.reconcileTotal || spec.asset.size, updatedAt: this.now() }, expiredData: true, playlistsDone: [], failures: 0 };
+      entry.spec = spec; entry.reconciliation = { revision: spec.revision, nextAttemptAt: this.now() };
+      if (old && spec.desired !== "run") this.aborters.get(spec.id)?.abort();
+      this.entries.set(spec.id, entry); await this.update(entry, {}); return { ok: true };
+    }
     if (old) {
+      delete old.reconciliation;
       const rescheduled = old.spec.originalPublishAt !== spec.originalPublishAt;
       const rescheduleRejected = rescheduled && (publishingTerminal(old.report.state) || old.report.state === "needs_attention");
       if (rescheduled && !rescheduleRejected && old.report.videoId) old.reschedulePreviousAt ??= old.report.effectivePublishAt || old.spec.originalPublishAt;
@@ -117,13 +127,14 @@ export class PublishingRunner {
     for (const e of this.entries.values()) if (!this.active.has(e.spec.id) && !e.expiredData && e.report.remoteCheckedAt && e.report.remoteCheckedAt < this.now() - 30 * 86400_000) { const terminal = publishingTerminal(e.report.state); e.expiredData = true; e.session = undefined; e.playlistsDone = []; e.resumeState = undefined; await this.update(e, { state: terminal ? e.report.state : "needs_attention", videoId: undefined, metadata: undefined, processingStatus: undefined, observedPrivacy: undefined, nextAttemptAt: undefined, message: terminal ? "过期 YouTube 观察数据已清除，执行结果保留。" : "过期 YouTube 数据已清除；请在 Studio 核对，本任务禁止重新上传。" }); }
     const entries = [...this.entries.values()].sort((a, b) => (a.spec.originalPublishAt || "").localeCompare(b.spec.originalPublishAt || "") || a.spec.index - b.spec.index);
     for (const entry of entries) {
-      if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && entry.report.state === "paused" || entry.spec.desired === "cancel" && ["cancelled", "published"].includes(entry.report.state) || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
+      if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || this.reconciling.has(entry.spec.id) || entry.reconciliation?.revision === entry.spec.revision || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && (entry.report.state === "paused" || publishingTerminal(entry.report.state)) || entry.spec.desired === "cancel" && ["cancelled", "published"].includes(entry.report.state) || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
       if (entry.report.nextAttemptAt && entry.report.nextAttemptAt > this.now()) continue;
       if (this.active.size >= entry.spec.policy.concurrency) break;
       const promise = this.execute(entry).catch(e => this.failure(entry, e)).finally(() => { this.active.delete(entry.spec.id); this.aborters.delete(entry.spec.id); });
       this.active.set(entry.spec.id, promise); void promise.catch(() => {});
     }
     await this.poll(entries);
+    await this.reconcileRequested(entries);
   }
   /** 单步操作失败保留当前阶段；网络和配额错误回退重试，永久拒绝等待人工。 */
   private async failure(entry: Entry, error: unknown) {
@@ -280,11 +291,67 @@ export class PublishingRunner {
   /** 同一实例/频道合并查询，不为每个任务建立独立轮询定时器。 */
   private async poll(entries: Entry[]) {
     const groups = new Map<string, Entry[]>();
-    for (const e of entries) if (!this.purging.has(this.authorizationKey(e.spec)) && !this.active.has(e.spec.id) && e.spec.desired === "run" && e.report.videoId && ["processing", "scheduled", "published", "completed"].includes(e.report.state) && (e.report.nextAttemptAt || 0) <= this.now()) { const key = e.spec.profile.agentId + ":" + e.spec.profile.instanceId + ":" + (e.spec.profile.accountId || "legacy") + ":" + e.spec.profile.channelId; groups.set(key, [...(groups.get(key) || []), e]); }
+    for (const e of entries) if (!this.purging.has(this.authorizationKey(e.spec)) && !this.active.has(e.spec.id) && !this.reconciling.has(e.spec.id) && e.reconciliation?.revision !== e.spec.revision && e.spec.desired === "run" && e.report.videoId && ["processing", "scheduled", "published", "completed"].includes(e.report.state) && (e.report.nextAttemptAt || 0) <= this.now()) { const key = e.spec.profile.agentId + ":" + e.spec.profile.instanceId + ":" + (e.spec.profile.accountId || "legacy") + ":" + e.spec.profile.channelId; groups.set(key, [...(groups.get(key) || []), e]); }
     for (const group of groups.values()) for (let start = 0; start < group.length; start += group[0].spec.policy.pollBatchSize) {
       const batch = group.slice(start, start + group[0].spec.policy.pollBatchSize);
       try { await this.checkChannel(batch[0]); const results = await this.api(batch[0]).list(batch.map(e => e.report.videoId!)); for (const e of batch) await this.observe(e, results.find(v => v.id === e.report.videoId)); }
       catch (error) { for (const e of batch) await this.failure(e, error); }
+    }
+  }
+  /** 查询结果只属于发起时的任务修订和 videoId；上传、清理或新控制开始后丢弃迟到结果。 */
+  private currentReconciliation(request: Reconciliation) {
+    const { entry, revision, videoId } = request;
+    return !this.stopped && this.entries.get(entry.spec.id) === entry && !this.purging.has(this.authorizationKey(entry.spec)) && !this.active.has(entry.spec.id) && entry.spec.revision === revision && entry.reconciliation?.revision === revision && entry.report.videoId === videoId;
+  }
+  /** 持久请求按账号/频道合并，只读取已有 videoId；该次 tick 不为核对任务启动上传或取消。 */
+  private async reconcileRequested(entries: Entry[]) {
+    const groups = new Map<string, Reconciliation[]>();
+    for (const entry of entries) {
+      if (!entry.reconciliation || entry.reconciliation.revision !== entry.spec.revision || entry.reconciliation.nextAttemptAt > this.now() || this.active.has(entry.spec.id) || this.reconciling.has(entry.spec.id) || this.purging.has(this.authorizationKey(entry.spec))) continue;
+      const key = entry.spec.profile.agentId + ":" + entry.spec.profile.instanceId + ":" + (entry.spec.profile.accountId || "legacy") + ":" + entry.spec.profile.channelId;
+      groups.set(key, [...(groups.get(key) || []), { entry, revision: entry.spec.revision, videoId: entry.report.videoId }]);
+    }
+    for (const group of groups.values()) for (let start = 0; start < group.length; start += group[0].entry.spec.policy.pollBatchSize) {
+      if (this.stopped) return;
+      const batch = group.slice(start, start + group[0].entry.spec.policy.pollBatchSize);
+      const promise = this.readReconciliation(batch);
+      for (const request of batch) this.reconciling.set(request.entry.spec.id, promise);
+      try { await promise; } finally { for (const request of batch) if (this.reconciling.get(request.entry.spec.id) === promise) this.reconciling.delete(request.entry.spec.id); }
+    }
+  }
+  /** GET 失败使用独立的持久重试时间，不进入上传 failure 流程或改变暂停/异常状态。 */
+  private async deferReconciliation(request: Reconciliation, message: string) {
+    if (!this.currentReconciliation(request)) return;
+    request.entry.reconciliation!.nextAttemptAt = this.now() + request.entry.spec.policy.processingPollSeconds * 1000;
+    await this.update(request.entry, { message });
+  }
+  /** 只核对远端事实；私密/缺失结果不能恢复处理或覆盖 Studio 手工排期，公开和失败事实可更新。 */
+  private async readReconciliation(batch: Reconciliation[]) {
+    for (const request of batch.filter(value => !value.videoId)) if (this.currentReconciliation(request)) {
+      delete request.entry.reconciliation;
+      await this.update(request.entry, { message: request.entry.expiredData ? "本地上传检查点缺失，请在 Studio 核对；本任务禁止新建上传。" : "尚无可核对的视频 ID；上传结果不明时请在 Studio 核对。" });
+    }
+    const requests = batch.filter(request => request.videoId && this.currentReconciliation(request));
+    if (!requests.length) return;
+    let results: VideoResource[];
+    try {
+      await this.checkChannel(requests[0].entry);
+      if (!requests.some(request => this.currentReconciliation(request))) return;
+      results = await this.api(requests[0].entry).list([...new Set(requests.map(request => request.videoId!))]);
+    } catch {
+      for (const request of requests) await this.deferReconciliation(request, "状态核对暂未完成，稍后重试；原处理设置保留。");
+      return;
+    }
+    for (const request of requests) {
+      if (!this.currentReconciliation(request)) continue;
+      const entry = request.entry; const video = results.find(value => value.id === request.videoId);
+      if (!video) { await this.deferReconciliation(request, "视频状态暂时无法核对，稍后重试；未认定删除或失败。"); continue; }
+      if (video.snippet?.channelId && video.snippet.channelId !== entry.spec.profile.channelId) { await this.deferReconciliation(request, "查询结果频道不匹配，原处理设置保留，请检查授权。"); continue; }
+      delete entry.reconciliation;
+      if (video.status?.privacyStatus === "public") { await this.alreadyPublic(entry, entry.spec.desired === "cancel"); continue; }
+      const failed = ["failed", "terminated"].includes(video.processingDetails?.processingStatus || "") || ["failed", "rejected"].includes(video.status?.uploadStatus || "");
+      const changed = entry.report.state === "scheduled" && (video.status?.privacyStatus !== "private" || !sameMoment(video.status.publishAt, entry.report.effectivePublishAt));
+      await this.update(entry, { state: failed ? "failed" : changed ? "needs_attention" : entry.report.state, processingStatus: video.processingDetails?.processingStatus, observedPrivacy: video.status?.privacyStatus, remoteCheckedAt: this.now(), message: changed ? "YouTube 排期已被修改，未自动覆盖人工操作。" : entry.report.message });
     }
   }
   /** 只有远端公开才标记 published；缺失结果保留任务，禁止猜测删除。 */
@@ -317,9 +384,9 @@ export class PublishingRunner {
     try { return await promise; } finally { this.archives.delete(batch.name); }
   }
   /** 维护仅阻止当前执行，不让未来排期永久阻塞升级。 */
-  get busy() { return this.active.size > 0 || this.archives.size > 0; }
+  get busy() { return this.active.size > 0 || this.archives.size > 0 || this.reconciling.size > 0; }
   /** 停止时中断当前 HTTP 并保存检查点，不等待数小时视频传完。 */
-  async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values()]); await this.writes; }
+  async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values(), ...this.reconciling.values()]); await this.writes; }
   /** 撤销或删除授权前停止该实例任务并清除本地 API 数据；源素材保留。 */
   async purge(instanceId: string, accountId?: string) { const key = accountId ? "account:" + accountId : "legacy:" + instanceId; this.purging.add(key); try { await this.accepting; await this.load(); const active: Promise<void>[] = []; for (const e of this.entries.values()) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) { e.spec.desired = "pause"; this.aborters.get(e.spec.id)?.abort(); const task = this.active.get(e.spec.id); if (task) active.push(task); } await Promise.allSettled(active); for (const [id, e] of this.entries) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) this.entries.delete(id); await this.save(); } finally { this.purging.delete(key); } }
 }

@@ -28,11 +28,11 @@ export default function JobList({ jobs, busy, operate }: { jobs: VideoJob[]; bus
       {report?.message && <p className="publishing-message" role="status">{report.message}</p>}
       <div className="publishing-actions">
         {!publishingTerminal(state) && !pendingCancel && <>
-          <button disabled={busy} onClick={() => { if (continued) void operate(job.spec.id, "resume"); else if (state === "scheduled" || report?.effectivePublishAt) setEditing(job.spec.id + "-pause"); else void operate(job.spec.id, "pause"); }}>{continued ? "继续" : "暂停"}</button>
+          <button disabled={busy} onClick={() => { if (continued) void operate(job.spec.id, "resume"); else if (state === "scheduled" || report?.effectivePublishAt) setEditing(job.spec.id + "-pause"); else void operate(job.spec.id, "pause"); }}>{continued ? "继续" : "暂停处理"}</button>
           {job.spec.profile.scheduled && <button disabled={busy} onClick={() => { setDate(""); setEditing(editing === job.spec.id + "-date" ? "" : job.spec.id + "-date"); }}>改期</button>}
           <button className="btn-danger" disabled={busy} onClick={() => setEditing(editing === job.spec.id ? "" : job.spec.id)}>取消任务</button>
         </>}
-        <button className="btn-ghost" disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>
+        {(job.hadUpload || report?.videoId) && <button className="btn-ghost" disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>}
         {report?.videoId && <a href={"https://www.youtube.com/watch?v=" + report.videoId} target="_blank" rel="noreferrer">查看视频</a>}
       </div>
       <details className="publishing-details"><summary>任务详情</summary><dl className="publishing-summary">

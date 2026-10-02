@@ -30,12 +30,13 @@ function quotaBudget(s: State, key: string) { if (s.quota[key]?.day !== quotaDay
 function reserved(budget: Budget, excluding?: string) { return Object.entries(budget.reservations || {}).filter(([id]) => id !== excluding).reduce((sum, [, v]) => ({ uploads: sum.uploads + v.uploads, units: sum.units + v.units }), { uploads: 0, units: 0 }); }
 /** 派发前预留完整整理步骤与初始查询的估算，不够时 Cloud 保留计划等待重置。 */
 function reserveJob(s: State, job: VideoJob) {
+  if (job.spec.reconcileRevision === job.spec.revision) return true;
   const budget = quotaBudget(s, job.spec.policy.projectKey);
   if (budget.reservations![job.spec.id] || publishingTerminal(job.observed?.state) || ["scheduled", "paused"].includes(job.observed?.state || "") || job.spec.desired !== "run") return true;
   const estimate = { uploads: job.observed?.videoId ? 0 : 1, units: 54 + (job.spec.profile.thumbnailMode === "none" ? 0 : 50) + 52 * job.spec.profile.playlistIds.length };
   const other = reserved(budget);
-  if (budget.uploads + other.uploads + estimate.uploads > s.policy.uploadsPerDay || budget.units + other.units + estimate.units > s.policy.otherUnitsPerDay) { job.blockReason = "等待项目发布预算及太平洋时间配额日重置。"; return false; }
-  budget.reservations![job.spec.id] = estimate; delete job.blockReason; return true;
+  if (budget.uploads + other.uploads + estimate.uploads > s.policy.uploadsPerDay || budget.units + other.units + estimate.units > s.policy.otherUnitsPerDay) { job.blockReason = "等待项目发布预算及太平洋时间配额日重置。"; job.budgetWaiting = true; return false; }
+  budget.reservations![job.spec.id] = estimate; delete job.blockReason; delete job.budgetWaiting; return true;
 }
 /** 用户删除或已确认授权失效共用清理记录；本地源文件不在此范围内。 */
 function beginCleanup(s: State, agentId: string, instanceId: string, owner: string, actor: string) {
@@ -73,7 +74,7 @@ export async function savePublishingPolicy(user: Member, value: unknown) {
   const policy = policySchema.parse(value);
   if (policy.enabled && !policy.privacyContact.trim()) throw new AppError("INPUT", "开启发布前请配置可联系的隐私支持邮箱或地址。");
   if (policy.publicVerified && !policy.verificationNote.trim()) throw new AppError("INPUT", "启用自动公开前请记录真实 API Project、测试视频及验收证据。");
-  await edit(state => { state.policy = policy; for (const job of state.jobs) if (!publishingTerminal(job.observed?.state)) { job.spec.policy = policy; job.spec.revision++; } });
+await edit(state => { state.policy = policy; for (const job of state.jobs) if (!publishingTerminal(job.observed?.state)) { job.spec.policy = policy; job.spec.revision++; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; } });
   await audit(user.username, "publishing-policy", "cloud", "succeeded"); return policy;
 }
 /** 汇总 Profile、队列、日历和历史，页面只读取已缓存的 YouTube 观察结果。 */
@@ -313,6 +314,8 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
   const result = await edit(async s => {
     const job = s.jobs.find(j => j.spec.id === id); if (!job) throw new AppError("JOB", "任务已清理，请刷新。", 404); await authorizePublishingWrite(user, job.spec.profile, job.spec.owner, s);
     if (["published", "completed", "cancelled"].includes(job.observed?.state || "") && action !== "reconcile") throw new AppError("TERMINAL", "任务已结束；已公开视频请在 Studio 管理。");
+    // 上传 admission 在 begin 请求前持久化 hadUpload；尚未开始的任务没有远端对象，不投递新执行入口。
+    if (action === "reconcile" && !job.hadUpload && !job.observed?.videoId) throw new AppError("VIDEO_NOT_UPLOADED", "视频尚未上传，暂无远端状态可核对。", 409);
     if (action === "reschedule") {
       if (!job.spec.profile.scheduled || !publishAt || !Number.isFinite(Date.parse(publishAt)) || Date.parse(publishAt) <= Date.now()) throw new AppError("INPUT", "请选择未来的有效定时公开时刻。");
       if (occupiedPublishingSlots(s.jobs, job.spec.profile.channelId, id).has(Date.parse(publishAt))) throw new AppError("DUPLICATE", "该频道排期时刻已占用。");
@@ -320,7 +323,10 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
       job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt; job.spec.originalPublishAt = publishAt;
       if (job.spec.contentPackage) { job.spec.scheduleSource = "manual"; const plan = s.plans.find(plan => plan.id === job.spec.batchId); const item = plan?.items.find(item => item.packageId === job.spec.contentPackage!.id); if (plan && item) { item.publishAt = publishAt; item.scheduleSource = "manual"; plan.revision++; } }
     }
-    job.spec.desired = action === "pause" ? "pause" : action === "cancel" ? "cancel" : "run"; job.spec.revision++; return job;
+    job.spec.revision++;
+    if (action === "reconcile") { job.spec.reconcileRevision = job.spec.revision; job.spec.reconcileTotal = job.prepared?.size || job.observed?.total || job.spec.asset.size; }
+    else { job.spec.desired = action === "pause" ? "pause" : action === "cancel" ? "cancel" : "run"; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; }
+    return job;
   });
   await audit(user.username, "publishing-" + action, old.spec.profile.instanceId, "accepted"); return result;
 }
@@ -339,7 +345,7 @@ export async function reportPublishing(agentId: string, values: PublishingReport
     }
     if (report.total !== (job.prepared?.size || job.spec.asset.size) || report.offset > report.total || job.spec.contentPackage && report.offset > 0 && !job.prepared) throw new AppError("REPORT", "发布报告的最终文件或进度无效。", 403);
     if (report.authorizationInvalid) { if (job.spec.profile.accountId) { await beginPublishingAccountCleanup(agentId, job.spec.profile.accountId, job.spec.actor); removePublishingAccountData(s, job.spec.profile.accountId); } else beginCleanup(s, agentId, job.spec.profile.instanceId, job.spec.owner, job.spec.actor); return { id: report.id, sequence: report.sequence }; }
-    if (!job.observed || job.observed.sequence < report.sequence) { job.observed = report; delete job.blockReason; if (report.revision === job.spec.revision && ["scheduled", "published", "completed", "cancelled"].includes(report.state)) { delete job.pendingPublishAt; delete job.pendingPublishAts; } if (report.revision === job.spec.revision && (publishingTerminal(report.state) || ["scheduled", "paused", "needs_attention"].includes(report.state))) for (const budget of Object.values(s.quota)) delete budget.reservations?.[job.spec.id]; }
+    if (!job.observed || job.observed.sequence < report.sequence) { job.observed = report; delete job.blockReason; delete job.budgetWaiting; if (report.revision === job.spec.revision && ["scheduled", "published", "completed", "cancelled"].includes(report.state)) { delete job.pendingPublishAt; delete job.pendingPublishAts; } if (report.revision === job.spec.revision && (publishingTerminal(report.state) || ["scheduled", "paused", "needs_attention"].includes(report.state))) for (const budget of Object.values(s.quota)) delete budget.reservations?.[job.spec.id]; }
     return { id: report.id, sequence: report.sequence };
   })));
 }
@@ -402,7 +408,7 @@ export async function publishingTick() {
   for (const job of state.jobs) {
     const p = job.spec.profile; const agent = agents.find(a => a.id === p.agentId);
     if (!agent || agent.revoked || agent.owner && agent.owner !== job.spec.owner || !agent.online || agent.maintenance) continue;
-    if (job.spec.desired === "run" && (!state.policy.enabled && !job.observed || publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
+    if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (!state.policy.enabled && !job.observed || publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
     const capabilities = await agentStore(p.agentId).read<string[]>("capabilities.json");
     if (p.accountId) { if (!capabilities?.includes("publishing-accounts-v1")) continue; try { await requirePublishingAccount(p.agentId, p.instanceId, p.accountId, p.channelId); } catch { continue; } }
     if (!capabilities?.includes(job.spec.contentPackage ? "publishing-v2" : "publishing-v1")) continue;

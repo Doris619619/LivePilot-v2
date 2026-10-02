@@ -7,6 +7,7 @@ import PlanConfirm from "./plan-confirm";
 import { PackageReview, WeeklySchedule } from "./package-setup";
 import BatchExecution, { type JobOperation } from "./batch-execution";
 import { visibilityLabel } from "./display";
+import { hasNewPublishingDraft, parsePublishingDraft, restorePublishingPlan } from "./publishing-wizard-draft";
 const steps = ["准备素材", "设置时间", "确认计划", "自动执行"];
 type Props = {
   username: string; target: PublishingTarget; root: string; batches: PackageBatch[]; profiles: PublishingProfile[]; profileId: string; selectProfile(id: string): void;
@@ -22,25 +23,24 @@ function initialRule(profile?: PublishingProfile): PublishingPlanRule {
   const timezone = profile?.schedule.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   return { timezone, startDate: new Date().toLocaleDateString("en-CA", { timeZone: timezone }), weeklySlots: (profile?.schedule.weekdays || [1, 3, 5, 7]).map(weekday => ({ weekday, time: profile?.schedule.localTime || "18:00" })), preuploadDays: profile?.schedule.preuploadDays || 28 };
 }
-/** 只恢复同一账号/设备的非敏感表单，Cloud草稿在组件初始化时优先。 */
+/** 只读取同一账号/设备的非敏感表单；明确的新批次选择不能被旧 Cloud 草稿覆盖。 */
 function readDraft(key: string) {
   try {
     if (typeof window === "undefined") return undefined;
-    const value = JSON.parse(localStorage.getItem(key) || "null") as { planId?: string; batchId?: string; profileId?: string; rule?: PublishingPlanRule; excluded?: string[]; step?: number } | null;
-    if (!value || typeof value !== "object") return undefined;
-    return { planId: typeof value.planId === "string" ? value.planId : "", batchId: typeof value.batchId === "string" ? value.batchId : "", profileId: typeof value.profileId === "string" ? value.profileId : "", rule: planRuleSchema.safeParse(value.rule).success ? value.rule : undefined, excluded: Array.isArray(value.excluded) ? value.excluded.filter(id => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) : [], step: [1, 2, 3, 4].includes(value.step || 0) ? value.step! : 1 };
+    return parsePublishingDraft(JSON.parse(localStorage.getItem(key) || "null"));
   } catch { return undefined; }
 }
-/** 同账号、同设备实例恢复草稿；服务端未确认计划优先于本地表单。 */
+/** 恢复固定计划或明确的新批次草稿；未重新检测的本地选择仍从素材步骤开始。 */
 export default function PublishingWizard(props: Props) {
   const { target, profiles, batches, plans, jobs, busy } = props;
   const storageKey = "livenest-publishing-draft:" + props.username + ":" + target.agentId + ":" + target.instanceId + (target.accountId ? ":" + target.accountId : "");
   const [cached] = useState(() => readDraft(storageKey));
-  const restored = plans.find(plan => plan.id === cached?.planId && !plan.archivedAt) || [...plans].filter(plan => !plan.confirmedAt && !plan.archivedAt && plan.profile.agentId === target.agentId && plan.profile.instanceId === target.instanceId).sort((a, b) => b.createdAt - a.createdAt)[0];
+  const restored = restorePublishingPlan(plans, target, cached);
   const cachedBatch = batches.find(batch => batch.id === cached?.batchId);
   const cachedReady = !!cachedBatch && !cachedBatch.issues.length && cachedBatch.packages.some(pkg => !cached?.excluded.includes(pkg.id)) && cachedBatch.packages.every(pkg => pkg.validationState === "valid" || cached?.excluded.includes(pkg.id));
   const initialStep = restored?.confirmedAt ? cached?.step === 3 ? 2 : cached?.step || 4 : restored ? restored.profile.privacy === "public" && !restored.profile.scheduled ? 2 : 3 : cachedReady && (cached?.step || 0) >= 2 ? 2 : 1;
   const [plan, setPlan] = useState<PublishingPlan | undefined>(restored); const [schedulePreview, setSchedulePreview] = useState<PublishingPlan>(); const [step, setStep] = useState(initialStep);
+  const [newDraft, setNewDraft] = useState(hasNewPublishingDraft(cached));
   const [unlockedStep, setUnlockedStep] = useState(restored?.confirmedAt ? 4 : restored ? restored.profile.privacy === "public" && !restored.profile.scheduled ? 2 : 3 : initialStep);
   const [batchId, setBatchId] = useState(restored?.batch.id || cached?.batchId || ""); const [excluded, setExcluded] = useState<string[]>(restored?.items.filter(item => item.excluded).map(item => item.packageId) || cached?.excluded || []);
   const [rule, setRule] = useState<PublishingPlanRule>(restored?.confirmedAt ? cached?.rule || restored.rule : restored?.rule || cached?.rule || initialRule(profiles.find(profile => profile.id === props.profileId) || profiles[0]));
@@ -64,13 +64,13 @@ export default function PublishingWizard(props: Props) {
     return item.excluded || !job || job.spec.desired === "cancel" || publishingTerminal(job.observed?.state) || job.observed?.state === "needs_attention";
   }).map(item => item.packageId) : undefined);
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify({ planId: plan?.id, batchId: batch?.id || batchId, profileId: profile?.id || "", rule, excluded, step })); } catch { /* 浏览器禁止存储时仍可使用Cloud计划。 */ }
-  }, [batch?.id, batchId, excluded, plan?.id, profile?.id, rule, step, storageKey]);
+    try { localStorage.setItem(storageKey, JSON.stringify({ planId: plan?.id, newDraft: !plan?.id && newDraft, batchId: batch?.id || batchId, profileId: profile?.id || "", rule, excluded, step })); } catch { /* 浏览器禁止存储时仍可使用Cloud计划。 */ }
+  }, [batch?.id, batchId, excluded, newDraft, plan?.id, profile?.id, rule, step, storageKey]);
   useEffect(() => { heading.current?.focus(); }, [step]);
   /** 复制的是所选Agent报告的实际路径；远程浏览器不假装已打开资源管理器。 */
   async function copyPath() { try { await navigator.clipboard.writeText(inboxPath); setCopied(true); setCopyError(""); } catch { setCopyError("请选中上方路径复制。"); } }
   /** 更换批次清除此前选择，已确认旧批次仍保留在我的发布中。 */
-  function chooseBatch(id: string) { if (confirmed) return; setBatchId(id); setExcluded([]); setPlan(undefined); setSchedulePreview(undefined); setUnlockedStep(1); }
+  function chooseBatch(id: string) { if (confirmed) return; setBatchId(id); setExcluded([]); setPlan(undefined); setNewDraft(true); setSchedulePreview(undefined); setUnlockedStep(1); }
   /** 已到达步骤均可回跳；确认后只查看固定素材并通过独立预览修改原任务排期。 */
   function canNavigate(next: number) {
     return !busy && next !== step && next <= unlockedStep && (confirmed ? next !== 3 || JSON.stringify(currentPlan?.rule) === JSON.stringify(rule) : next === 1 || next === 2 && contentReady || next === 3 && contentReady && planMatchesInputs);
@@ -90,7 +90,7 @@ export default function PublishingWizard(props: Props) {
     <div id="publishing-step-content">
     <div className="publishing-step-heading"><h2 ref={heading} tabIndex={-1}>{steps[step - 1]}</h2><span>{step} / 4</span></div>
     {step === 1 && <>
-      {!confirmed && <><div className="publishing-inbox"><p>把批次文件夹放入</p>{inboxPath ? <code>{inboxPath}</code> : <span className="publishing-hint">检测后显示设备上的发布目录。</span>}<div className="publishing-actions"><button className="btn-primary" disabled={busy || !props.accepted} onClick={() => void props.scan()}>{busy ? "检测中…" : "检测素材"}</button>{inboxPath && <button disabled={busy} onClick={() => void copyPath()}>{copied ? "已复制" : "复制路径"}</button>}</div>{copyError && <p className="publishing-validation" role="alert">{copyError}</p>}</div>
+      {!confirmed && <><div className="publishing-inbox"><p>把批次文件夹放入</p>{inboxPath ? <code>{inboxPath}</code> : <span className="publishing-hint">先检测，获取设备上的素材目录。</span>}<div className="publishing-actions"><button className="btn-primary" disabled={busy || !props.accepted} onClick={() => void props.scan()}>{busy ? "检测中…" : "检测素材"}</button>{inboxPath && <button disabled={busy} onClick={() => void copyPath()}>{copied ? "已复制" : "复制路径"}</button>}</div><details className="publishing-details publishing-folder-guide"><summary>素材怎么放</summary><pre>{"Inbox/\n  我的批次/\n    001/\n      video.mp4\n      music.mp3（可选）\n    002/\n      video.mp4"}</pre><p>每包一个视频；音乐、封面和文案可选。</p></details>{copyError && <p className="publishing-validation" role="alert">{copyError}</p>}</div>
       {batches.length > 0 && <div className="publishing-batch-picker" role="group" aria-label="选择批次">{batches.map(value => <label className={"publishing-batch-choice " + (batch?.id === value.id ? "is-selected" : "")} key={value.id}><input type="radio" name="publishing-batch" checked={batch?.id === value.id} onChange={() => chooseBatch(value.id)} /><span><strong>{value.name}</strong><small>{value.packages.length} 个发布包 · {value.packages.filter(item => item.validationState === "valid").length} 正常 · {value.packages.filter(item => item.validationState === "invalid").length} 异常</small></span></label>)}</div>}</>}
       {batch ? <><PackageReview key={batch.id} batch={batch} excluded={excluded} change={setExcluded} readOnly={confirmed} />{!confirmed && invalid.length > 0 && <p className="publishing-validation" role="status">请修好 {invalid.length} 个异常包，或勾选“暂不发布”。</p>}<div className="publishing-actions"><button className="btn-primary" disabled={busy || !contentReady} onClick={() => { setBatchId(batch.id); setUnlockedStep(Math.max(unlockedStep, 2)); setStep(2); }}>下一步</button>{confirmed && <button disabled={busy} onClick={() => setStep(4)}>返回执行</button>}</div></> : props.root && <div className="publishing-empty"><h3>没有批次</h3><p>复制批次到 Inbox 后，再检测。</p></div>}
     </>}
@@ -107,7 +107,7 @@ export default function PublishingWizard(props: Props) {
       if (confirmed) { const next = await props.rescheduleConfirm(currentPlan); if (next) { setPlan(next); setSchedulePreview(undefined); setRule(next.rule); setStep(4); } }
       else if (await props.confirm(currentPlan, ai, replaceJobIds)) { setPlan({ ...currentPlan, confirmedAt: Date.now() }); setUnlockedStep(4); setStep(4); }
     }} /></div>}
-    {step === 4 && committedPlan && <><BatchExecution plan={committedPlan} jobs={jobs.filter(job => job.spec.batchId === committedPlan.id)} allJobs={props.allJobs} busy={busy} operate={props.operate} archive={props.archive} /><div className="publishing-actions"><button className="btn-primary" onClick={props.viewOverview}>查看我的发布</button><button onClick={() => { setPlan(undefined); setSchedulePreview(undefined); setBatchId(""); setExcluded([]); setUnlockedStep(1); setStep(1); }}>发布下一批</button></div></>}
+    {step === 4 && committedPlan && <><BatchExecution plan={committedPlan} jobs={jobs.filter(job => job.spec.batchId === committedPlan.id)} allJobs={props.allJobs} busy={busy} operate={props.operate} archive={props.archive} /><div className="publishing-actions"><button className="btn-primary" onClick={props.viewOverview}>查看我的发布</button><button onClick={() => { setPlan(undefined); setNewDraft(true); setSchedulePreview(undefined); setBatchId(""); setExcluded([]); setUnlockedStep(1); setStep(1); }}>发布下一批</button></div></>}
     </div>
   </div>;
 }

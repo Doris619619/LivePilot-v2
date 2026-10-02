@@ -121,7 +121,7 @@ async function scanPackage(root: string, batchName: string, name: string, locati
       if (ignored.has(entry.name.toLowerCase())) continue;
       try {
         packageName(entry.name);
-        if (!entry.isFile()) throw new AppError("PACKAGE_STRUCTURE", entry.isSymbolicLink() ? "文件或目录链接不允许使用。" : "仅支持 Batch / Package / files，不能包含子目录。");
+        if (!entry.isFile()) throw new AppError("PACKAGE_STRUCTURE", entry.isSymbolicLink() ? "文件或目录链接不允许使用。" : "视频、音乐等文件请直接放在发布包目录中，不能包含子目录。");
         const file = await fileInDirectory(directory, entry.name); const asset = await indexFile(file, entry.name, [batchName, name, entry.name]); indexed.push([entry.name, asset.size, asset.mtimeMs]);
         const ext = path.extname(entry.name).toLowerCase();
         if (videos.has(ext)) videoFiles.push(asset);

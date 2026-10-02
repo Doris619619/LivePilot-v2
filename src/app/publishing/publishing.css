@@ -136,6 +136,9 @@
 .publishing-inbox p { color: var(--text-secondary); font-size: 15px; margin-bottom: 8px; }
 .publishing-inbox code { display: block; font-size: 15px; color: var(--text-primary); overflow-wrap: anywhere; }
 .publishing-inbox .publishing-actions { margin: 16px 0 0; }
+.publishing-folder-guide { border: 0; margin: 8px 0 0; padding: 0; }
+.publishing-folder-guide pre { padding: 16px; background: var(--surface-hover); border-radius: var(--radius-sm); font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.publishing-folder-guide p { margin-top: 12px; }
 .publishing-batch-picker { border-top: 1px solid var(--border-subtle); }
 .publishing-shell .publishing-batch-choice { display: flex; align-items: center; gap: 12px; padding: 20px 16px; cursor: pointer; border-bottom: 1px solid var(--border-subtle); transition: background .18s ease-out; }
 .publishing-batch-choice.is-selected { background: var(--accent-subtle); }
