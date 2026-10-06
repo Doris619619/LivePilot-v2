@@ -5,8 +5,9 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { api } from "./client-request";
-import { LiveNestLogo, UserIcon, LockIcon, LogOutIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
+import { api, setRequestMember } from "./client-request";
+import AccountSwitcher, { listenAccountChanges, notifyAccountChange } from "./account-switcher";
+import { LiveNestLogo, UserIcon, LockIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
 type User = { username: string; role: "admin" | "customer" };
 
@@ -26,25 +27,27 @@ export default function AccessGate({ children }: { children: ReactNode }) {
     async function load() {
       try {
         const data = await api<{ user: User }>("/api/session");
-        if (active) setUser(data.user);
+        if (active) { setRequestMember(data.user.username); setUser(data.user); }
       } catch (e) {
         if (active) {
-          setUser(null);
+          setRequestMember(); setUser(null);
           if ((e as { status?: number }).status !== 401) setError((e as Error).message);
         }
       }
     }
 
     function expired() {
-      setUser(null);
+      setRequestMember(); setUser(null);
       setError("登录已失效，请重新登录。直播电脑上的直播不受影响。");
     }
 
     void load();
+    const stopListening = listenAccountChanges();
     window.addEventListener("livepilot-login-required", expired);
     return () => {
       active = false;
       window.removeEventListener("livepilot-login-required", expired);
+      stopListening(); setRequestMember();
     };
   }, []);
 
@@ -66,21 +69,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           password: data.get("password"),
         }),
       });
-      setUser(result.user);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** 撤销当前会话并返回登录页，不改变直播实例状态。 */
-  async function exitSession() {
-    setBusy(true);
-    setError("");
-    try {
-      await api("/api/session", { method: "DELETE", headers: { "x-livepilot": "1" } });
-      setUser(null);
+      setRequestMember(result.user.username); setUser(result.user); notifyAccountChange();
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -179,6 +168,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
             </button>
           </form>
           <p className="login-help"><LockIcon /> 仅限已授权成员访问</p>
+          <AccountSwitcher />
         </section>
         <footer className="login-footer"><span>LiveNest Studio</span><Link href="/download">下载 Windows 客户端 ↗</Link></footer>
       </main>
@@ -197,20 +187,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           </div>
 
           <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
-            <div className="user-tag">
-              <UserIcon />
-              <span title={user.username}>{user.username}</span>
-            </div>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => void exitSession()}
-              disabled={busy}
-              aria-label="退出登录"
-            >
-              <LogOutIcon />
-              <span>退出</span>
-            </button>
+            <AccountSwitcher user={user} />
           </div>
         </div>
       </header>

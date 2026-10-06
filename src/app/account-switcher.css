@@ -1,0 +1,22 @@
+/* 网页账号切换菜单：沿用工作台字号与边界，移动端保持可触摸且不溢出。 */
+.account-switcher { position: relative; font-size: 14px; }
+.account-switcher > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 8px; list-style: none; cursor: pointer; border-radius: 6px; color: var(--text-primary); }
+.account-switcher > summary::-webkit-details-marker { display: none; }
+.account-switcher > summary svg { width: 16px; height: 16px; }
+.account-switcher > summary:hover, .account-switcher[open] > summary { background: var(--surface-hover, #f3f6fa); }
+.account-switcher-panel { position: absolute; right: 0; top: calc(100% + 6px); width: 290px; max-width: calc(100vw - 32px); padding: 12px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-base); box-shadow: 0 8px 24px #182b491c; z-index: 60; }
+.account-switcher-caption { display: block; padding: 4px 8px 8px; color: var(--text-muted); font-size: 12px; }
+.account-switcher-list { display: grid; gap: 4px; }
+.account-switcher-list button { display: flex; align-items: center; justify-content: space-between; text-align: left; min-height: 52px; padding: 8px; width: 100%; border: 0; background: transparent; }
+.account-switcher-list button:disabled { opacity: 1; color: var(--text-primary); background: #edf2ff; }
+.account-switcher-list button > span:first-child { display: grid; gap: 2px; }
+.account-switcher-list button small { font-size: 12px; color: var(--text-muted); }
+.account-switcher-list button > span:last-child { color: var(--text-muted); font-size: 12px; }
+.account-switcher-add, .account-switcher-exit { width: 100%; text-align: left; min-height: 44px; margin-top: 8px; padding: 8px; border: 0; background: transparent; }
+.account-switcher-exit { border-top: 1px solid var(--border-subtle); border-radius: 0; color: var(--text-muted); }
+.account-switcher-panel form { display: grid; gap: 12px; padding: 8px 0; }
+.account-switcher-panel form label { display: grid; gap: 6px; }
+.account-switcher-panel form input { width: 100%; min-width: 0; }
+.account-switcher-form-actions { display: flex; gap: 8px; }
+.account-switcher-error { margin: 8px 0 0; color: #b4233a; font-size: 13px; }
+.login-card > .account-switcher { margin: 16px auto 0; width: fit-content; }

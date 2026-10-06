@@ -5,8 +5,8 @@ import { AppError, problemFor } from "../src/core/errors";
 import { failed } from "../src/server/http";
 import { heartbeatFeedback, legacyFeedback } from "../src/agent/feedback";
 import type { Worker } from "../src/agent/worker";
-import { api } from "../src/app/client-request";
-afterEach(()=>vi.unstubAllGlobals());
+import { api, setRequestMember } from "../src/app/client-request";
+afterEach(()=>{setRequestMember();vi.unstubAllGlobals();});
 it("validates optional metadata and rejects executable actions or secret context",()=>{
  const p=makeProblem("OBS_READ","安全说明",{stage:undefined,target:{instanceId:"obs_b"}});
  expect(problemSchema.safeParse(p).success).toBe(true);
@@ -44,6 +44,10 @@ it.each([401,403,429,503])("classifies non-JSON HTTP %s without exposing HTML",a
 it("bounds a write wait, reports unknown outcome and never retries it",async()=>{
  const fetcher=vi.fn((_url,options)=>new Promise((_resolve,reject)=>options.signal.addEventListener("abort",()=>reject(options.signal.reason))));vi.stubGlobal("fetch",fetcher);
  await expect(api("/api/control",{method:"POST",timeoutMs:10})).rejects.toMatchObject({problem:{outcome:"unknown"}});expect(fetcher).toHaveBeenCalledOnce();
+});
+it("signals a changed browser identity without replaying a stale control request",async()=>{
+ const dispatchEvent=vi.fn();const fetcher=vi.fn(async()=>Response.json({problem:makeProblem("ACCOUNT_CHANGED","账号已切换")},{status:409}));vi.stubGlobal("window",{dispatchEvent});vi.stubGlobal("fetch",fetcher);setRequestMember("alice");
+ await expect(api("/api/control",{method:"POST"})).rejects.toMatchObject({problem:{code:"ACCOUNT_CHANGED"},status:409});expect(fetcher).toHaveBeenCalledOnce();expect((fetcher.mock.calls as unknown as [string,RequestInit][])[0][1].headers).toBeInstanceOf(Headers);expect(new Headers((fetcher.mock.calls as unknown as [string,RequestInit][])[0][1].headers).get("x-livepilot-user")).toBe("alice");expect(dispatchEvent.mock.calls.map(call=>call[0].type)).toEqual(["livepilot-account-changed"]);
 });
 it("uses the documented read, write, RPC and chunk budgets",async()=>{
  const timeout=vi.spyOn(AbortSignal,"timeout");vi.stubGlobal("fetch",vi.fn(async()=>Response.json({ok:true})));

@@ -61,7 +61,17 @@ export async function authenticate(request: Request, desktop = false): Promise<M
   const user = session && state?.users.find(u => u.username === session.username && !u.disabled && u.revision === session.revision);
   if (!session || session.expires <= Date.now() || !user) throw new AppError("AUTH", "登录已失效，请重新登录。", 401);
   if (!!session.desktop !== desktop || (desktop && accountRole(user) !== "customer")) throw new AppError("AUTH", "请使用客户账号重新登录。", 401);
+  const expected = request.headers.get("x-livepilot-user");
+  if (!desktop && expected && expected !== user.username) throw new AppError("ACCOUNT_CHANGED", "账号已切换，请刷新页面后继续。", 409);
   return { username: user.username, role: accountRole(user) };
+}
+/** 仅验证已有网页会话；切换清单不延长有效期，桌面凭据不能用于网页登录。 */
+export async function webSession(token: string) {
+  if (!/^[a-f0-9]{64}$/.test(token)) return;
+  const state = await accessStore().read<AccessState>("access.json"); const session = state?.sessions[digest(token)];
+  const user = session && state?.users.find(value => value.username === session.username && !value.disabled && value.revision === session.revision);
+  if (!session || session.desktop || session.expires <= Date.now() || !user) return;
+  return { user: { username: user.username, role: accountRole(user) }, expires: session.expires };
 }
 /** 退出仅撤销当前会话，不干预 B 上执行中的直播。 */
 export async function logout(request: Request, desktop = false) {
