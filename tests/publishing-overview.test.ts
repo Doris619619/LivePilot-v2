@@ -116,8 +116,9 @@ it("excludes unpublished plan items while keeping missing admitted jobs and paus
   expect(publicationCounts([paused], draft)).toMatchObject({ total: 3, pending: 3, paused: 1, excluded: 1 });
 });
 
-it("uses effective time before original time and keeps overdue scheduled work for reconciliation", () => {
+it("uses a confirmed effective time before original time and keeps overdue scheduled work for reconciliation", () => {
   const first = job("scheduled"); first.spec.originalPublishAt = "2026-10-08T00:00:00Z"; first.observed!.effectivePublishAt = "2026-10-02T00:00:00Z";
+  first.spec.profile.scheduled = true; Object.assign(first.observed!, { videoId: "synthetic", observedPrivacy: "private", remoteCheckedAt: 1 });
   const other = job("scheduled"); other.spec.originalPublishAt = "2026-10-04T00:00:00Z";
   const finished = job("published"); finished.observed!.observedPrivacy = "public"; finished.spec.originalPublishAt = "2026-10-01T00:00:00Z";
   expect(nextPublication([other, first, finished])).toEqual({ instant: first.observed!.effectivePublishAt, timezone: "UTC" });

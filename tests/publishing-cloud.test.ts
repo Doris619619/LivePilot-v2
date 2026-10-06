@@ -54,7 +54,67 @@ it("accepts a missing-checkpoint read-only report using the fixed prepared packa
 });
 it("requires privacy consent and current device ownership", async () => { await expect(savePublishingProfile(alice, fixtureJob().profile)).rejects.toMatchObject({ code: "PRIVACY" }); const b = await batch(); await confirmPublishingBatch(alice, b.id, false, true); expect((await publishingView({ username: "bob", role: "customer" })).jobs).toEqual([]); await expect(changePublishingJob({ username: "bob", role: "customer" }, (await publishingView(alice)).jobs[0].spec.id, "cancel")).rejects.toMatchObject({ code: "FORBIDDEN" }); });
 it("confirms idempotently with immutable Profile snapshot and explicit per-item copy", async () => { const b = await batch(); const jobs = await confirmPublishingBatch(alice, b.id, false, true, [{ assetId: b.assets[0].id, title: "Manual 🌙", description: "" }]); expect(jobs[0].spec.overrides).toEqual({ title: "Manual 🌙", description: "" }); const again = await confirmPublishingBatch(alice, b.id, false, true); expect(again[0].spec.id).toBe(jobs[0].spec.id); await savePublishingProfile(alice, { ...b.profile, revision: 2, titleTemplate: "Changed" }); expect((await publishingView(alice)).jobs[0].spec.profile.titleTemplate).toBe("{{filenameStem}}"); });
-it("requires real public verification, preserves original schedule and dispatches only rolling window", async () => { await acceptPublishingPrivacy(alice, PRIVACY_VERSION); const profile = fixtureJob().profile; profile.privacy = "public"; profile.scheduled = true; remote.scan.mockResolvedValue({ assets: Array.from({ length: 100 }, (_, i) => ({ ...fixtureJob().asset, id: i.toString(16).padStart(64, "0"), version: i.toString(16).padStart(64, "0"), filename: `movie${i}.mp4` })), thumbnails: [], channelId: "channel_one" }); await savePublishingProfile(alice, profile); const b = await previewPublishingBatch(alice, profile.id, (await remote.scan()).assets.map((a: { id: string }) => a.id)); await expect(confirmPublishingBatch(alice, b.id, false, true)).rejects.toMatchObject({ code: "PUBLIC_UNVERIFIED" }); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, publicVerified: true, privacyContact: "synthetic@example.invalid", verificationNote: "Synthetic test only" }); const jobs = await confirmPublishingBatch(alice, b.id, false, true); await publishingTick(); const queue = await agentStore("pc").read<{ records: unknown[] }>("tasks.json"); expect(queue?.records).toHaveLength(jobs.filter(j => Date.parse(j.spec.originalPublishAt!) <= Date.now() + 28 * 86400_000).length); const first = jobs[0]; await changePublishingJob(alice, first.spec.id, "reschedule", "2026-10-01T19:30:00Z"); const changed = (await publishingView(alice)).jobs[0]; expect(changed.initialPublishAt).toBe(first.spec.originalPublishAt); expect(changed.spec.originalPublishAt).toBe("2026-10-01T19:30:00Z"); });
+/** 废弃产品开关不阻塞普通客户确认；真实公开由 Agent 的 YouTube 回读判断，仍受滚动窗口和预算约束。 */
+it("confirms a public batch without administrator activation and preserves rolling-window dispatch", async () => {
+  await acceptPublishingPrivacy(alice, PRIVACY_VERSION); const profile = fixtureJob().profile; profile.privacy = "public"; profile.scheduled = true;
+  remote.scan.mockResolvedValue({ assets: Array.from({ length: 100 }, (_, i) => ({ ...fixtureJob().asset, id: i.toString(16).padStart(64, "0"), version: i.toString(16).padStart(64, "0"), filename: `movie${i}.mp4` })), thumbnails: [], channelId: "channel_one" });
+  await savePublishingProfile(alice, profile); const b = await previewPublishingBatch(alice, profile.id, (await remote.scan()).assets.map((a: { id: string }) => a.id));
+  const saved = await publishingStore().read<{ policy: typeof defaultPolicy }>("state.json"); saved!.policy = { ...saved!.policy, enabled: false, publicVerified: false, privacyContact: "", verificationNote: "" }; await publishingStore().write("state.json", saved);
+  await expect(confirmPublishingBatch(alice, b.id, false, false)).rejects.toMatchObject({ code: "CONSENT" });
+  const jobs = await confirmPublishingBatch(alice, b.id, false, true); expect(jobs[0].spec.policy).toMatchObject({ enabled: true, publicVerified: true, verificationNote: "" });
+  await publishingTick(); const queue = await agentStore("pc").read<{ records: unknown[] }>("tasks.json");
+  expect(queue?.records).toHaveLength(jobs.filter(j => Date.parse(j.spec.originalPublishAt!) <= Date.now() + 28 * 86400_000).length);
+  const first = jobs[0]; await changePublishingJob(alice, first.spec.id, "reschedule", "2026-10-01T19:30:00Z"); const changed = (await publishingView(alice)).jobs[0];
+  expect(changed.initialPublishAt).toBe(first.spec.originalPublishAt); expect(changed.spec.originalPublishAt).toBe("2026-10-01T19:30:00Z");
+});
+
+/** 旧 False 存储仅归一兼容位，不触发恢复、改期或新增修订；仍保留人工处理结果。 */
+it.each(["paused", "needs_attention"] as const)("normalizes an existing %s task without changing its intent or upload facts", async state => {
+  const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true);
+  if (state === "paused") await changePublishingJob(alice, job.spec.id, "pause");
+  const current = (await publishingView(alice)).jobs[0];
+  await reportPublishing("pc", [{ id: job.spec.id, revision: current.spec.revision, sequence: 1, state, videoId: "existing_video", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const saved = await publishingStore().read<{ policy: typeof defaultPolicy; jobs: typeof job[] }>("state.json");
+  saved!.policy.enabled = false; saved!.policy.publicVerified = false; saved!.jobs[0].spec.policy.enabled = false; saved!.jobs[0].spec.policy.publicVerified = false; const before = structuredClone(saved!.jobs[0]); await publishingStore().write("state.json", saved);
+  const normalized = (await publishingView(alice)).jobs[0]; expect(normalized).toEqual({ ...before, spec: { ...before.spec, policy: { ...before.spec.policy, enabled: true, publicVerified: true } } });
+  await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();
+  expect((await publishingView(alice)).jobs[0]).toEqual(normalized);
+});
+
+/** 新策略只接受可验证运行参数，客户不能越权；留空旧验收记录不再成为测试入口门槛。 */
+it("saves runtime policy without activation evidence while retaining administrator permissions and limits", async () => {
+  const value = { ...defaultPolicy, enabled: false, publicVerified: false, uploadsPerDay: 3, privacyContact: "", verificationNote: "" };
+  await expect(savePublishingPolicy(alice, value)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  const result = await savePublishingPolicy(admin, value); expect(result).toEqual({ ...value, enabled: true, publicVerified: true });
+  await expect(savePublishingPolicy(admin, { ...value, uploadsPerDay: 0 })).rejects.toThrow();
+  expect((await publishingView(alice)).policy.uploadsPerDay).toBe(3);
+});
+
+/** 保存预算不是恢复授权；异常和失败的任务修订、报告、原策略均保留。 */
+it.each(["needs_attention", "failed"] as const)("does not implicitly resume a %s task when runtime policy is saved", async state => {
+  const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true);
+  await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state, videoId: "existing_video", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const before = (await publishingView(alice)).jobs[0];
+  await savePublishingPolicy(admin, { ...defaultPolicy, uploadMbps: 3, publishLeadSeconds: 900 });
+  expect((await publishingView(alice)).jobs[0]).toEqual(before);
+  await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();
+  if (state === "needs_attention") {
+    const resumed = await changePublishingJob(alice, job.spec.id, "resume");
+    expect(resumed.spec).toMatchObject({ revision: before.spec.revision + 1, desired: "run", policy: { uploadMbps: 3, publishLeadSeconds: 900 } });
+    expect(resumed.observed).toEqual(before.observed); expect(resumed.spec.originalPublishAt).toBe(before.spec.originalPublishAt);
+    await publishingTick(); expect((await agentStore("pc").read<{ records: unknown[] }>("tasks.json"))?.records).toHaveLength(1);
+  }
+});
+
+/** 失败是终态，不能受理 Runner 永远不会执行的控制；已有远端关联仍允许只读核对。 */
+it("rejects failed-task execution controls while keeping read-only reconciliation available", async () => {
+  const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true);
+  await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state: "failed", videoId: "existing_video", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const before = (await publishingView(alice)).jobs[0];
+  for (const action of ["pause", "resume", "cancel", "reschedule"] as const) await expect(changePublishingJob(alice, job.spec.id, action, "2026-10-04T19:00:00Z")).rejects.toMatchObject({ code: "TERMINAL" });
+  expect((await publishingView(alice)).jobs[0]).toEqual(before);
+  const query = await changePublishingJob(alice, job.spec.id, "reconcile"); expect(query.spec.reconcileRevision).toBe(before.spec.revision + 1); expect(query.observed?.videoId).toBe("existing_video"); expect(query.spec.desired).toBe(before.spec.desired);
+});
 it("stores sequence acknowledgements, rejects another agent and admits project budget idempotently", async () => { const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true); const report = { id: job.spec.id, revision: 1, sequence: 2, state: "uploading" as const, offset: 100, total: job.spec.asset.size, updatedAt: Date.now() }; await expect(reportPublishing("other", [report])).rejects.toMatchObject({ code: "REPORT" }); await reportPublishing("pc", [report]); await reportPublishing("pc", [{ ...report, sequence: 1, offset: 0 }]); expect((await publishingView(alice)).jobs[0].observed?.offset).toBe(100); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, privacyContact: "synthetic@example.invalid", uploadsPerDay: 1, otherUnitsPerDay: 50 }); const receipt = randomUUID(); await chargePublishing("pc", job.spec.id, receipt, 50, true); await chargePublishing("pc", job.spec.id, receipt, 50, true); await expect(chargePublishing("pc", job.spec.id, randomUUID(), 1, false)).rejects.toMatchObject({ code: "VIDEO_QUOTA" }); await expect(chargePublishing("pc", job.spec.id, randomUUID(), 0, true)).rejects.toMatchObject({ code: "VIDEO_QUOTA" }); });
 it("removes Cloud publishing data immediately but keeps cleanup pending until correct Agent confirmation", async () => { const b = await batch(); await confirmPublishingBatch(alice, b.id, false, true); const cleanup = await requestPublishingCleanup(alice, "pc", "main"); expect((await publishingView(alice)).jobs).toEqual([]); expect((await publishingView(alice)).cleanups[0].state).toBe("pending"); await expect(savePublishingProfile(alice, fixtureJob().profile)).rejects.toMatchObject({ code: "CLEANUP" }); await expect(completePublishingCleanup("other", cleanup.id)).rejects.toMatchObject({ code: "CLEANUP" }); await completePublishingCleanup("pc", cleanup.id); expect((await publishingView(alice)).cleanups[0].state).toBe("complete"); expect(await cloudStore().read("bindings.json")).toEqual([]); });
 it("turns confirmed invalid authorization into a priority cleanup instead of continued uploads", async () => { const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true); await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "needs_attention", offset: 0, total: job.spec.asset.size, updatedAt: Date.now(), authorizationInvalid: true }]); expect((await publishingView(alice)).jobs).toEqual([]); expect((await publishingView(alice)).cleanups[0].state).toBe("pending"); expect(await publishingStore().read("state.json")).toBeTruthy(); });

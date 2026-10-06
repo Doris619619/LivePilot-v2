@@ -1,6 +1,7 @@
 /** 单台 Agent 的持久发布运行器；短指令与长上传分离，重启先探测旧 session。 */
 import path from "node:path";
 import { stat } from "node:fs/promises";
+import { Temporal } from "@js-temporal/polyfill";
 import { config, dataRoot } from "../config";
 import { seal, unseal, Store } from "../storage";
 import { AppError, safeError, sleep } from "../errors";
@@ -16,11 +17,37 @@ import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
 import type { YouTubeAuth } from "../youtube/auth";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
-type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number } };
+type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number; precisionRecoveryCandidate?: string } };
 type Reconciliation = { entry: Entry; revision: number; videoId?: string };
 type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
-/** RFC3339 的不同等价格式按同一时刻比较，避免 .000Z 与 Z 导致误判排期。 */
-function sameMoment(a?: unknown, b?: string) { return typeof a === "string" && !!b && Number.isFinite(Date.parse(a)) && Date.parse(a) === Date.parse(b); }
+/** YouTube 按秒回读排期；兼容旧毫秒候选和等价 RFC3339 格式，但不接受跨秒或无效时间。 */
+function sameMoment(a?: unknown, b?: string) {
+  if (typeof a !== "string" || !b) return false;
+  try { return Math.floor(Temporal.Instant.from(a).epochMilliseconds / 1000) === Math.floor(Temporal.Instant.from(b).epochMilliseconds / 1000); }
+  catch { return false; }
+}
+/** 完整确认本任务可写元数据，不能仅因标题和排期接近就覆盖 Studio 人工修改。 */
+function metadataMatches(video: VideoResource, entry: Entry) {
+  const { metadata } = entry.report; const { profile } = entry.spec;
+  return !!metadata && video.snippet?.title === metadata.title && video.snippet?.description === metadata.description && video.snippet?.categoryId === profile.categoryId && JSON.stringify(video.snippet?.tags || []) === JSON.stringify(profile.tags) && video.status?.selfDeclaredMadeForKids === profile.madeForKids && video.status?.license === profile.license && video.status?.embeddable === profile.embeddable && video.status?.containsSyntheticMedia === profile.containsSyntheticMedia;
+}
+/** 固定旧版毫秒误报的原候选归属；不能将旧结果复用到待改期、其他异常或不完整最终设置。 */
+function legacyPrecisionEvidence(entry: Entry, video: VideoResource) {
+  const candidate = entry.report.effectivePublishAt;
+  return entry.report.state === "needs_attention" && entry.report.message === "YouTube 排期未确认，请核对 API Audit 和频道设置。"
+    && entry.spec.desired === "run" && entry.spec.profile.scheduled && !entry.expiredData && entry.finalized === false && entry.resumeState === "finalizing"
+    && !entry.scheduleRevisionPending && entry.report.offset === entry.report.total && entry.report.revision === entry.spec.revision
+    && !!candidate && entry.reconciliation?.precisionRecoveryCandidate === candidate && Date.parse(candidate) % 1000 > 0
+    && video.snippet?.channelId === entry.spec.profile.channelId
+    && (video.processingDetails?.processingStatus === "succeeded" || video.status?.uploadStatus === "processed")
+    && metadataMatches(video, entry) && (entry.spec.profile.thumbnailMode === "none" || entry.thumbnailDone === true)
+    && entry.spec.profile.playlistIds.every(id => entry.playlistsDone.includes(id));
+}
+/** 私密回读必须具有同一 UTC 秒的真实 publishAt；公开回读不提供历史排期成功证据。 */
+function legacyPrecisionScheduleMatches(entry: Entry, video: VideoResource) {
+  const remote = video.status?.publishAt;
+  return legacyPrecisionEvidence(entry, video) && video.status?.privacyStatus === "private" && typeof remote === "string" && Date.parse(remote) % 1000 === 0 && sameMoment(remote, entry.report.effectivePublishAt);
+}
 export class PublishingRunner {
   private entries = new Map<string, Entry>(); private loaded = false; private writes: Promise<unknown> = Promise.resolve(); private active = new Map<string, Promise<void>>(); private aborters = new Map<string, AbortController>(); private stopped = false;
   private archives = new Map<string, Promise<unknown>>();
@@ -30,8 +57,8 @@ export class PublishingRunner {
   readonly storage: PublishingStore; private now: () => number;
   /** 每台物理机器创建一次；API 与时钟可注入以验证崩溃恢复而不访问真实频道。 */
   constructor(private services: Map<string, Service>, private options: Options = {}) { this.storage = options.store || new PublishingStore(path.join(dataRoot(), "agent", "publishing")); this.now = options.now || Date.now; }
-  /** 初次启动仅载入加密日志，不自动重放旧 HTTP 操作。 */
-  async load() { if (this.loaded) return; this.loading ??= (async () => { const value = await this.storage.read<string>("entries.enc"); if (value) for (const entry of unseal<Entry[]>(value)) { jobSpecSchema.parse(entry.spec); this.entries.set(entry.spec.id, entry); } this.loaded = true; })(); try { await this.loading; } finally { this.loading = undefined; } }
+  /** 初次启动载入并规范化兼容策略，不改变旧状态或重放 HTTP 操作。 */
+  async load() { if (this.loaded) return; this.loading ??= (async () => { const value = await this.storage.read<string>("entries.enc"); if (value) for (const entry of unseal<Entry[]>(value)) { entry.spec = jobSpecSchema.parse(entry.spec); this.entries.set(entry.spec.id, entry); } this.loaded = true; })(); try { await this.loading; } finally { this.loading = undefined; } }
   /** 串行落盘最新完整日志，包含所有尚未被 Cloud 确认的报告。 */
   private save() { const next = this.writes.then(() => this.storage.write("entries.enc", seal([...this.entries.values()]))); this.writes = next.catch(() => {}); return next; }
   /** 幂等接收任务修订；目标和素材不可通过相同 jobId 偷换。 */
@@ -46,7 +73,9 @@ export class PublishingRunner {
     // 查询修订只保存最新意图和持久查询请求，不能以 run 标记恢复暂停、异常或重做发布设置。
     if (spec.reconcileRevision === spec.revision) {
       const entry: Entry = old || { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "needs_attention", offset: 0, total: spec.reconcileTotal || spec.asset.size, updatedAt: this.now() }, expiredData: true, playlistsDone: [], failures: 0 };
-      entry.spec = spec; entry.reconciliation = { revision: spec.revision, nextAttemptAt: this.now() };
+      // 核对修订会更新公开报告版本；先固定原候选归属，不能把旧修订的结果当作当前排期。
+      const precisionRecoveryCandidate = old && old.report.revision === old.spec.revision ? old.report.effectivePublishAt : undefined;
+      entry.spec = spec; entry.reconciliation = { revision: spec.revision, nextAttemptAt: this.now(), precisionRecoveryCandidate };
       if (old && spec.desired !== "run") this.aborters.get(spec.id)?.abort();
       this.entries.set(spec.id, entry); await this.update(entry, {}); return { ok: true };
     }
@@ -87,12 +116,12 @@ export class PublishingRunner {
   private async update(entry: Entry, change: Partial<PublishingReport>) { Object.assign(entry.report, change, { sequence: entry.report.sequence + 1, revision: entry.spec.revision, updatedAt: this.now() }); await this.save(); }
   /** 旧排期请求返回后不得确认新修订；下一 tick 用相同 videoId 回读并应用当前意图。 */
   private currentFinalization(entry: Entry, revision: number) { return entry.spec.revision === revision && entry.spec.desired === "run" && !this.stopped; }
-  /** 视频已公开时保留远端事实，并明确报告改期未应用；绝不把它改回私密。 */
-  private async alreadyPublic(entry: Entry, cancellation = false) {
-    const rejected = entry.scheduleRevisionPending || !!entry.reschedulePreviousAt;
+  /** 已公开不改回私密；待修订明确拒绝，旧未确认候选只能保留未知改期结果，不能宣称失败。 */
+  private async alreadyPublic(entry: Entry, cancellation = false, unconfirmedSchedule = false) {
+    const rejected = !unconfirmedSchedule && (entry.scheduleRevisionPending || !!entry.reschedulePreviousAt);
     if (rejected && entry.reschedulePreviousAt) entry.report.effectivePublishAt = entry.reschedulePreviousAt;
     entry.scheduleRevisionPending = false; entry.reschedulePreviousAt = undefined;
-    await this.update(entry, { state: "published", observedPrivacy: "public", remoteCheckedAt: this.now(), nextAttemptAt: this.now() + 25 * 86400_000, message: cancellation ? "视频已公开，取消未应用。" : rejected ? "视频已公开，改期未应用。" : undefined });
+    await this.update(entry, { state: "published", observedPrivacy: "public", remoteCheckedAt: this.now(), nextAttemptAt: this.now() + 25 * 86400_000, message: cancellation ? "视频已公开，取消未应用。" : unconfirmedSchedule ? "视频已公开；此前改期结果未确认。" : rejected ? "视频已公开，改期未应用。" : undefined });
   }
   /** 旧取消可能已生效；先回读原视频，再恢复最新意图，不能替新修订确认取消或错误。 */
   private async supersededCancellation(entry: Entry, api: VideoPort) {
@@ -174,8 +203,6 @@ export class PublishingRunner {
       if (!currentCancellation()) { await this.supersededCancellation(entry, api); return; }
       await this.update(entry, { state: "cancelled", nextAttemptAt: undefined, message: "任务已取消；本地源文件和 YouTube 视频未删除。" }); return;
     }
-    if (!entry.spec.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "管理员尚未开启发布模块。");
-    if (entry.spec.profile.privacy === "public" && !entry.spec.policy.publicVerified) throw new AppError("PUBLIC_UNVERIFIED", "当前 API Project 尚未完成自动公开验收。");
     if (entry.report.state === "retry_wait") await this.update(entry, { state: entry.resumeState || (entry.report.videoId ? "processing" : "ready"), nextAttemptAt: undefined });
     entry.resumeState = undefined;
     if (entry.report.state === "scheduled" && entry.report.videoId) return;
@@ -213,7 +240,6 @@ export class PublishingRunner {
       if (!entry.report.videoId && !entry.session) { entry.session = await api.begin({ ...entry.spec, asset: this.uploadAsset(entry) }, "LiveNest upload " + entry.spec.id); entry.finalChunkPossible = false; await this.save(); }
       while (!entry.report.videoId && !this.stopped && entry.spec.desired === "run") {
         if (entry.report.offset === this.uploadAsset(entry).size) throw new VideoApiError("UPLOAD_RESULT", "YouTube 已接收全部字节但结果尚未确认，稍后探测原会话。", true);
-        if (!entry.spec.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "发布策略已关闭，保留检查点等待管理员开启。");
         if (entry.spec.contentPackage) await validatePackage(publishingRoot(), entry.spec.contentPackage);
         await this.checkChannel(entry);
         const file = await stat(checked.file); if (file.size !== this.uploadAsset(entry).size || file.mtimeMs !== this.uploadAsset(entry).mtimeMs) throw new AppError("ASSET_CHANGED", "上传期间素材发生变化，已停止。");
@@ -251,8 +277,8 @@ export class PublishingRunner {
     if (current.status?.privacyStatus === "public") { await this.alreadyPublic(entry); return; }
     // 更新响应丢失时，先比对完整元数据和排期，避免将已成功排期再次向后推迟。
     const scheduleMatches = !entry.spec.profile.scheduled || !entry.scheduleRevisionPending && sameMoment(current.status?.publishAt, entry.report.effectivePublishAt);
-    const metadataMatches = current.snippet?.title === metadata.title && current.snippet?.description === metadata.description && current.snippet?.categoryId === entry.spec.profile.categoryId && JSON.stringify(current.snippet?.tags || []) === JSON.stringify(entry.spec.profile.tags) && current.status?.selfDeclaredMadeForKids === entry.spec.profile.madeForKids && current.status?.license === entry.spec.profile.license && current.status?.embeddable === entry.spec.profile.embeddable && current.status?.containsSyntheticMedia === entry.spec.profile.containsSyntheticMedia;
-    if (!entry.finalized && !(scheduleMatches && metadataMatches && current.status?.privacyStatus === (entry.spec.profile.scheduled ? "private" : entry.spec.profile.privacy))) {
+    const copyMatches = metadataMatches(current, entry);
+    if (!entry.finalized && !(scheduleMatches && copyMatches && current.status?.privacyStatus === (entry.spec.profile.scheduled ? "private" : entry.spec.profile.privacy))) {
       const publishAt = finalizingSpec.profile.scheduled ? effectivePublishAt(finalizingSpec.originalPublishAt!, finalizingSpec.policy.publishLeadSeconds, this.now()) : undefined;
       entry.scheduleRevisionPending = false;
       await this.update(entry, { effectivePublishAt: publishAt });
@@ -272,12 +298,12 @@ export class PublishingRunner {
     const after = (await api.list([entry.report.videoId]))[0];
     if (!this.currentFinalization(entry, finalizingRevision)) return;
     if (!after) throw new VideoApiError("VIDEO_MISSING", "更新结果无法核对。", true);
-    if (entry.spec.profile.scheduled && after.status?.privacyStatus !== "public" && (!sameMoment(after.status?.publishAt, entry.report.effectivePublishAt) || after.status?.privacyStatus !== "private")) { entry.finalized = false; await this.save(); if (!this.currentFinalization(entry, finalizingRevision)) return; throw new VideoApiError("SCHEDULE_UNCONFIRMED", "YouTube 排期未确认，请核对 API Audit 和频道设置。"); }
+    if (entry.spec.profile.scheduled && after.status?.privacyStatus !== "public" && (!sameMoment(after.status?.publishAt, entry.report.effectivePublishAt) || after.status?.privacyStatus !== "private")) { entry.finalized = false; await this.save(); if (!this.currentFinalization(entry, finalizingRevision)) return; throw new VideoApiError("SCHEDULE_UNCONFIRMED", "YouTube 返回的排期与本次设置不一致，请核对视频状态。"); }
     if (!entry.spec.profile.scheduled && after.status?.privacyStatus !== entry.spec.profile.privacy) { entry.finalized = false; await this.save(); if (!this.currentFinalization(entry, finalizingRevision)) return; throw new VideoApiError("PRIVACY_UNCONFIRMED", "YouTube 可见性未确认，请核对项目审核状态。"); }
     // 回读确认后才固定完成标记；旧检查点的错误标记也在上面的不一致分支清除。
     entry.finalized = true;
     entry.reschedulePreviousAt = undefined;
-    await this.update(entry, { state: after.status?.privacyStatus === "public" ? "published" : entry.spec.profile.scheduled ? "scheduled" : "completed", observedPrivacy: after.status?.privacyStatus, remoteCheckedAt: this.now(), nextAttemptAt: this.now() + entry.spec.policy.scheduledPollSeconds * 1000, message: undefined });
+    await this.update(entry, { state: after.status?.privacyStatus === "public" ? "published" : entry.spec.profile.scheduled ? "scheduled" : "completed", ...(entry.spec.profile.scheduled && after.status?.privacyStatus === "private" && after.status.publishAt ? { effectivePublishAt: new Date(after.status.publishAt).toISOString() } : {}), observedPrivacy: after.status?.privacyStatus, remoteCheckedAt: this.now(), nextAttemptAt: this.now() + entry.spec.policy.scheduledPollSeconds * 1000, message: undefined });
   }
   /** session 失效只有确认末块未发送时可重建；否则必须精确匹配唯一视频。 */
   private async acceptProbe(entry: Entry, probe: { offset: number; videoId?: string; expired?: boolean }, api: VideoPort) {
@@ -325,7 +351,7 @@ export class PublishingRunner {
     request.entry.reconciliation!.nextAttemptAt = this.now() + request.entry.spec.policy.processingPollSeconds * 1000;
     await this.update(request.entry, { message });
   }
-  /** 只核对远端事实；私密/缺失结果不能恢复处理或覆盖 Studio 手工排期，公开和失败事实可更新。 */
+  /** 只核对远端事实；精确旧毫秒误报可确认排期，其他私密/缺失结果不恢复处理或覆盖 Studio。 */
   private async readReconciliation(batch: Reconciliation[]) {
     for (const request of batch.filter(value => !value.videoId)) if (this.currentReconciliation(request)) {
       delete request.entry.reconciliation;
@@ -347,9 +373,16 @@ export class PublishingRunner {
       const entry = request.entry; const video = results.find(value => value.id === request.videoId);
       if (!video) { await this.deferReconciliation(request, "视频状态暂时无法核对，稍后重试；未认定删除或失败。"); continue; }
       if (video.snippet?.channelId && video.snippet.channelId !== entry.spec.profile.channelId) { await this.deferReconciliation(request, "查询结果频道不匹配，原处理设置保留，请检查授权。"); continue; }
+      const recoverPrecision = legacyPrecisionScheduleMatches(entry, video);
+      const unconfirmedLegacySchedule = legacyPrecisionEvidence(entry, video);
       delete entry.reconciliation;
-      if (video.status?.privacyStatus === "public") { await this.alreadyPublic(entry, entry.spec.desired === "cancel"); continue; }
+      if (video.status?.privacyStatus === "public") { await this.alreadyPublic(entry, entry.spec.desired === "cancel", unconfirmedLegacySchedule); continue; }
       const failed = ["failed", "terminated"].includes(video.processingDetails?.processingStatus || "") || ["failed", "rejected"].includes(video.status?.uploadStatus || "");
+      if (!failed && recoverPrecision) {
+        entry.finalized = true; entry.reschedulePreviousAt = undefined; entry.failures = 0; entry.resumeState = undefined;
+        await this.update(entry, { state: "scheduled", effectivePublishAt: new Date(video.status!.publishAt!).toISOString(), observedPrivacy: "private", processingStatus: video.processingDetails?.processingStatus, remoteCheckedAt: this.now(), nextAttemptAt: this.now() + entry.spec.policy.scheduledPollSeconds * 1000, message: undefined });
+        continue;
+      }
       const changed = entry.report.state === "scheduled" && (video.status?.privacyStatus !== "private" || !sameMoment(video.status.publishAt, entry.report.effectivePublishAt));
       await this.update(entry, { state: failed ? "failed" : changed ? "needs_attention" : entry.report.state, processingStatus: video.processingDetails?.processingStatus, observedPrivacy: video.status?.privacyStatus, remoteCheckedAt: this.now(), message: changed ? "YouTube 排期已被修改，未自动覆盖人工操作。" : entry.report.message });
     }

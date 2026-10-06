@@ -7,7 +7,7 @@ Cloud 保存用户确认的发布意图；Windows Agent 直接读取本地视频
 
 ## 入口与启用
 
-先更新 Cloud，再更新 CLI / 桌面 Agent。旧 `publishing-v1` 任务继续使用原素材与检查点；发布包要求 `publishing-v2`，独立发布账号要求 `publishing-accounts-v1`。默认 `enabled=false`、`publicVerified=false`；管理员配置隐私联系方式并完成真实项目验收后才能开启自动公开。直播 API、构建和模拟网页不能替代验收。
+先更新 Cloud，再更新 CLI / 桌面 Agent。旧 `publishing-v1` 任务继续使用原素材与检查点；发布包要求 `publishing-v2`，独立发布账号要求 `publishing-accounts-v1`。发布流程不再依赖管理员“启用发布”和“允许自动公开”两道产品开关；旧协议字段归一为可用，仅用于兼容旧 Agent，不表示 Google 项目已通过审核。身份、频道、合规同意和运行预算继续校验。真实项目限制由 YouTube 返回，直播 API、构建和模拟网页不能替代真实验收。
 
 在“发布视频”选择电脑并点击“添加账号”，单独授权 YouTube 发布频道；同一电脑可保存多个发布账号，每个账号可配置多个内容批次。账号可与直播使用不同频道，授权与凭据保存在 Agent 的独立账号目录；新发布计划必须指定这个账号，不能默默沿用直播授权。重新授权固定原频道，要使用另一个频道则添加新账号。旧已确认任务保持原实例授权和检查点，不自动迁移；Cloud 只保存账号身份和绑定结果，不接触 Token。
 
@@ -130,7 +130,7 @@ retry_wait → 原阶段；needs_attention / paused / cancelled / failed
 
 ## Phase 0 与真实人工验收
 
-以下全部 **待用户授权后实测**。应使用隔离的测试部署、当前 Google Cloud Project 和明确测试频道；测试环境的公开开关不能复制为生产验收结论。没有 API Compliance Audit 能力时可继续私密上传和恢复开发，公开验收保留阻塞，不使用 Studio 浏览器自动上传绕过限制。
+以下全部 **待用户授权后实测**。应使用隔离的测试部署、当前 Google Cloud Project 和明确测试频道；测试结果不能复制为其他 API 项目或频道的生产验收结论。没有 API Compliance Audit 能力时可继续私密上传和恢复开发，公开验收保留阻塞，不使用 Studio 浏览器自动上传绕过限制。
 
 | 项目 | 需要记录的真实证据 |
 | --- | --- |

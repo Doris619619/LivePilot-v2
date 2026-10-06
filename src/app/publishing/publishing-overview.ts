@@ -1,5 +1,6 @@
 /** 我的发布的纯汇总：按频道组织批次，只用当前修订的真实报告证明公开或完成。 */
 import type { PublishingPlan, VideoJob } from "@/shared/publishing";
+import { jobDisplayPublishAt, jobTimezone } from "./publishing-time";
 
 export type OverviewTarget = { agentId: string; instanceId: string; name: string; channelId?: string; channel?: string };
 export type PublicationBucket = "published" | "completed" | "pending" | "attention" | "cancelled";
@@ -42,10 +43,10 @@ export function publicationCounts(jobs: VideoJob[], plan?: PublishingPlan): Publ
   return counts;
 }
 
-/** 下一条使用远端生效时间优先；保留过期项供核对，不把过去时刻当作完成。 */
+/** 下一条使用当前计划或已确认排期；保留过期项供核对，不把旧候选时间或过去时刻当作完成。 */
 export function nextPublication(jobs: VideoJob[]) {
   return jobs.filter(job => ["pending", "attention"].includes(publicationBucket(job)) && job.spec.profile.privacy === "public")
-    .map(job => ({ instant: job.observed?.effectivePublishAt || job.spec.originalPublishAt, timezone: job.spec.plan?.timezone || job.spec.profile.schedule.timezone }))
+    .map(job => ({ instant: jobDisplayPublishAt(job), timezone: jobTimezone(job) }))
     .filter((item): item is { instant: string; timezone: string } => !!item.instant && Number.isFinite(Date.parse(item.instant)))
     .sort((a, b) => Date.parse(a.instant) - Date.parse(b.instant))[0];
 }

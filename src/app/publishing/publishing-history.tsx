@@ -11,8 +11,8 @@ import styles from "./publishing-history.module.css";
 
 type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; targets: OverviewTarget[]; busy: boolean; operate: JobOperation };
 
-/** 历史详情保留原任务的核对和视频入口；排期时间、最近记录与真实公开结果分别标注。 */
-function HistoryDetail({ row, busy, operate }: { row: HistoryRow; busy: boolean; operate: JobOperation }) {
+/** 历史详情保留原任务的核对和视频入口；旧协议的候选时间仅称排期记录，公开状态不能反证排期已确认。 */
+export function HistoryDetail({ row, busy, operate }: { row: HistoryRow; busy: boolean; operate: JobOperation }) {
   const { job, timezone } = row; const report = job.observed!;
   const pending = report.revision !== job.spec.revision;
   return <section className={styles.detail} id={"history-detail-" + job.spec.id} aria-label={row.title + " 历史详情"}>
@@ -20,7 +20,7 @@ function HistoryDetail({ row, busy, operate }: { row: HistoryRow; busy: boolean;
     {pending && <p className={styles.message}>{jobStatus(job)}；以上结果为最近一次已确认记录。</p>}
     <dl className={styles.facts}>
       <div><dt>原计划</dt><dd>{historyTime(job.initialPublishAt || job.spec.originalPublishAt, timezone)}</dd></div>
-      {report.effectivePublishAt && <div><dt>YouTube 确认排期</dt><dd>{historyTime(report.effectivePublishAt, timezone)}</dd></div>}
+      {report.effectivePublishAt && <div><dt>排期记录</dt><dd>{historyTime(report.effectivePublishAt, timezone)}</dd></div>}
       <div><dt>时区</dt><dd>{timezone}</dd></div>
       <div><dt>最近记录</dt><dd>{historyTime(report.updatedAt, timezone)}</dd></div>
       <div><dt>文件</dt><dd>{job.spec.asset.filename}</dd></div>

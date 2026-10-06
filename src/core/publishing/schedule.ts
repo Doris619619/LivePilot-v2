@@ -39,7 +39,7 @@ export function occupiedPublishingSlots(jobs: VideoJob[], channelId: string, exc
   }
   return occupied;
 }
-/** 已错过的时刻使用当前策略提前量，不顺延其他任务。 */
-export function effectivePublishAt(original: string, lead: number, now = Date.now()) { return new Date(Math.max(Date.parse(original), now + lead * 1000)).toISOString(); }
+/** 已错过的时刻使用当前策略提前量，并向上取整到秒；不缩短安全提前量或顺延其他任务。 */
+export function effectivePublishAt(original: string, lead: number, now = Date.now()) { return new Date(Math.ceil(Math.max(Date.parse(original), now + lead * 1000) / 1000) * 1000).toISOString(); }
 /** 配额日以太平洋时间为准，夏令时由 Temporal 处理。 */
 export function quotaDay(now = Date.now()) { return Temporal.Instant.fromEpochMilliseconds(now).toZonedDateTimeISO("America/Los_Angeles").toPlainDate().toString(); }

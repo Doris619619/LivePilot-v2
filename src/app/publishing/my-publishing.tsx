@@ -46,7 +46,9 @@ export default function MyPublishing({ plans, jobs, allJobs, targets = [], busy,
   const visible = channels.filter(value => !choice || value.id === choice);
   const batch = visible.flatMap(value => value.batches).find(value => value.key === selected);
   const scopedJobs = choice ? jobs.filter(job => job.spec.profile.channelId === choice) : jobs;
-  const batches = visible.flatMap(value => value.batches); const pageKeys = new Set(batches.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(value => value.key));
+  const batches = visible.flatMap(value => value.batches);
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(batches.length / PACKAGE_PAGE_SIZE) - 1));
+  const pageKeys = new Set(batches.slice(currentPage * PACKAGE_PAGE_SIZE, (currentPage + 1) * PACKAGE_PAGE_SIZE).map(value => value.key));
   return <section aria-label="我的发布总览">
     <div className={styles.toolbar}><nav className="publishing-subnav" aria-label="我的发布视图">{["总览", "日历", "历史"].map(name => <button key={name} className={tab === name ? "is-active" : "btn-ghost"} aria-pressed={tab === name} onClick={() => { setTab(name); setPage(0); }}>{name}</button>)}</nav>
       {channels.length > 1 && <label className={styles.channelFilter}><span className="sr-only">发布频道</span><select aria-label="发布频道" value={choice} onChange={event => { setChannel(event.target.value); setSelected(""); setPage(0); }}><option value="">全部频道</option>{channels.map(value => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>}
@@ -56,7 +58,7 @@ export default function MyPublishing({ plans, jobs, allJobs, targets = [], busy,
         : <>{visible.map(value => { const pageBatches = value.batches.filter(item => pageKeys.has(item.key)); if (!pageBatches.length) return null; const accent = channelAccent(value.id); return <section className={styles.channel + " " + styles[accent]} key={value.id} data-channel-id={value.id} data-channel-accent={accent} aria-label={"频道 " + value.name}>
           <header className={styles.channelHeading}><div className={styles.channelIdentity}><span className={styles.channelAvatar} aria-hidden="true">{Array.from(value.name.trim())[0]?.toLocaleUpperCase() || "Y"}</span><div className={styles.channelTitle}><h2>{value.name}</h2>{value.device && <p>{value.device}</p>}</div></div><span className={styles.packageCount}>{value.batches.length} 个发布包</span></header>
           {pageBatches.map(item => <OverviewBatch key={item.key} batch={item} now={now} open={() => setSelected(item.key)} />)}
-        </section>; })}<Pagination page={page} total={batches.length} change={setPage} />
+        </section>; })}<Pagination page={currentPage} total={batches.length} change={setPage} />
           {!batches.length && <div className="publishing-empty"><h2>还没有配置好的发布包</h2></div>}
         </>}
   </section>;
