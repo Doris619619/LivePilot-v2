@@ -1,0 +1,13 @@
+/* 每视频六阶段细条：已完成、当前、后续及异常均有文字或符号，手机按三列换行。 */
+.progress { margin: 14px 0; }
+.status { margin: 0 0 10px; font-size: 14px; color: var(--text-secondary); }
+.steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.steps li { display: flex; align-items: start; gap: 5px; padding-top: 8px; border-top: 3px solid var(--border-subtle); font-size: 14px; line-height: 1.5; color: var(--text-muted); min-width: 0; }
+.steps li > span:first-child { flex: none; }
+.steps li > span:last-child { overflow-wrap: anywhere; }
+.steps .done { border-color: var(--success-green); color: var(--text-secondary); }
+.steps .active { border-color: var(--accent-primary); color: var(--accent-primary); font-weight: 600; }
+.steps .waiting, .steps .paused { border-color: var(--warning-amber); color: var(--warning-amber); font-weight: 600; }
+.steps .error { border-color: var(--error-rose); color: var(--error-rose); font-weight: 600; }
+.status.error { color: var(--error-rose); }
+@media (max-width: 600px) { .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; } .steps li { font-size: 13px; } }

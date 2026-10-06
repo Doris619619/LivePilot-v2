@@ -42,6 +42,15 @@ beforeEach(async () => {
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-plans-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 默认创建完整包快照，便于测试后续修订和确认。 */
 async function preview() { return previewPublishingPlan(alice, profile.id, batch.id, rule); }
+/** 新发布包无管理员开启/验收门槛；批次确认同意、目标身份和真实 YouTube 状态仍独立验证。 */
+it("confirms a package plan with legacy false policy flags without requiring an administrator session", async () => {
+  const plan = await preview(); const saved = await publishingStore().read<{ policy: typeof defaultPolicy }>("state.json");
+  saved!.policy.enabled = false; saved!.policy.publicVerified = false; saved!.policy.verificationNote = ""; await publishingStore().write("state.json", saved);
+  await expect(confirmPublishingPlan(alice, plan.id, plan.revision, false, false)).rejects.toMatchObject({ code: "CONSENT" });
+  const jobs = await confirmPublishingPlan(alice, plan.id, plan.revision, false, true);
+  expect(jobs).toHaveLength(plan.items.length); expect(jobs[0].spec.policy).toMatchObject({ enabled: true, publicVerified: true, verificationNote: "" });
+  expect(jobs.every(job => !job.observed)).toBe(true); expect(jobs.map(job => job.spec.originalPublishAt)).toEqual(plan.items.map(item => item.publishAt));
+});
 /** 设备扫描晚于授权删除返回时，不能把已清理的发布包快照重新写回 Cloud。 */
 it("rejects a package preview returning after account cleanup is complete", async () => {
   let finishScan!: (value: unknown) => void; let scanning!: () => void;
@@ -253,6 +262,31 @@ it("rejects an older persisted preview that reused another Job's still-active Sl
   const draft = await previewPublishingReschedule(alice, plan.id, 1, { ...rule, weeklySlots: [{ weekday: 4, time: "21:00" }] });
   const state = await publishingStore().read<{ schedulePreviews: { plan: { items: { publishAt?: string }[] } }[] }>("state.json"); state!.schedulePreviews[0].plan.items[0].publishAt = oldAt; await publishingStore().write("state.json", state);
   await expect(confirmPublishingReschedule(alice, plan.id, 1, draft.schedulePreviewId!)).rejects.toMatchObject({ code: "CONFLICT" }); expect((await publishingView(alice)).jobs.map(job => job.spec.originalPublishAt)).toEqual(jobs.map(job => job.spec.originalPublishAt));
+});
+
+/** 单条改期与整批一致：新时间保存后，本地暂停必须等用户显式继续。 */
+it.each([false, true])("keeps a single-job reschedule paused while pause acknowledgement is %s", async acknowledged => {
+  const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  const paused = await changePublishingJob(alice, job.spec.id, "pause");
+  if (acknowledged) await reportPublishing("pc", [{ id: job.spec.id, revision: paused.spec.revision, sequence: 1, state: "paused", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const at = "2026-10-04T19:00:00Z"; const changed = await changePublishingJob(alice, job.spec.id, "reschedule", at);
+  expect(changed.spec).toMatchObject({ id: job.spec.id, revision: paused.spec.revision + 1, desired: "pause", originalPublishAt: at, scheduleSource: "manual" });
+  expect(changed.initialPublishAt).toBe(job.initialPublishAt);
+  const current = (await publishingView(alice)).plans.find(value => value.id === plan.id)!;
+  expect(current.items.find(item => item.packageId === job.spec.contentPackage!.id)).toMatchObject({ publishAt: at, scheduleSource: "manual" });
+  expect((await changePublishingJob(alice, job.spec.id, "resume")).spec.desired).toBe("run");
+});
+
+/** 拒绝 Agent 已明确不会应用的改期，事务不能改写时间、修订或 Plan，仍保留原视频关联。 */
+it.each(["needs_attention", "failed", "cancelling"] as const)("rejects a single-job reschedule in %s without mutating the plan or task", async state => {
+  const plan = await preview(); const [job] = await confirmPublishingPlan(alice, plan.id, 1, false, true);
+  if (state === "cancelling") await changePublishingJob(alice, job.spec.id, "cancel");
+  else await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state, videoId: "existing_video", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);
+  const before = await publishingView(alice);
+  await expect(changePublishingJob(alice, job.spec.id, "reschedule", "2026-10-04T19:00:00Z")).rejects.toMatchObject({ code: state === "failed" ? "TERMINAL" : "RESCHEDULE_BLOCKED" });
+  const after = await publishingView(alice);
+  expect(after.jobs.find(value => value.spec.id === job.spec.id)).toEqual(before.jobs.find(value => value.spec.id === job.spec.id));
+  expect(after.plans.find(value => value.id === plan.id)).toEqual(before.plans.find(value => value.id === plan.id));
 });
 
 it("shows a completed Job at its actual time when a late reschedule was rejected", async () => {

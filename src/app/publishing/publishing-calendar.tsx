@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { VideoJob } from "@/shared/publishing";
 import { jobStatus } from "./display";
+import { jobCalendarPublishAt, jobTimezone } from "./publishing-time";
 
 /** Intl 分段避免依赖浏览器的日期分隔符和本地月份顺序。 */
 function localDate(value: string | number, timezone: string) {
@@ -16,7 +17,7 @@ function moveMonth(month: string, delta: number) {
 }
 /** 所有任务共用一个显示时区；确认后的 UTC 排期不会被显示选择修改。 */
 export default function PublishingCalendar({ jobs }: { jobs: VideoJob[] }) {
-  const zones = [...new Set(jobs.map(job => job.spec.plan?.timezone || job.spec.profile.schedule.timezone))];
+  const zones = [...new Set(jobs.map(jobTimezone))];
   if (!zones.length) zones.push(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [choice, setChoice] = useState(zones[0]); const timezone = zones.includes(choice) ? choice : zones[0];
   const [now, setNow] = useState(() => Date.now()); const today = localDate(now, timezone);
@@ -28,10 +29,10 @@ export default function PublishingCalendar({ jobs }: { jobs: VideoJob[] }) {
   const cells = Array.from({ length: Math.ceil((weekday + days) / 7) * 7 }, (_, offset) => new Date(Date.UTC(year, index - 1, offset - weekday + 1)).toISOString().slice(0, 10));
   const groups = new Map<string, VideoJob[]>();
   for (const job of jobs) {
-    const instant = job.observed?.effectivePublishAt || job.spec.originalPublishAt; if (!instant) continue;
+    const instant = jobCalendarPublishAt(job); if (!instant) continue;
     const date = localDate(instant, timezone); const group = groups.get(date) || []; group.push(job); groups.set(date, group);
   }
-  for (const group of groups.values()) group.sort((a, b) => (a.observed?.effectivePublishAt || a.spec.originalPublishAt!).localeCompare(b.observed?.effectivePublishAt || b.spec.originalPublishAt!));
+  for (const group of groups.values()) group.sort((a, b) => Date.parse(jobCalendarPublishAt(a)!) - Date.parse(jobCalendarPublishAt(b)!));
   /** 跳月时将单日清单切到该月第一天。 */
   function navigate(delta: number) { const next = moveMonth(month, delta); setMonth(next); setSelected(next + "-01"); }
   return <section aria-label="发布月历">
@@ -48,6 +49,6 @@ export default function PublishingCalendar({ jobs }: { jobs: VideoJob[] }) {
       </button>; })}
     </div>
     <div className="publishing-section-heading"><h2>{selected}</h2><span>{(groups.get(selected) || []).length} 个视频</span></div>
-    <div className="publishing-agenda">{(groups.get(selected) || []).map(job => <article key={job.spec.id}><time>{new Date(job.observed?.effectivePublishAt || job.spec.originalPublishAt!).toLocaleTimeString("zh-CN", { timeZone: timezone, hour: "2-digit", minute: "2-digit" })}</time><h3>{job.observed?.metadata?.title || job.spec.asset.filename}</h3><span className={"publishing-status state-" + job.observed?.state}>{jobStatus(job)}</span></article>)}{!groups.has(selected) && <p className="publishing-hint">当天暂无排期</p>}</div>
+    <div className="publishing-agenda">{(groups.get(selected) || []).map(job => <article key={job.spec.id}><time>{new Date(jobCalendarPublishAt(job)!).toLocaleTimeString("zh-CN", { timeZone: timezone, hour: "2-digit", minute: "2-digit" })}</time><h3>{job.observed?.metadata?.title || job.spec.asset.filename}</h3><span className={"publishing-status state-" + job.observed?.state}>{jobStatus(job)}</span></article>)}{!groups.has(selected) && <p className="publishing-hint">当天暂无排期</p>}</div>
   </section>;
 }

@@ -53,11 +53,11 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     </>}
     {editing && <div className="publishing-inline-editor publishing-plan-editor" role="group" aria-label={"编辑 " + packages.get(editing.packageId)?.name}>
       <div className="publishing-plan-editor-heading"><h3 ref={editorHeading} tabIndex={-1}>编辑 {packages.get(editing.packageId)?.name}</h3><button className="btn-ghost" disabled={busy} onClick={() => setEditing(undefined)}>关闭</button></div>
-      {!scheduleOnly && <label className="publishing-check"><input type="checkbox" checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
+      {!scheduleOnly && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
       {!editing.excluded && <>
-        {plan.profile.scheduled && <label>发布时间 · {timezone}<input type="datetime-local" required value={date} onChange={e => setDate(e.target.value)} /></label>}
-        {!scheduleOnly && <><label>标题<input value={title} onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{titleCharacters(title)} / 100</span></div>
-        <label>说明<textarea rows={3} value={description} onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{descriptionBytes(description)} / 5000 bytes</span></div>
+        {plan.profile.scheduled && <label>发布时间 · {timezone}<input type="datetime-local" disabled={busy} required value={date} onChange={e => setDate(e.target.value)} /></label>}
+        {!scheduleOnly && <><label>标题<input disabled={busy} value={title} onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{titleCharacters(title)} / 100</span></div>
+        <label>说明<textarea rows={3} disabled={busy} value={description} onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{descriptionBytes(description)} / 5000 bytes</span></div>
         {!valid && <p className="publishing-validation" role="alert">标题最多100个字符，说明最多5000字节。</p>}</>}
       </>}
       {error && <p className="publishing-validation" role="alert">{error}</p>}

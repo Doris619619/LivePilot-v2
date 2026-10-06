@@ -1,0 +1,16 @@
+/* 搜索时区控件沿用发布页面表单变量；触摸目标、焦点和窄屏列表保持可用。 */
+.control { position: relative; display: grid; gap: 8px; min-width: 0; }
+.trigger { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; width: 100%; text-align: left; padding: 10px 14px; background: var(--surface-base); border: 1px solid var(--border-default); color: var(--text-primary); }
+.trigger > span:first-child { display: grid; gap: 3px; min-width: 0; }
+.trigger strong { font-size: 15px; font-weight: 400; overflow-wrap: anywhere; }
+.trigger small, .options small { color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.trigger:focus-visible, .options button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.menu { position: absolute; z-index: 20; inset: 100% 0 auto; margin-top: 6px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 10px; background: var(--surface-base); box-shadow: 0 8px 24px var(--shadow-color, rgb(0 0 0 / 10%)); }
+.menu input { width: 100%; min-height: 44px; font-size: 16px; }
+.options { margin-top: 8px; max-height: min(280px, 40vh); overflow-y: auto; overscroll-behavior: contain; }
+.options button { display: grid; justify-content: start; gap: 4px; width: 100%; min-height: 52px; margin: 4px 0; padding: 9px 10px; border: 0; text-align: left; font-size: 15px; font-weight: 400; background: transparent; color: var(--text-primary); touch-action: manipulation; }
+.options button:hover, .options button.active { background: var(--surface-hover); }
+.options button[aria-selected="true"] { color: var(--accent-primary); background: var(--accent-subtle); }
+.options button > span { overflow-wrap: anywhere; }
+.hint, .empty { margin: 8px 2px 0; color: var(--text-muted); font-size: 13px; }
+@media (max-width: 600px) { .trigger strong, .options button { font-size: 16px; } }

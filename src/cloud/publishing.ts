@@ -8,7 +8,7 @@ import { audit } from "@/core/audit";
 import { PublishingStore } from "@/core/publishing/storage";
 import { scheduleSlots, quotaDay } from "@/core/publishing/schedule";
 import { generatePublishingPlan, occupiedPublishingSlots } from "./publishing-plan";
-import { applyConfirmedSchedule, generateConfirmedSchedule, scheduleFingerprint, type SchedulePreview } from "./publishing-reschedule";
+import { applyConfirmedSchedule, generateConfirmedSchedule, scheduleEditable, scheduleFingerprint, type SchedulePreview } from "./publishing-reschedule";
 import { publishingMetadata, expandTemplate } from "@/core/publishing/metadata";
 import { cloudStore, transaction } from "./store";
 import { listAgents, requireTarget, agentStore } from "./agents";
@@ -49,8 +49,8 @@ function beginCleanup(s: State, agentId: string, instanceId: string, owner: stri
 export function publishingStore() { return new PublishingStore(path.join(cloudStore().dir, "publishing")); }
 /** 等待撤销期间禁止新的频道 API 指令，防止清理后又写回授权数据。 */
 export async function assertNoPublishingCleanup(agentId: string, instanceId: string, accountId?: string) { if (accountId) { await requirePublishingAccount(agentId, instanceId, accountId, undefined, false); return; } if ((await readState()).cleanups.some(c => c.agentId === agentId && c.instanceId === instanceId && c.state === "pending")) throw new AppError("CLEANUP", "等待设备清理授权数据，请完成后再连接频道。", 409); }
-/** 缺文件是首次启用，损坏文件由 Store 报错，不能当作空队列。 */
-async function readState() { const saved = await publishingStore().read<State>("state.json"); if (saved) { saved.plans ??= []; saved.schedulePreviews ??= []; for (const job of saved.jobs) if (uploadObserved(job.observed)) job.hadUpload = true; return saved; } return { policy: { ...defaultPolicy }, profiles: [], batches: [], plans: [], schedulePreviews: [], jobs: [], consents: {}, cleanups: [], quota: {} } as State; }
+/** 旧开关仅归一协议值，不改任务修订、期望状态或排期；损坏文件不能当作空队列。 */
+async function readState() { const saved = await publishingStore().read<State>("state.json"); if (saved) { saved.plans ??= []; saved.schedulePreviews ??= []; saved.policy = policySchema.parse(saved.policy); for (const job of saved.jobs) { job.spec.policy = policySchema.parse(job.spec.policy); if (uploadObserved(job.observed)) job.hadUpload = true; } return saved; } return { policy: { ...defaultPolicy }, profiles: [], batches: [], plans: [], schedulePreviews: [], jobs: [], consents: {}, cleanups: [], quota: {} } as State; }
 /** 自有上传执行事实不随 API 数据过期删除；进入上传阶段保守视为可能已建立远端会话。 */
 function uploadObserved(report?: PublishingReport) { return !!report && (!!report.videoId || report.offset > 0 || ["uploading", "processing", "finalizing", "scheduled", "published", "completed"].includes(report.state)); }
 /** 所有编辑使用同一短事务，网络 RPC 位于事务之外。 */
@@ -68,13 +68,11 @@ async function authorizePublishingWrite(user: Member, profile: PublishingProfile
     if (!bindings?.some(binding => binding.agentId === profile.agentId && binding.instanceId === profile.instanceId && binding.channelId === profile.channelId && binding.confirmed)) throw new AppError("CHANNEL", "发布目标授权已变化，请重新连接原频道。", 409);
   }
 }
-/** 发布策略为产品设置，不等于 Google 配额；管理员更改会通过修订送到 Agent。 */
+/** 运行参数送到正常活动任务；人工处理和终态不广播修订，避免保存预算变成继续执行。 */
 export async function savePublishingPolicy(user: Member, value: unknown) {
-  if (user.role !== "admin") throw new AppError("FORBIDDEN", "只有管理员可修改项目配额和验收设置。", 403);
+  if (user.role !== "admin") throw new AppError("FORBIDDEN", "只有管理员可修改项目配额和运行设置。", 403);
   const policy = policySchema.parse(value);
-  if (policy.enabled && !policy.privacyContact.trim()) throw new AppError("INPUT", "开启发布前请配置可联系的隐私支持邮箱或地址。");
-  if (policy.publicVerified && !policy.verificationNote.trim()) throw new AppError("INPUT", "启用自动公开前请记录真实 API Project、测试视频及验收证据。");
-await edit(state => { state.policy = policy; for (const job of state.jobs) if (!publishingTerminal(job.observed?.state)) { job.spec.policy = policy; job.spec.revision++; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; } });
+await edit(state => { state.policy = policy; for (const job of state.jobs) if (!publishingTerminal(job.observed?.state) && job.observed?.state !== "needs_attention") { job.spec.policy = policy; job.spec.revision++; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; } });
   await audit(user.username, "publishing-policy", "cloud", "succeeded"); return policy;
 }
 /** 汇总 Profile、队列、日历和历史，页面只读取已缓存的 YouTube 观察结果。 */
@@ -210,8 +208,6 @@ export async function confirmPublishingPlan(user: Member, id: string, revision: 
     if (s.consents[user.username]?.version !== PRIVACY_VERSION) throw new AppError("PRIVACY", "请重新同意隐私政策。");
     if (plan.profile.accountId) await requirePublishingAccount(plan.profile.agentId, plan.profile.instanceId, plan.profile.accountId, plan.profile.channelId);
     else if (s.cleanups.some(c => c.agentId === plan.profile.agentId && c.instanceId === plan.profile.instanceId && c.state === "pending")) throw new AppError("CLEANUP", "等待设备授权清理。");
-    if (!s.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "发布模块尚未开启，请联系管理员。");
-    if (plan.profile.privacy === "public" && !s.policy.publicVerified) throw new AppError("PUBLIC_UNVERIFIED", "当前项目未完成公开验收，可先使用 private 验证上传。");
     if (plan.batch.issues.length || !plan.items.some(item => !item.excluded)) throw new AppError("PACKAGE", "请处理批次问题并至少选择一个发布包。");
     const occupied = occupiedPublishingSlots(s.jobs, plan.profile.channelId); const jobs: VideoJob[] = []; const replacements = new Set(replaceJobIds);
     for (const replacement of replacements) { const previous = s.jobs.find(job => job.spec.id === replacement); if (!previous || previous.spec.profile.channelId !== plan.profile.channelId || previous.spec.profile.agentId !== plan.profile.agentId || previous.observed?.state !== "cancelled" || previous.observed.revision !== previous.spec.revision || !plan.items.some(item => !item.excluded && item.packageId === previous.spec.contentPackage?.id && plan.batch.packages.find(pkg => pkg.id === item.packageId)?.version !== previous.spec.contentPackage?.version)) throw new AppError("REPLACEMENT", "替代任务必须对应已确认取消的旧包及明确确认的新版本。", 409); }
@@ -289,8 +285,6 @@ export async function confirmPublishingBatch(user: Member, id: string, ai: boole
     else if (state.cleanups.some(c => c.agentId === saved.profile.agentId && c.instanceId === saved.profile.instanceId && c.state === "pending")) throw new AppError("CLEANUP", "设备授权清理尚未完成。");
     if (overrides.some(v => !saved.assets.some(a => a.id === v.assetId)) || new Set(overrides.map(v => v.assetId)).size !== overrides.length) throw new AppError("INPUT", "逐项覆盖必须对应本批次的不重复素材。");
     if (state.consents[user.username]?.version !== PRIVACY_VERSION) throw new AppError("PRIVACY", "请重新同意隐私政策。");
-    if (!state.policy.enabled) throw new AppError("PUBLISHING_DISABLED", "发布模块尚未开启，请联系管理员。");
-    if (saved.profile.privacy === "public" && !state.policy.publicVerified) throw new AppError("PUBLIC_UNVERIFIED", "当前项目未完成公开验收；可先用 private 配置验证上传恢复。");
     const jobs: VideoJob[] = [];
     for (const [index, asset] of saved.assets.entries()) {
       const override = overrides.find(v => v.assetId === asset.id); const thumbnail = override?.thumbnail || asset.thumbnail;
@@ -306,18 +300,19 @@ export async function confirmPublishingBatch(user: Member, id: string, ai: boole
   });
   await audit(user.username, "publishing-confirm", batch.profile.instanceId, "succeeded"); return result;
 }
-/** 用户控制先保存 desired/revision；远端状态收到 Agent 确认后才改变。 */
+/** 用户控制先保存 desired/revision；改期保留暂停意图，需人工处理或取消中的任务不能接受无法应用的新时间。 */
 export async function changePublishingJob(user: Member, id: string, action: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string) {
   const state = await readState(); const old = state.jobs.find(j => j.spec.id === id); if (!old) throw new AppError("JOB", "任务不存在。", 404);
   const agent = await authorizeAgent(user, old.spec.profile.agentId); if (agent.owner && agent.owner !== old.spec.owner) throw new AppError("FORBIDDEN", "任务设备归属已变更。", 403);
   if (old.spec.profile.accountId) { await authorizePublishingAccount(user, old.spec.profile.accountId, true); await requirePublishingAccount(old.spec.profile.agentId, old.spec.profile.instanceId, old.spec.profile.accountId, old.spec.profile.channelId); }
   const result = await edit(async s => {
     const job = s.jobs.find(j => j.spec.id === id); if (!job) throw new AppError("JOB", "任务已清理，请刷新。", 404); await authorizePublishingWrite(user, job.spec.profile, job.spec.owner, s);
-    if (["published", "completed", "cancelled"].includes(job.observed?.state || "") && action !== "reconcile") throw new AppError("TERMINAL", "任务已结束；已公开视频请在 Studio 管理。");
+    if (publishingTerminal(job.observed?.state) && action !== "reconcile") throw new AppError("TERMINAL", "任务已结束；已公开视频请在 Studio 管理。");
     // 上传 admission 在 begin 请求前持久化 hadUpload；尚未开始的任务没有远端对象，不投递新执行入口。
     if (action === "reconcile" && !job.hadUpload && !job.observed?.videoId) throw new AppError("VIDEO_NOT_UPLOADED", "视频尚未上传，暂无远端状态可核对。", 409);
     if (action === "reschedule") {
       if (!job.spec.profile.scheduled || !publishAt || !Number.isFinite(Date.parse(publishAt)) || Date.parse(publishAt) <= Date.now()) throw new AppError("INPUT", "请选择未来的有效定时公开时刻。");
+      if (!scheduleEditable(job)) throw new AppError("RESCHEDULE_BLOCKED", job.spec.desired === "cancel" ? "任务正在取消，请等待设备确认。" : "请先核对并解决任务异常，再改期。", 409);
       if (occupiedPublishingSlots(s.jobs, job.spec.profile.channelId, id).has(Date.parse(publishAt))) throw new AppError("DUPLICATE", "该频道排期时刻已占用。");
       job.pendingPublishAts = [...new Set([...(job.pendingPublishAts || []), job.pendingPublishAt, job.observed?.effectivePublishAt, job.spec.originalPublishAt].filter((at): at is string => !!at))];
       job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt; job.spec.originalPublishAt = publishAt;
@@ -325,7 +320,7 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
     }
     job.spec.revision++;
     if (action === "reconcile") { job.spec.reconcileRevision = job.spec.revision; job.spec.reconcileTotal = job.prepared?.size || job.observed?.total || job.spec.asset.size; }
-    else { job.spec.desired = action === "pause" ? "pause" : action === "cancel" ? "cancel" : "run"; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; }
+    else { if (action !== "reschedule") job.spec.desired = action === "pause" ? "pause" : action === "cancel" ? "cancel" : "run"; if (action === "resume") job.spec.policy = s.policy; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; }
     return job;
   });
   await audit(user.username, "publishing-" + action, old.spec.profile.instanceId, "accepted"); return result;
@@ -408,7 +403,7 @@ export async function publishingTick() {
   for (const job of state.jobs) {
     const p = job.spec.profile; const agent = agents.find(a => a.id === p.agentId);
     if (!agent || agent.revoked || agent.owner && agent.owner !== job.spec.owner || !agent.online || agent.maintenance) continue;
-    if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (!state.policy.enabled && !job.observed || publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
+    if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
     const capabilities = await agentStore(p.agentId).read<string[]>("capabilities.json");
     if (p.accountId) { if (!capabilities?.includes("publishing-accounts-v1")) continue; try { await requirePublishingAccount(p.agentId, p.instanceId, p.accountId, p.channelId); } catch { continue; } }
     if (!capabilities?.includes(job.spec.contentPackage ? "publishing-v2" : "publishing-v1")) continue;

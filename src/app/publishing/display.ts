@@ -3,6 +3,8 @@ import type { PublishingProfile, VideoJob } from "@/shared/publishing";
 import { publishingTerminal } from "@/shared/publishing";
 import { Temporal } from "@js-temporal/polyfill";
 import { publicationBudgetWaiting } from "./publishing-overview";
+import { confirmedJobPublishAt } from "./publishing-time";
+export { confirmedJobPublishAt, jobTimezone } from "./publishing-time";
 export { titleCharacters, descriptionBytes } from "@/shared/video-metadata";
 /** 将用户选择的隐私与公开方式转为确认页可读名称。 */
 export function visibilityLabel(profile: PublishingProfile) {
@@ -18,6 +20,17 @@ export function jobStatus(job: VideoJob) {
     if (publicationBudgetWaiting(job) && job.observed.state !== "paused") return "等待预算";
   }
   return states[job.observed.state] || "待上传";
+}
+/** 改期反馈不改执行状态；暂停与异常的旧排期仍可能执行，不能把候选时间称作确认结果。 */
+export function jobScheduleNotice(job: VideoJob) {
+  if (confirmedJobPublishAt(job)) return "YouTube 已确认";
+  const pending = !!job.pendingPublishAt || !!job.pendingPublishAts?.length;
+  if (pending) {
+    if (job.spec.desired === "pause") return "改期已保存，继续后应用";
+    if (job.observed?.revision === job.spec.revision && ["failed", "needs_attention"].includes(job.observed.state)) return "改期未确认，请先处理异常";
+    if (!publishingTerminal(job.observed?.state)) return "改期待设备确认";
+  }
+  return job.observed?.revision === job.spec.revision && job.observed.state === "finalizing" ? "等待 YouTube 确认" : "";
 }
 /** 原生时间输入使用计划时区的墙上时间，不依据浏览器时区改写 UTC。 */
 export function localInputTime(instant: string, timezone: string) {
