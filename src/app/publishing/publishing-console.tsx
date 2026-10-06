@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "../client-request";
 import { RefreshIcon, VideoIcon } from "../components/icons";
-import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
+import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { OAuthResult } from "@/server/oauth-result";
 import ProfileEditor, { type PublishingTarget } from "./profile-editor";
@@ -17,7 +17,7 @@ import ChannelBinding from "./channel-binding";
 import { publishingTargetStorageKey, restorePublishingTarget } from "./publishing-target-selection";
 import { usePublishingDirectory } from "./use-publishing-directory";
 import "./publishing.css";
-type View = { profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
+type View = { profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; removals?: PublishingBatchRemoval[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
 type PackageIndex = { root: string; batches: PackageBatch[]; thumbnails?: string[]; channelId?: string; channel?: string };
 /** 所有发布编辑共用同源请求，检测等待不等于执行成功。 */
 async function post<T>(value: unknown) { return api<T>("/api/publishing", { method: "POST", timeoutMs: 60000, headers: { "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify(value) }); }
@@ -134,6 +134,20 @@ export default function PublishingConsole() {
   }
   /** 归档只有Agent确认完成才显示成功，离线时保留待处理状态。 */
   async function archive(planId: string) { await perform(async () => { const result = await post<{ state: string; destination?: string }>({ action: "plan-archive", planId }); await refresh(); setNotice(result.state === "complete" ? "批次已归档" : "归档已受理，等待设备确认"); }); }
+  /** 删除意图先进入列表；远端取消未确认时批次仍可见，读取失败不冒充删除完成。 */
+  async function removeBatch(batchId: string): Promise<boolean | string> {
+    let failure = "删除未提交，请重试。";
+    const accepted = await perform(async () => {
+      let result: { state: "pending" | "complete"; removal: PublishingBatchRemoval };
+      try { result = await post({ action: "batch-remove", batchId }); }
+      catch (error) { failure = (error as Error).message; throw error; }
+      readRequest.current++;
+      setView(old => old && { ...old, removals: [...(old.removals || []).filter(value => value.batchId !== batchId), result.removal] });
+      setNotice(result.state === "complete" ? "批次已移出总览，视频和素材保留" : "删除已提交，等待设备确认停止发布");
+      await refresh(); return true;
+    });
+    return accepted ? true : failure;
+  }
   /** 单条覆盖保存新修订，仍以服务端分配和冲突检查为准。 */
   async function update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-update", planId: plan.id, revision: plan.revision, rule, items }); await refresh(); return result; }); }
   /** 已配置批次改期先生成独立预览，预览不会投递指令或创建上传任务。 */
@@ -154,12 +168,12 @@ export default function PublishingConsole() {
       {!accepted && <section className="publishing-warning publishing-onboarding"><p>使用前请同意 <Link href="/privacy">隐私政策</Link> 和 <Link href="/terms">服务条款</Link>。</p><button disabled={busy} onClick={() => void perform(async () => { await post({ action: "consent", version: PRIVACY_VERSION }); await refresh(); })}>同意并继续</button></section>}
       {!editing && tab !== "我的发布" && <div className="publishing-target"><label>设备<select aria-label="设备" disabled={busy} value={chosen} onChange={e => choose(e.target.value)}><option value="">请选择设备</option>{targets.map(value => <option key={value.agentId + ":" + value.instanceId} value={value.agentId + ":" + value.instanceId}>{value.name}</option>)}</select></label>{target && <><label>发布账号<select aria-label="发布账号" disabled={busy} value={account?.id || ""} onChange={e => chooseAccount(e.target.value)}><option value="">请选择发布账号</option>{accounts.map(value => <option key={value.id} value={value.id}>{value.channel || value.name}{value.status === "cleanup_pending" ? " · 清理中" : value.status !== "connected" ? " · 未连接" : ""}</option>)}</select></label><button disabled={busy || !accepted} onClick={() => void addAccount()}>添加账号</button>{tab === "发布视频" && account && <button className="btn-ghost" disabled={busy} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>管理账号</button>}</>}</div>}
       {editing && target && <ProfileEditor key={editing === "new" ? chosen : editing.id} initial={editing === "new" ? undefined : editing} target={target} thumbnails={index?.thumbnails || []} save={save} cancel={() => setEditing(undefined)} busy={busy} />}
-      {target && <div hidden={tab !== "发布视频" || !!editing}><PublishingWizard key={username + ":" + chosen + ":" + accountId + ":" + draftEpoch} username={username} target={target} root={index?.root || directory.root} directoryMessage={directory.message} directoryReading={directory.reading} retryDirectory={directory.retry} scanned={!!index} batches={index?.batches || []} profiles={profiles} profileId={profileId} selectProfile={setProfileId} plans={plans} jobs={jobs} allJobs={view.jobs} busy={busy} accepted={accepted} scan={scan} newProfile={() => void newProfile()} operate={operate} archive={archive} update={update} reschedulePreview={reschedulePreview} rescheduleConfirm={rescheduleConfirm} viewOverview={() => navigate("我的发布")}
+      {target && <div hidden={tab !== "发布视频" || !!editing}><PublishingWizard key={username + ":" + chosen + ":" + accountId + ":" + draftEpoch} username={username} target={target} root={index?.root || directory.root} directoryMessage={directory.message} directoryReading={directory.reading} retryDirectory={directory.retry} scanned={!!index} batches={index?.batches || []} profiles={profiles} profileId={profileId} selectProfile={setProfileId} plans={plans} jobs={jobs} allJobs={view.jobs} removals={view.removals} busy={busy} accepted={accepted} scan={scan} newProfile={() => void newProfile()} operate={operate} archive={archive} removeBatch={removeBatch} update={update} reschedulePreview={reschedulePreview} rescheduleConfirm={rescheduleConfirm} viewOverview={() => navigate("我的发布")}
         preview={(id, batchId, rule, items) => perform(async () => { const result = await post<PublishingPlan>({ action: "plan-preview", profileId: id, batchId, rule, items }); await refresh(); return result; })}
         confirm={async (plan, ai, replaceJobIds) => !!await perform(async () => { await post({ action: "plan-confirm", planId: plan.id, revision: plan.revision, ai, temporaryPrivateTitle: true, ...(replaceJobIds.length ? { replaceJobIds } : {}) }); await refresh(); setNotice("发布计划已配置"); return true; })} />
       </div>}
       {!target && tab !== "我的发布" && <div className="publishing-empty"><h2>暂无设备</h2></div>}
-      {!editing && tab === "我的发布" && <MyPublishing plans={view.plans || []} jobs={view.jobs} targets={(view.accounts || []).map(account => ({ agentId: account.agentId, instanceId: account.instanceId, channelId: account.channelId, channel: account.channel, name: targets.find(target => target.agentId === account.agentId && target.instanceId === account.instanceId)?.name || account.name }))} allJobs={view.jobs} busy={busy} operate={operate} archive={archive} />}
+      {!editing && tab === "我的发布" && <MyPublishing plans={view.plans || []} jobs={view.jobs} targets={(view.accounts || []).map(account => ({ agentId: account.agentId, instanceId: account.instanceId, channelId: account.channelId, channel: account.channel, name: targets.find(target => target.agentId === account.agentId && target.instanceId === account.instanceId)?.name || account.name }))} allJobs={view.jobs} removals={view.removals} busy={busy} operate={operate} archive={archive} removeBatch={removeBatch} />}
       {!editing && tab === "设置" && <><nav className="publishing-subnav" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} aria-pressed={setting === name} className={setting === name ? "is-active" : "btn-ghost"} onClick={() => setSetting(name)}>{name}</button>)}</nav>
         {setting === "发布配置" ? <section aria-label="发布配置"><div className="publishing-section-heading"><span>{profiles.length} 个配置</span><button disabled={busy || !target || !accepted} onClick={() => void newProfile()}>新建配置</button></div>{profiles.map(profile => <article className="publishing-profile-row" key={profile.id}><div><h2>{profile.name}</h2><p>{visibilityLabel(profile)}</p></div><button onClick={() => setEditing(profile)}>编辑</button></article>)}</section>
           : <><div className="publishing-section-heading"><h2>发布账号</h2></div>{accounts.map(value => <div key={value.id}><ChannelBinding account={value} busy={busy} disabled={!accepted} connect={() => void connectAccount(value.id)} /><details className="publishing-details"><summary>授权与数据 · {value.channel || value.name}</summary><DataSettings accountName={value.channel || value.name} disabled={value.status === "cleanup_pending"} busy={busy} cleanups={view.cleanups.filter(cleanup => cleanup.accountId === value.id)} readAt={readAt} remove={() => removeAccount(value.id)} /></details></div>)}{!accounts.length && <div className="publishing-empty"><h2>还没有发布账号</h2></div>}{view.profiles.some(profile => !profile.accountId && profile.agentId + ":" + profile.instanceId === chosen) && <details className="publishing-details"><summary>旧版任务授权</summary><DataSettings key={chosen} disabled={!target} busy={busy} cleanups={cleanups} readAt={readAt} remove={async () => { await perform(async () => { await post({ action: "cleanup", agentId: target!.agentId, instanceId: target!.instanceId, confirmed: true }); await refresh(); setIndex(undefined); try { localStorage.removeItem("livenest-publishing-draft:" + username + ":" + chosen); } catch { /* 浏览器存储不可用不阻止清理Cloud数据。 */ } setDraftEpoch(value => value + 1); setNotice("删除请求已保存，等待设备确认"); }); }} /></details>}</>}

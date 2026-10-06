@@ -1,5 +1,6 @@
 /* 视频发布沿用 LiveNest 工作台变量、侧栏与控件；清单优先，详细设置按需展开。 */
 .publishing-shell { min-width: 0; }
+.publishing-batch-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 .publishing-sidebar nav { display: grid; gap: 4px; }
 .publishing-sidebar button.sidebar-link { width: 100%; border: 0; background: transparent; justify-content: start; font-size: 15px; font-weight: 400; }
 .publishing-sidebar button.sidebar-link.is-active { background: var(--nav-active); color: var(--accent-primary); font-weight: 500; }
