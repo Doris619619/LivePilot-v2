@@ -1,0 +1,11 @@
+/* 删除沿用工作台危险操作配色，常驻按钮与确认框保持清楚且可触摸。 */
+.trigger { min-height: 44px; white-space: nowrap; }
+.dialog { width: min(460px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; margin: auto; padding: 24px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-base); color: var(--text-primary); box-shadow: 0 12px 40px rgb(0 0 0 / .18); }
+.dialog::backdrop { background: rgb(0 0 0 / .45); }
+.dialog h2 { font-size: 20px; font-weight: 600; }
+.name { display: block; margin: 16px 0 8px; overflow-wrap: anywhere; font-weight: 500; }
+.dialog p { font-size: 15px; line-height: 1.7; overflow-wrap: anywhere; }
+.warning { margin-top: 12px; color: var(--warning-amber); }
+.actions { display: flex; justify-content: flex-end; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+.actions button { min-height: 44px; }
+@media (max-width: 390px) { .dialog { padding: 20px; } .actions button { flex: 1; } }

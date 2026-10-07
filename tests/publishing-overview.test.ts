@@ -16,6 +16,17 @@ function plan(value: VideoJob, name = "Batch", count = 1): PublishingPlan {
   return { id: value.spec.batchId, revision: 1, owner: "alice", actor: "alice", profile: value.spec.profile, batch: { id: "a".repeat(64), version: "b".repeat(64), name, packages: [], issues: [] }, rule: { timezone: "UTC", startDate: "2026-10-01", weeklySlots: [{ weekday: 1, time: "18:00" }], preuploadDays: 28 }, items: Array.from({ length: count }, (_, index) => ({ packageId: index.toString(16).padStart(64, "0"), scheduleSource: "auto", excluded: false })), copies: [], skippedOccupied: 0, skipped: [], createdAt: 1, confirmedAt: 1 };
 }
 
+it("keeps pending deletion visible and removes confirmed deletion without resurrecting it as a legacy batch", () => {
+  const pending = job("scheduled"); const removed = job("published"); const legacy = job("cancelled");
+  const plans = [plan(pending, "Waiting"), plan(removed, "Removed")];
+  const removals = [{ batchId: pending.spec.batchId, requestedAt: 2 }, { batchId: removed.spec.batchId, requestedAt: 2, completedAt: 3 }, { batchId: legacy.spec.batchId, requestedAt: 2, completedAt: 3 }];
+  const groups = publishingOverview(plans, [pending, removed, legacy], [], 4, removals);
+  expect(groups.flatMap(group => group.batches)).toMatchObject([{ key: pending.spec.batchId, name: "Waiting", state: "删除待确认" }]);
+  expect(removed.observed!.state).toBe("published"); expect(plans).toHaveLength(2);
+  pending.observed!.state = "needs_attention";
+  expect(publishingOverview(plans, [pending, removed, legacy], [], 4, removals)[0].batches[0].state).toBe("删除需处理");
+});
+
 it("counts public completion only after a public observation and ignores old revision or merely scheduled reports", () => {
   const value = job("completed"); expect(publicationBucket(value)).toBe("pending");
   value.observed!.observedPrivacy = "private"; expect(publicationBucket(value)).toBe("pending");

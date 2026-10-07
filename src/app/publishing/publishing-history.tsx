@@ -1,7 +1,7 @@
 /** 紧凑发布历史：对齐内容与结果，一次只展开一项，核对操作不影响列表读取。 */
 "use client";
 import { Fragment, useState } from "react";
-import type { PublishingPlan, VideoJob } from "@/shared/publishing";
+import type { PublishingBatchRemoval, PublishingPlan, VideoJob } from "@/shared/publishing";
 import type { JobOperation } from "./batch-execution";
 import type { OverviewTarget } from "./publishing-overview";
 import { jobStatus } from "./display";
@@ -9,10 +9,10 @@ import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import { filterHistory, historyResultLabels, historyTime, publishingHistory, type HistoryResult, type HistoryRow } from "./publishing-history-data";
 import styles from "./publishing-history.module.css";
 
-type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; targets: OverviewTarget[]; busy: boolean; operate: JobOperation };
+type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; targets: OverviewTarget[]; removals?: PublishingBatchRemoval[]; busy: boolean; operate: JobOperation };
 
 /** 历史详情保留原任务的核对和视频入口；旧协议的候选时间仅称排期记录，公开状态不能反证排期已确认。 */
-export function HistoryDetail({ row, busy, operate }: { row: HistoryRow; busy: boolean; operate: JobOperation }) {
+export function HistoryDetail({ row, busy, operate, removed = false }: { row: HistoryRow; busy: boolean; operate: JobOperation; removed?: boolean }) {
   const { job, timezone } = row; const report = job.observed!;
   const pending = report.revision !== job.spec.revision;
   return <section className={styles.detail} id={"history-detail-" + job.spec.id} aria-label={row.title + " 历史详情"}>
@@ -27,12 +27,13 @@ export function HistoryDetail({ row, busy, operate }: { row: HistoryRow; busy: b
       <div><dt>大小</dt><dd>{Math.round((report.prepared?.size || job.prepared?.size || job.spec.asset.size) / 1024 ** 2)} MiB</dd></div>
     </dl>
     {report.metadata?.description && <details className={styles.description}><summary>视频说明</summary><p>{report.metadata.description}</p></details>}
-    <div className={styles.actions}><button disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>{report.videoId && <a href={"https://www.youtube.com/watch?v=" + report.videoId} target="_blank" rel="noreferrer">查看视频</a>}</div>
+    {removed && <p className={styles.message}>批次已移出总览，历史记录保留。</p>}
+    <div className={styles.actions}>{!removed && <button disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>}{report.videoId && <a href={"https://www.youtube.com/watch?v=" + report.videoId} target="_blank" rel="noreferrer">查看视频</a>}</div>
   </section>;
 }
 
 /** 搜索和筛选不请求 YouTube；始终先筛选全部缓存数据，再限制每页25条。 */
-export default function PublishingHistory({ plans, jobs, targets, busy, operate }: Props) {
+export default function PublishingHistory({ plans, jobs, targets, removals = [], busy, operate }: Props) {
   const [query, setQuery] = useState(""); const [result, setResult] = useState<HistoryResult | "">(""); const [page, setPage] = useState(0); const [expanded, setExpanded] = useState("");
   const rows = publishingHistory(plans, jobs, targets); const filtered = filterHistory(rows, query, result);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / PACKAGE_PAGE_SIZE) - 1));
@@ -60,7 +61,7 @@ export default function PublishingHistory({ plans, jobs, targets, busy, operate 
           <td className={styles.result}><span className={styles.badge + " " + styles[row.result]}>{row.resultLabel}</span></td>
           <td className={styles.toggle}><button className="btn-ghost" aria-expanded={open} aria-controls={"history-detail-" + id} aria-label={(open ? "收起" : "查看") + row.title + "详情"} onClick={() => setExpanded(open ? "" : id)}><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><path d="m6 9 6 6 6-6" /></svg></button></td>
         </tr>
-        {open && <tr className={styles.detailRow}><td colSpan={6}><HistoryDetail row={row} busy={busy} operate={operate} /></td></tr>}
+        {open && <tr className={styles.detailRow}><td colSpan={6}><HistoryDetail row={row} busy={busy} operate={operate} removed={removals.some(value => value.batchId === row.job.spec.batchId && !!value.completedAt)} /></td></tr>}
       </Fragment>; })}</tbody>
     </table> : <div className={styles.empty}><h2>{rows.length ? "没有匹配的记录" : "暂无发布历史"}</h2>{rows.length > 0 && <button className="btn-ghost" onClick={() => { search(""); chooseResult(""); }}>清除筛选</button>}</div>}
     <Pagination page={currentPage} total={filtered.length} change={changePage} />

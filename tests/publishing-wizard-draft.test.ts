@@ -42,3 +42,9 @@ it("rejects invalid local rules and exclusion IDs rather than treating stored in
   const cached = parsePublishingDraft({ newDraft: true, batchId: "c".repeat(64), rule: { timezone: "not/a/timezone" }, excluded: ["../../file", 1, "d".repeat(64)], step: 100 });
   expect(cached).toMatchObject({ rule: undefined, excluded: ["d".repeat(64)], step: 1 }); expect(parsePublishingDraft([])).toBeUndefined();
 });
+
+it("does not restore a removed batch but keeps a pending deletion available for its progress", () => {
+  const saved = plan(1); saved.confirmedAt = 2; const cached = parsePublishingDraft({ planId: saved.id, step: 4 });
+  expect(restorePublishingPlan([saved], target, cached, [{ batchId: saved.id, requestedAt: 3 }])).toBe(saved);
+  expect(restorePublishingPlan([saved], target, cached, [{ batchId: saved.id, requestedAt: 3, completedAt: 4 }])).toBeUndefined();
+});

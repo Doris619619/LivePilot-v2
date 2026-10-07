@@ -37,6 +37,8 @@
 .batchAction { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
 .batchAction > span { color: var(--text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; text-align: right; }
 .batchAction button { padding-inline: 10px; margin-right: -10px; }
+.batchButtons { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+.batchAction .batchButtons button { min-height: 44px; margin: 0; }
 @media (max-width: 1150px) {
   .batch { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 16px 24px; }
   .batchAction { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; align-items: center; }
@@ -55,5 +57,7 @@
   .batchHeading h3 { flex: 1; }
   .status { flex: none; }
   .batchAction { gap: 8px; }
+  .batchAction { flex-wrap: wrap; }
+  .batchButtons { margin-left: auto; }
   .counts { gap: 4px 12px; }
 }

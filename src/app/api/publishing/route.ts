@@ -7,7 +7,7 @@ import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
 import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema } from "@/shared/publishing";
 import { idSchema, uuidSchema } from "@/shared/remote";
-import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, previewPublishingReschedule, confirmPublishingReschedule, confirmPublishingPlan, archivePublishingPlan, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
+import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, previewPublishingReschedule, confirmPublishingReschedule, confirmPublishingPlan, archivePublishingPlan, removePublishingBatch, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
 import { oauthCookie } from "@/cloud/oauth";
 import { NextResponse } from "next/server";
 export const runtime = "nodejs";
@@ -26,6 +26,7 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("plan-reschedule-confirm"), planId: uuidSchema, revision: z.number().int().positive(), previewId: uuidSchema }).strict(),
   z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
   z.object({ action: z.literal("plan-archive"), planId: uuidSchema }).strict(),
+  z.object({ action: z.literal("batch-remove"), batchId: uuidSchema }).strict(),
   z.object({ action: z.literal("profile"), profile: profileSchema }).strict(),
   z.object({ action: z.literal("preview"), profileId: uuidSchema, assetIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(1000) }).strict(),
   z.object({ action: z.literal("confirm"), batchId: uuidSchema, ai: z.boolean(), temporaryPrivateTitle: z.boolean(), overrides: z.array(itemOverrideSchema).max(1000).default([]) }).strict(),
@@ -55,6 +56,7 @@ export async function POST(request: Request) {
     else if (value.action === "plan-reschedule-confirm") result = await confirmPublishingReschedule(user, value.planId, value.revision, value.previewId);
     else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds);
     else if (value.action === "plan-archive") result = await archivePublishingPlan(user, value.planId);
+    else if (value.action === "batch-remove") result = await removePublishingBatch(user, value.batchId);
     else if (value.action === "profile") result = await savePublishingProfile(user, value.profile);
     else if (value.action === "preview") result = await previewPublishingBatch(user, value.profileId, value.assetIds);
     else if (value.action === "confirm") result = await confirmPublishingBatch(user, value.batchId, value.ai, value.temporaryPrivateTitle, value.overrides);

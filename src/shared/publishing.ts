@@ -25,6 +25,8 @@ export const planRuleSchema = z.object({ timezone: z.string().min(1).max(100).re
 export type PublishingPlanRule = z.infer<typeof planRuleSchema>;
 export const planItemSchema = z.object({ packageId: z.string().regex(/^[a-f0-9]{64}$/), scheduleSource: z.enum(["auto", "manual"]).default("auto"), excluded: z.boolean().default(false), publishAt: z.string().datetime().optional(), ...videoCopySchema.partial().shape }).strict();
 export type PublishingPlanItem = z.infer<typeof planItemSchema>;
+/** 整批移出总览须等待当前任务的真实安全结果；用户内容与历史记录不随标记删除。 */
+export type PublishingBatchRemoval = { batchId: string; requestedAt: number; completedAt?: number; name?: string };
 export type PublishingPlan = { id: string; revision: number; owner: string; actor: string; profile: PublishingProfile; batch: PackageBatch; rule: PublishingPlanRule; items: PublishingPlanItem[]; copies: { packageId: string; title: string; description: string }[]; skippedOccupied: number; skipped: string[]; createdAt: number; confirmedAt?: number; archivedAt?: number; archivePending?: boolean; schedulePreviewId?: string; scheduleLockedPackageIds?: string[] };
 /** Agent 先报告经过完整 Hash 验证的最终文件，再报告上传进度；不暴露本机路径。 */
 export const preparedUploadSchema = z.object({ version: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(256 * 1024 ** 3), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
