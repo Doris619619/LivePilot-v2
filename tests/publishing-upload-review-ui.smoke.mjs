@@ -1,4 +1,4 @@
-/** 上传前检查浏览器回归：所有状态、素材和 API 均为合成数据，不接触 Agent 或 YouTube。 */
+/** 重复发布及上传预检浏览器回归：所有状态、素材和 API 均为合成数据，不接触 Agent 或 YouTube。 */
 import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -12,6 +12,7 @@ const policy = { enabled: true, publicVerified: true, projectKey: "synthetic", u
 const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", accountId, channelId: "synthetic_channel", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "none", ai: { enabled: false, language: "English", prompt: "Generate", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
 const rule = { timezone: "UTC", startDate: "2030-10-01", weeklySlots: [{ weekday: 1, time: "18:00" }], preuploadDays: 28 };
 const backendMessage = "该发布包已有上传记录；先核对并取消旧任务，可能已上传的新版本需明确确认替代上传。";
+const lostResponseMessage = "提交响应中断，请重试。";
 
 /** 稳定索引只作为前端快照；未创建、读取或上传视频文件。 */
 function digest(number) { return number.toString(16).padStart(64, "0"); }
@@ -28,7 +29,22 @@ function fixture(known = true) {
     const spec = { id, batchId: oldId, owner: "alice", actor: "alice", revision: 3, desired: "cancel", profile: structuredClone(profile), asset: pkg.sourceVideo, contentPackage, plan: structuredClone(rule), index: index + 1, originalPublishAt: old.items[index].publishAt, overrides: {}, policy, consent: { version: "2026-10-01", acceptedAt: 1, ai: false, temporaryPrivateTitle: true } };
     return { spec, hadUpload: true, createdAt: 1, observed: { id, revision: 3, sequence: 3, state: "published", videoId: "synthetic_video_" + pkg.name, offset: pkg.sourceVideo.size, total: pkg.sourceVideo.size, updatedAt: Date.parse("2030-10-01T12:00:00Z") + index * 60000, observedPrivacy: "public", effectivePublishAt: spec.originalPublishAt, metadata: { title: pkg.name, description: "Synthetic description" }, message: "视频已公开，取消未应用。" } };
   });
-  return { batch, plan, requests: [], errors: [], unexpected: [], view: { accounts: [{ id: accountId, agentId: "pc", instanceId: "main", name: "测试发布账号", channelId: profile.channelId, channel: "测试频道", owner: "alice", status: "connected", createdAt: 1, updatedAt: 1 }], profiles: [structuredClone(profile)], plans: [old, plan], jobs, removals: [{ batchId: oldId, requestedAt: 3, completedAt: 4, name: batch.name }], cleanups: [], policy, consent: { version: "2026-10-01" }, administrator: false } };
+  return { batch, plan, confirmMode: "success", confirmedJobs: [], requests: [], errors: [], unexpected: [], view: { accounts: [{ id: accountId, agentId: "pc", instanceId: "main", name: "测试发布账号", channelId: profile.channelId, channel: "测试频道", owner: "alice", status: "connected", createdAt: 1, updatedAt: 1 }], profiles: [structuredClone(profile)], plans: [old, plan], jobs, removals: [{ batchId: oldId, requestedAt: 3, completedAt: 4, name: batch.name }], cleanups: [], policy, consent: { version: "2026-10-01" }, administrator: false } };
+}
+
+/** 计算当前合成 API 可接受的终态 allowlist；这个 mock 不替代 Cloud 的真实事务/幂等测试。 */
+function expectedRepeats(data) {
+  const selected = new Set(data.plan.items.filter(item => !item.excluded).map(item => item.packageId));
+  return data.view.jobs.filter(job => job.spec.batchId !== data.plan.id && selected.has(job.spec.contentPackage?.id) && job.observed?.revision === job.spec.revision && ["published", "completed"].includes(job.observed.state)).map(job => job.spec.id).sort();
+}
+
+/** 模拟确认返回丢失后仍沿用同一计划；只为新任务分配 ID，不覆写旧视频关联。 */
+function syntheticConfirmation(data) {
+  if (!data.confirmedJobs.length) data.confirmedJobs = data.plan.items.filter(item => !item.excluded).map((item, index) => {
+    const pkg = data.plan.batch.packages.find(pkg => pkg.id === item.packageId);
+    return { spec: { ...structuredClone(data.view.jobs[0].spec), id: "66666666-6666-4666-8666-" + String(index + 1).padStart(12, "0"), batchId: data.plan.id, desired: "run", revision: 1, contentPackage: structuredClone(pkg), asset: structuredClone(pkg.sourceVideo), originalPublishAt: item.publishAt }, createdAt: 20 };
+  });
+  return data.confirmedJobs;
 }
 
 /** 只允许同源页面及白名单合成 API；意外端点和外部视频请求立即记录为失败。 */
@@ -58,7 +74,14 @@ async function createPage(browser, data, draftStep = 3) {
           assert.equal(body.planId, data.plan.id); assert.equal(body.revision, data.plan.revision); data.plan.revision++; data.plan.rule = body.rule; data.plan.items = body.items; result = data.plan;
         } else if (body.action === "plan-confirm") {
           assert.equal(body.planId, data.plan.id); assert.equal(body.revision, data.plan.revision);
-          await route.fulfill({ status: 409, json: { error: backendMessage } }); return;
+          if (data.confirmMode === "reject") { await route.fulfill({ status: 409, json: { error: backendMessage } }); return; }
+          assert.deepEqual([...(body.republishJobIds || [])].sort(), expectedRepeats(data), "Repeat confirmation must explicitly identify every selected prior job");
+          assert.equal(body.temporaryPrivateTitle, true); assert.equal(body.ai, false);
+          result = syntheticConfirmation(data);
+          if (data.confirmMode === "lose-response-once") { data.confirmMode = "success"; await route.fulfill({ status: 503, json: { error: lostResponseMessage } }); return; }
+          data.plan.confirmedAt = 20;
+          if (body.republishJobIds?.length) data.plan.republishJobIds = [...body.republishJobIds];
+          for (const job of result) if (!data.view.jobs.some(value => value.spec.id === job.spec.id)) data.view.jobs.push(job);
         }
       }
       assert.ok(result, "Unexpected mock endpoint: " + route.request().method() + " " + url.pathname); await route.fulfill({ json: result });
@@ -86,40 +109,111 @@ const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSE
 try {
   const known = fixture(); const first = await createPage(browser, known); const { page } = first;
   const confirmation = () => page.getByRole("region", { name: "确认发布计划", exact: true });
-  await confirmation().getByText("2 条视频已在此频道公开，不能重复上传。", { exact: true }).waitFor();
-  assert.equal(await confirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true }).isDisabled(), true);
-  assert.equal(await confirmation().getByRole("checkbox").count(), 0, "Blocked draft must not invite upload consent");
-  for (const width of widths) { await page.setViewportSize({ width, height: 1000 }); await capture(page, "blocked-confirm-" + width + ".png"); }
+  const consent = () => confirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ });
+  const repeat = count => confirmation().getByRole("checkbox", { name: "再次发布这 " + count + " 条视频，原视频保留。", exact: true });
+  const submit = () => confirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true });
+  await confirmation().getByText("2 条视频已发布，可再次发布。", { exact: true }).waitFor();
+  assert.equal(await repeat(2).isChecked(), false, "Repeating old public videos is never selected implicitly");
+  await consent().check(); assert.equal(await submit().isDisabled(), true, "Ordinary upload consent cannot authorize intentional repeat publication");
+  for (const width of widths) { await page.setViewportSize({ width, height: 1000 }); await capture(page, "repeat-confirm-" + width + ".png"); }
+  await repeat(2).check(); assert.equal(await submit().isEnabled(), true);
   await page.setViewportSize({ width: 1440, height: 1000 }); const beforeHistory = await savedDraft(page);
   await confirmation().getByRole("button", { name: "查看发布记录", exact: true }).click();
-  await page.getByRole("table", { name: "发布历史记录" }).waitFor(); await noGlobalError(page, "history reached from duplicate warning");
+  await page.getByRole("table", { name: "发布历史记录" }).waitFor(); await noGlobalError(page, "history reached from repeat notice");
   assert.equal(await page.getByRole("button", { name: "历史", exact: true }).getAttribute("aria-pressed"), "true");
   assert.equal(await page.getByRole("cell", { name: "已公开", exact: true }).count(), 2);
   await page.getByRole("button", { name: "查看001详情", exact: true }).click();
   await page.getByText("批次已移除 · YouTube 视频保留", { exact: true }).waitFor();
-  assert.equal(await page.getByText("视频已公开，取消未应用。", { exact: true }).count(), 0, "Removed public history must state the user outcome");
+  assert.equal(await page.getByText("视频已公开，取消未应用。", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("link", { name: "查看视频", exact: true }).getAttribute("href"), "https://www.youtube.com/watch?v=synthetic_video_001");
   for (const width of widths) { await page.setViewportSize({ width, height: 1000 }); await capture(page, "removed-public-history-" + width + ".png"); }
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.getByRole("button", { name: "发布视频", exact: true }).click();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
-  assert.deepEqual(await savedDraft(page), beforeHistory, "Opening historical publication must preserve the unconfirmed draft");
+  assert.deepEqual(await savedDraft(page), beforeHistory, "Opening old publication preserves the draft");
+  assert.equal(await repeat(2).isChecked(), true, "Viewing history alone does not alter the same confirmation snapshot");
   await confirmation().getByRole("button", { name: "更换素材", exact: true }).click();
   await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "下一步", exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole("button", { name: "下一步", exact: true }).isEnabled(), true, "Known completed videos can reach time settings");
   await page.getByRole("button", { name: "检测素材", exact: true }).click();
-  await page.getByRole("checkbox", { name: /暂不发布.*001/ }).check(); await page.getByRole("checkbox", { name: /暂不发布.*002/ }).check();
-  assert.equal(await page.getByRole("region", { name: "已有发布记录", exact: true }).count(), 0, "Excluded duplicates must not block the new package");
-  assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), false);
+  await page.getByRole("checkbox", { name: /暂不发布.*001/ }).check();
+  await page.getByRole("region", { name: "已有发布记录", exact: true }).getByText("1 条视频已发布，可再次发布。", { exact: true }).waitFor();
   await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("heading", { name: "设置时间", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "生成排期", exact: true }).isEnabled(), true);
   await page.getByRole("button", { name: "生成排期", exact: true }).click(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
-  await confirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ }).check();
-  assert.equal(await confirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true }).isEnabled(), true);
-  assert.deepEqual(known.plan.items.filter(item => item.excluded).map(item => item.packageId), known.batch.packages.slice(0, 2).map(pkg => pkg.id));
-  assert.equal(known.requests.filter(request => request.action === "plan-confirm").length, 0, "Known duplicate materials must never submit an upload");
+  assert.equal(await repeat(1).isChecked(), false, "Changing candidates resets prior repeat consent");
+  await consent().check(); assert.equal(await submit().isDisabled(), true);
+  await repeat(1).check(); assert.equal(await submit().isEnabled(), true);
+  assert.deepEqual(known.plan.items.filter(item => item.excluded).map(item => item.packageId), [known.batch.packages[0].id]);
+  assert.equal(known.requests.filter(request => request.action === "plan-confirm").length, 0);
+  await confirmation().getByRole("button", { name: "更换素材", exact: true }).click();
+  await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
+  await page.getByRole("checkbox", { name: /暂不发布.*002/ }).check();
+  assert.equal(await page.getByRole("region", { name: "已有发布记录", exact: true }).count(), 0, "Excluded old packages release new content");
+  await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("button", { name: "生成排期", exact: true }).click();
+  await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor(); await consent().check();
+  assert.equal(await confirmation().getByRole("checkbox", { name: /再次发布这/ }).count(), 0);
+  assert.equal(await submit().isEnabled(), true, "Remaining new package needs ordinary consent only");
   await page.reload(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
-  assert.deepEqual((await savedDraft(page)).excluded, known.batch.packages.slice(0, 2).map(pkg => pkg.id), "Refresh must restore excluded duplicates");
-  checkFixture(known, "known duplicate and exclusion"); await first.context.close();
+  assert.deepEqual((await savedDraft(page)).excluded, known.batch.packages.slice(0, 2).map(pkg => pkg.id));
+  checkFixture(known, "repeat candidate navigation and exclusion"); await first.context.close();
 
-  const raced = fixture(false); const second = await createPage(browser, raced); const racePage = second.page;
+  const retry = fixture(); retry.confirmMode = "lose-response-once"; const oldPublic = structuredClone(retry.view.jobs);
+  const second = await createPage(browser, retry); const retryPage = second.page;
+  const retryConfirmation = () => retryPage.getByRole("region", { name: "确认发布计划", exact: true });
+  const retrySubmit = () => retryConfirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true });
+  await retryConfirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ }).check();
+  await retryConfirmation().getByRole("checkbox", { name: "再次发布这 2 条视频，原视频保留。", exact: true }).check();
+  await retrySubmit().click(); await retryConfirmation().getByRole("alert").filter({ hasText: lostResponseMessage }).waitFor();
+  await noGlobalError(retryPage, "lost confirm response"); assert.equal(retry.confirmedJobs.length, 3);
+  await retrySubmit().click(); await retryPage.getByRole("heading", { name: "自动执行", exact: true }).waitFor();
+  const execution = retryPage.getByRole("region", { name: "批次执行状态", exact: true });
+  await execution.getByRole("heading", { name: "我的第一批次 · 再次发布", exact: true }).waitFor();
+  assert.equal(await execution.locator(".publishing-execution-summary > div").filter({ has: retryPage.locator("dt").filter({ hasText: /^已公开$/ }) }).locator("dd").innerText(), "0", "This new round never inherits old public counts");
+  assert.equal(await execution.locator(".publishing-execution-summary > div").filter({ has: retryPage.locator("dt").filter({ hasText: /^待处理$/ }) }).locator("dd").innerText(), "3");
+  const retryRequests = retry.requests.filter(request => request.action === "plan-confirm");
+  assert.equal(retryRequests.length, 2); assert.deepEqual(retryRequests[1], retryRequests[0], "Retry uses the same plan and explicit repeat allowlist");
+  assert.deepEqual([...retryRequests[0].republishJobIds].sort(), oldPublic.map(job => job.spec.id).sort());
+  assert.equal(retry.view.jobs.length, 5, "Synthetic idempotent confirmation exposes one set of new jobs");
+  assert.deepEqual(retry.view.jobs.slice(0, 2), oldPublic, "Original public jobs and video IDs are retained");
+  await retryPage.getByRole("button", { name: "我的发布", exact: true }).click();
+  await retryPage.getByRole("heading", { name: "我的第一批次 · 再次发布", exact: true }).waitFor();
+  await retryPage.getByText("已公开 0", { exact: true }).waitFor(); await retryPage.getByText("待发布 3", { exact: true }).waitFor();
+  await retryPage.getByRole("button", { name: "历史", exact: true }).click();
+  await retryPage.getByRole("table", { name: "发布历史记录" }).waitFor(); assert.equal(await retryPage.getByRole("cell", { name: "已公开", exact: true }).count(), 2);
+  await retryPage.getByRole("button", { name: "查看002详情", exact: true }).click();
+  assert.equal(await retryPage.getByRole("link", { name: "查看视频", exact: true }).getAttribute("href"), "https://www.youtube.com/watch?v=synthetic_video_002");
+  const repeatedJob = retry.view.jobs.find(job => job.spec.batchId === retry.plan.id);
+  repeatedJob.observed = { id: repeatedJob.spec.id, revision: repeatedJob.spec.revision, sequence: 1, state: "published", videoId: "synthetic_repeat_001", offset: repeatedJob.spec.asset.size, total: repeatedJob.spec.asset.size, updatedAt: Date.parse("2030-10-02T12:00:00Z"), observedPrivacy: "public", metadata: { title: "001", description: "New synthetic publication" } };
+  await retryPage.getByRole("button", { name: "刷新发布状态" }).click();
+  await retryPage.getByRole("cell", { name: "我的第一批次 · 再次发布", exact: true }).waitFor();
+  assert.equal(await retryPage.getByRole("cell", { name: "我的第一批次", exact: true }).count(), 2, "Only the new historical round receives the repeat marker");
+  checkFixture(retry, "explicit repeat confirmation retry"); await second.context.close();
+
+  const changed = fixture(); const fourth = await createPage(browser, changed); const changedPage = fourth.page;
+  const changedConfirmation = () => changedPage.getByRole("region", { name: "确认发布计划", exact: true });
+  await changedConfirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ }).check();
+  await changedConfirmation().getByRole("checkbox", { name: "再次发布这 2 条视频，原视频保留。", exact: true }).check();
+  const additional = structuredClone(changed.view.jobs[0]); additional.spec.id = "77777777-7777-4777-8777-777777777777"; additional.observed.id = additional.spec.id; additional.observed.videoId = "synthetic_video_001_again";
+  changed.view.jobs.push(additional); await changedPage.getByRole("button", { name: "刷新发布状态" }).click();
+  await changedPage.waitForFunction(() => [...document.querySelectorAll('input[type="checkbox"]')].some(input => input.parentElement?.textContent?.includes("再次发布这") && !input.checked));
+  assert.equal(await changedConfirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true }).isDisabled(), true, "New historical IDs invalidate repeat consent even without plan revision changes");
+  assert.equal(changed.requests.filter(request => request.action === "plan-confirm").length, 0);
+  checkFixture(changed, "repeat consent tracks historical job identities"); await fourth.context.close();
+
+  const unknown = fixture(); unknown.view.jobs[0].observed.state = "needs_attention"; unknown.view.jobs[0].spec.revision++;
+  unknown.view.jobs[1].observed.state = "uploading"; unknown.view.jobs[1].spec.desired = "run";
+  const fifth = await createPage(browser, unknown); const unknownPage = fifth.page;
+  const unknownConfirmation = () => unknownPage.getByRole("region", { name: "确认发布计划", exact: true });
+  await unknownConfirmation().getByRole("region", { name: "已有发布记录", exact: true }).waitFor();
+  assert.equal(await unknownConfirmation().getByRole("button", { name: "确认上传并按计划发布", exact: true }).isDisabled(), true);
+  assert.equal(await unknownConfirmation().getByRole("checkbox", { name: /再次发布这/ }).count(), 0, "Unknown cancellation and active upload are not intentional repeat candidates");
+  for (const width of widths) { await unknownPage.setViewportSize({ width, height: 1000 }); await capture(unknownPage, "unknown-upload-blocked-" + width + ".png"); }
+  await unknownPage.getByRole("button", { name: "准备素材", exact: true }).click(); await unknownPage.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
+  assert.equal(await unknownPage.getByRole("button", { name: "下一步", exact: true }).isDisabled(), true);
+  assert.equal(unknown.requests.filter(request => request.action === "plan-confirm").length, 0);
+  checkFixture(unknown, "unknown cancellation and active upload protection"); await fifth.context.close();
+
+  const raced = fixture(false); raced.confirmMode = "reject"; const third = await createPage(browser, raced); const racePage = third.page;
   const raceConfirmation = () => racePage.getByRole("region", { name: "确认发布计划", exact: true });
   assert.equal(await raceConfirmation().getByRole("region", { name: "已有发布记录", exact: true }).count(), 0);
   await raceConfirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ }).check();
@@ -129,28 +223,28 @@ try {
   for (const width of widths) { await racePage.setViewportSize({ width, height: 1000 }); await capture(racePage, "local-confirm-error-" + width + ".png"); }
   await racePage.getByRole("button", { name: "我的发布", exact: true }).click(); await racePage.getByRole("button", { name: "历史", exact: true }).click();
   await racePage.getByRole("table", { name: "发布历史记录" }).waitFor(); await noGlobalError(racePage, "history after failed confirmation");
-  assert.equal(await racePage.getByRole("alert").filter({ hasText: backendMessage }).count(), 0, "New draft confirmation failure must not appear in historical video results");
+  assert.equal(await racePage.getByRole("alert").filter({ hasText: backendMessage }).count(), 0);
   await racePage.getByRole("button", { name: "发布视频", exact: true }).click(); await racePage.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   await raceConfirmation().getByRole("alert").filter({ hasText: backendMessage }).waitFor();
-  assert.deepEqual(await savedDraft(racePage), failedDraft, "Returning to the same failed revision must retain the draft");
+  assert.deepEqual(await savedDraft(racePage), failedDraft);
   await racePage.getByRole("button", { name: "刷新发布状态" }).click(); await raceConfirmation().getByRole("alert").filter({ hasText: backendMessage }).waitFor();
   assert.equal(raced.requests.filter(request => request.action === "plan-confirm").length, 1); assert.equal(raced.view.jobs.length, 2); assert.equal(raced.plan.confirmedAt, undefined);
-  checkFixture(raced, "server conflict error isolation"); await second.context.close();
+  checkFixture(raced, "server conflict error isolation"); await third.context.close();
 
-  const changed = fixture(false); const third = await createPage(browser, changed, 2); const changedPage = third.page;
-  // 已保存的未确认计划优先恢复到确认页；先返回设置，再模拟后台发现此前缺失的旧上传记录。
-  await changedPage.getByRole("button", { name: "返回设置", exact: true }).click(); await changedPage.getByRole("heading", { name: "设置时间", exact: true }).waitFor();
-  assert.equal((await savedDraft(changedPage)).step, 2); assert.equal(await changedPage.getByRole("button", { name: "生成排期", exact: true }).isEnabled(), true);
-  for (const [index, job] of changed.view.jobs.entries()) job.spec.contentPackage = structuredClone(changed.batch.packages[index]);
-  await changedPage.getByRole("button", { name: "刷新发布状态" }).click();
-  await changedPage.getByRole("region", { name: "已有发布记录", exact: true }).getByText("2 条视频已在此频道公开，不能重复上传。", { exact: true }).waitFor();
-  assert.equal(await changedPage.getByRole("button", { name: "生成排期", exact: true }).isDisabled(), true, "Newly discovered duplicate history must disable schedule generation and explain why");
-  await noGlobalError(changedPage, "duplicate discovered while setting times");
-  for (const width of widths) { await changedPage.setViewportSize({ width, height: 1000 }); await capture(changedPage, "blocked-time-settings-" + width + ".png"); }
-  await changedPage.getByRole("button", { name: "更换素材", exact: true }).click(); await changedPage.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
-  assert.equal(await changedPage.getByRole("button", { name: "下一步", exact: true }).isDisabled(), true);
-  assert.equal(changed.requests.filter(request => request.action !== "packages").length, 0, "Newly discovered duplicate history must not submit a plan: " + JSON.stringify(changed.requests));
-  checkFixture(changed, "duplicate history discovered in time settings"); await third.context.close();
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, synthetic: true, widths, screenshots, knownConfirmRequests: 0, racedConfirmRequests: 1, checks: ["removed-public-duplicates-block-before-consent", "direct-history-entry-preserves-draft", "public-history-clear-removal-outcome", "excluded-duplicates-release-new-material", "refresh-retains-exclusions", "server-conflict-local-to-plan-revision", "history-never-shows-draft-error", "same-revision-retains-error-after-return-and-refresh", "time-settings-explain-and-block-newly-discovered-duplicates"] }, null, 2));
-  process.stdout.write("Upload review UI passed: early duplicate protection, clear retained-public history, excluded duplicate recovery, draft persistence, local confirmation conflict, and four viewport widths. All API and file data were synthetic.\n");
+  const discovered = fixture(false); const sixth = await createPage(browser, discovered, 2); const discoveredPage = sixth.page;
+  await discoveredPage.getByRole("button", { name: "返回设置", exact: true }).click(); await discoveredPage.getByRole("heading", { name: "设置时间", exact: true }).waitFor();
+  assert.equal(await discoveredPage.getByRole("button", { name: "生成排期", exact: true }).isEnabled(), true);
+  for (const [index, job] of discovered.view.jobs.entries()) { job.spec.contentPackage = structuredClone(discovered.batch.packages[index]); job.observed.state = "uploading"; job.spec.desired = "run"; }
+  await discoveredPage.getByRole("button", { name: "刷新发布状态" }).click();
+  await discoveredPage.getByRole("region", { name: "已有发布记录", exact: true }).waitFor();
+  assert.equal(await discoveredPage.getByRole("button", { name: "生成排期", exact: true }).isDisabled(), true, "New unknown upload must block and explain schedule generation");
+  await noGlobalError(discoveredPage, "active uploads discovered while setting times");
+  for (const width of widths) { await discoveredPage.setViewportSize({ width, height: 1000 }); await capture(discoveredPage, "blocked-time-settings-" + width + ".png"); }
+  await discoveredPage.getByRole("button", { name: "更换素材", exact: true }).click(); await discoveredPage.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
+  assert.equal(await discoveredPage.getByRole("button", { name: "下一步", exact: true }).isDisabled(), true);
+  assert.equal(discovered.requests.filter(request => request.action !== "packages").length, 0);
+  checkFixture(discovered, "in-progress history discovered in time settings"); await sixth.context.close();
+
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, synthetic: true, backendIdempotencyIsMocked: true, widths, screenshots, repeatConfirmRequests: retryRequests.length, racedConfirmRequests: 1, checks: ["finished-history-continues-to-settings", "explicit-repeat-checkbox-required", "repeat-payload-identifies-prior-jobs", "confirmation-retry-retains-plan-and-allowlist", "old-video-links-retained", "repeat-round-starts-independent-statistics", "repeat-round-marked-in-overview-execution-history", "candidate-exclusions-reset-consent", "new-historical-ids-reset-consent", "excluded-old-content-releases-new-content", "refresh-retains-exclusions", "unknown-cancellation-never-reuploads", "in-progress-history-blocks-new-generation", "direct-history-entry-preserves-draft", "server-conflict-local-to-plan-revision"] }, null, 2));
+  process.stdout.write("Upload review UI passed: explicit intentional repeats, same-plan retry payload, retained old video references, unknown upload protection, consent reset, draft persistence, and four viewport widths. All API and file data were synthetic; backend idempotency was mocked.\n");
 } finally { await browser.close(); }

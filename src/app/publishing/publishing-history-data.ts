@@ -22,14 +22,15 @@ function historyTitle(job: VideoJob, plan?: PublishingPlan) {
   return job.observed?.metadata?.title || job.spec.overrides.title || (copy ? copy.title : "") || job.spec.contentPackage?.title || job.spec.contentPackage?.name || job.spec.asset.filename;
 }
 
-/** 保留旧修订的终态观察，新的指令是否确认由详情单独说明，不抹去已公开的事实。 */
+/** 保留旧修订的终态观察，再次发布的批次独立标记，不抹去旧视频已公开的事实。 */
 export function publishingHistory(plans: PublishingPlan[], jobs: VideoJob[], targets: OverviewTarget[]): HistoryRow[] {
   const byPlan = new Map(plans.map(plan => [plan.id, plan]));
   return jobs.filter(job => publishingTerminal(job.observed?.state)).map(job => {
     const report = job.observed!; const plan = byPlan.get(job.spec.batchId);
     const target = targets.find(value => value.channelId === job.spec.profile.channelId && value.agentId === job.spec.profile.agentId && value.instanceId === job.spec.profile.instanceId) || targets.find(value => value.channelId === job.spec.profile.channelId);
     const result: HistoryResult = report.state === "completed" && report.observedPrivacy === "public" ? "published" : report.state as HistoryResult;
-    return { job, title: historyTitle(job, plan), batch: plan?.batch.name || job.spec.contentPackage?.batchName || job.spec.profile.name, channel: target?.channel || job.spec.profile.channelId, result, resultLabel: historyResultLabels[result], plannedAt: report.effectivePublishAt || job.spec.originalPublishAt, timezone: job.spec.plan?.timezone || job.spec.profile.schedule.timezone, recordedAt: report.updatedAt || job.createdAt };
+    const batch = plan?.batch.name || job.spec.contentPackage?.batchName || job.spec.profile.name;
+    return { job, title: historyTitle(job, plan), batch: batch + (plan?.republishJobIds?.length ? " · 再次发布" : ""), channel: target?.channel || job.spec.profile.channelId, result, resultLabel: historyResultLabels[result], plannedAt: report.effectivePublishAt || job.spec.originalPublishAt, timezone: job.spec.plan?.timezone || job.spec.profile.schedule.timezone, recordedAt: report.updatedAt || job.createdAt };
   }).sort((a, b) => b.recordedAt - a.recordedAt || b.job.createdAt - a.job.createdAt || a.title.localeCompare(b.title, "zh-CN", { numeric: true }) || a.job.spec.id.localeCompare(b.job.spec.id));
 }
 

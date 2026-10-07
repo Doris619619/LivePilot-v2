@@ -40,6 +40,15 @@ it("does not relabel old channel history after the same device is rebound", () =
   expect(publishingHistory([], [value], [{ agentId: "pc", instanceId: "main", name: "电脑", channelId: "channel_one", channel: "Rainy Night Radio" }])[0].channel).toBe("Rainy Night Radio");
 });
 
+it("distinguishes a deliberate repeat batch while retaining the old video history", () => {
+  const old = job("published"); const original = plan(old); old.observed!.videoId = "old_video";
+  const next = job("published"); const repeated = plan(next); repeated.republishJobIds = [old.spec.id]; next.observed!.videoId = "new_video";
+  const rows = publishingHistory([original, repeated], [old, next], []);
+  expect(rows.find(row => row.job.spec.id === old.spec.id)).toMatchObject({ batch: "夜雨", result: "published" });
+  expect(rows.find(row => row.job.spec.id === next.spec.id)).toMatchObject({ batch: "夜雨 · 再次发布", result: "published" });
+  expect(rows.map(row => row.job.observed!.videoId).sort()).toEqual(["new_video", "old_video"]);
+});
+
 it("sorts by latest stored record and filters all records before pagination without mutating source jobs", () => {
   const values = Array.from({ length: 100 }, (_, index) => { const value = job(index === 75 ? "failed" : "published", index + 1); value.spec.asset.filename = index === 75 ? "Target.mp4" : "video-" + index + ".mp4"; return value; });
   const rows = publishingHistory([], values, []);

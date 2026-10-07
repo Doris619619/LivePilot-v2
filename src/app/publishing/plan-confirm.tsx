@@ -7,14 +7,17 @@ import { descriptionBytes, inputUtc, localInputTime, planTime, titleCharacters, 
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import PlanCalendar from "./plan-calendar";
 import UploadReview from "./upload-review";
-import type { UploadBlock } from "./publishing-upload-review";
-type Props = { plan: PublishingPlan; channel?: string; busy: boolean; disabled?: boolean; blocked?: string; scheduleOnly?: boolean; lockedPackageIds?: string[]; replacements: string[]; uploadBlockers?: UploadBlock[]; update(items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>; confirm(ai: boolean, replacements: string[]): Promise<void>; back(): void; changeMaterials?(): void; viewHistory(): void; viewExecution?(): void };
+import type { UploadBlock, UploadRepeat } from "./publishing-upload-review";
+type Props = { plan: PublishingPlan; channel?: string; busy: boolean; disabled?: boolean; blocked?: string; scheduleOnly?: boolean; lockedPackageIds?: string[]; replacements: string[]; uploadBlockers?: UploadBlock[]; uploadRepeats?: UploadRepeat[]; update(items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>; confirm(ai: boolean, replacements: string[], republishJobIds: string[]): Promise<void>; back(): void; changeMaterials?(): void; viewHistory(): void; viewExecution?(): void };
 
 /** 保存服务端返回的计划修订后才能确认，日历切月和步骤回跳不丢弃正在编辑的字段。 */
-export default function PlanConfirm({ plan, channel, busy, disabled, blocked, scheduleOnly = false, lockedPackageIds, replacements, uploadBlockers = [], update, confirm, back, changeMaterials, viewHistory, viewExecution }: Props) {
+export default function PlanConfirm({ plan, channel, busy, disabled, blocked, scheduleOnly = false, lockedPackageIds, replacements, uploadBlockers = [], uploadRepeats = [], update, confirm, back, changeMaterials, viewHistory, viewExecution }: Props) {
   const [page, setPage] = useState(0); const [editing, setEditing] = useState<PublishingPlanItem>(); const [date, setDate] = useState("");
   const [error, setError] = useState(""); const [accepted, setAccepted] = useState(false); const [ai, setAi] = useState(false); const [replace, setReplace] = useState(false);
   const [submissionError, setSubmissionError] = useState<{ revision: number; message: string }>();
+  const [republishConsent, setRepublishConsent] = useState("");
+  const republishKey = JSON.stringify({ revision: plan.revision, repeats: uploadRepeats.map(value => [value.packageId, value.version, value.jobIds]) });
+  const repeatAccepted = !uploadRepeats.length || republishConsent === republishKey;
   const editorHeading = useRef<HTMLHeadingElement>(null);
   const active = plan.items.filter(item => !item.excluded); const ordered = active.map(item => item.publishAt).filter((value): value is string => !!value).sort();
   const copies = new Map(plan.copies.map(copy => [copy.packageId, copy])); const packages = new Map(plan.batch.packages.map(item => [item.id, item]));
@@ -47,14 +50,14 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
   }
   /** 确认错误属于此计划修订；切换历史或后台刷新不会把它当作旧视频的执行状态。 */
   async function submit() {
-    if (busy || disabled || blocked || uploadBlockers.length) return;
+    if (busy || disabled || blocked || uploadBlockers.length || !scheduleOnly && (!accepted || !repeatAccepted || replacements.length > 0 && !replace)) return;
     setSubmissionError(undefined);
-    try { await confirm(scheduleOnly ? false : ai, scheduleOnly ? [] : replace ? replacements : []); }
+    try { await confirm(scheduleOnly ? false : ai, scheduleOnly ? [] : replace ? replacements : [], scheduleOnly ? [] : uploadRepeats.flatMap(value => value.jobIds)); }
     catch (error) { setSubmissionError({ revision: plan.revision, message: (error as Error).message }); }
   }
   return <section aria-label="确认发布计划">
     <div className="publishing-plan-overview"><strong>{active.length} 条视频</strong><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
-    <UploadReview blockers={uploadBlockers} busy={busy} history={viewHistory} change={changeMaterials} />
+    <UploadReview blockers={uploadBlockers} repeats={uploadRepeats} busy={busy} history={viewHistory} change={changeMaterials} />
     {plan.profile.scheduled ? <PlanCalendar plan={plan} editingId={editing?.packageId} busy={busy || !!plan.archivedAt} lockedPackageIds={lockedPackageIds} edit={begin} /> : <>
       <div className="publishing-plan-list">{plan.items.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(item => {
         const pkg = packages.get(item.packageId); const copy = copies.get(item.packageId); const label = item.title ?? copy?.title ?? pkg?.name;
@@ -83,11 +86,12 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
       <label className="publishing-check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />确认频道、内容和时间；同意临时私密标题，完成后恢复文案。</label>
       {plan.profile.ai.enabled && <label className="publishing-check"><input type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} />同意 AI 生成文案及失败兜底。</label>}
       {replacements.length > 0 && <label className="publishing-check"><input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)} />使用新内容创建新视频（原视频保留）。</label>}
+      {uploadRepeats.length > 0 && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={repeatAccepted} onChange={e => setRepublishConsent(e.target.checked ? republishKey : "")} />再次发布这 {uploadRepeats.length} 条视频，原视频保留。</label>}
     </div>}
     {submissionError?.revision === plan.revision && <p className="publishing-validation" role="alert">{submissionError.message}</p>}
     <div className="publishing-actions">{scheduleOnly ? <>
       {plan.schedulePreviewId && <button className="btn-primary" disabled={busy || disabled || !!blocked || !!plan.archivedAt || !!editing} onClick={() => void submit()}>{busy ? "提交中…" : "确认改期"}</button>}
       <button className={plan.schedulePreviewId ? "" : "btn-primary"} disabled={busy} onClick={viewExecution}>返回执行</button>
-    </> : <button className="btn-primary" disabled={busy || disabled || !!blocked || !!uploadBlockers.length || !!plan.archivedAt || !accepted || !!editing || !active.length || plan.profile.ai.enabled && !ai || replacements.length > 0 && !replace} onClick={() => void submit()}>{busy ? "提交中…" : "确认上传并按计划发布"}</button>}<button disabled={busy} onClick={back}>返回设置</button></div>
+    </> : <button className="btn-primary" disabled={busy || disabled || !!blocked || !!uploadBlockers.length || !!plan.archivedAt || !accepted || !repeatAccepted || !!editing || !active.length || plan.profile.ai.enabled && !ai || replacements.length > 0 && !replace} onClick={() => void submit()}>{busy ? "提交中…" : "确认上传并按计划发布"}</button>}<button disabled={busy} onClick={back}>返回设置</button></div>
   </section>;
 }

@@ -22,12 +22,12 @@ function channelAccent(channelId: string) {
   return accents[(hash >>> 0) % accents.length];
 }
 
-/** 一行批次展示真实完成量与剩余状态，详细任务及恢复操作在查看后再展开。 */
+/** 一行批次展示真实完成量，主动再次发布标记独立一轮，详情及恢复操作按需展开。 */
 function OverviewBatch({ batch, now, open, busy, removeBatch }: { batch: PublishingOverviewBatch; now: number; open(): void; busy: boolean; removeBatch?: BatchRemovalOperation }) {
   const { counts, next } = batch; const done = counts.published + counts.completed;
   const label = batch.plan?.profile.privacy === "public" || batch.jobs.some(job => job.spec.profile.privacy === "public") ? "已公开" : "已完成";
   return <article className={styles.batch} aria-label={"批次 " + batch.name}>
-    <div className={styles.batchHeading}><h3>{batch.name}</h3><span className={styles.status + " " + styles[batch.tone]}>{batch.state}</span></div>
+    <div className={styles.batchHeading}><h3>{batch.name}{!!batch.plan?.republishJobIds?.length && " · 再次发布"}</h3><span className={styles.status + " " + styles[batch.tone]}>{batch.state}</span></div>
     <div className={styles.progressArea}>
       <div className={styles.counts}><strong>{label} {done}</strong><span>待发布 {counts.pending}</span>{counts.attention > 0 && <span className={styles.error}>需处理 {counts.attention}</span>}{counts.cancelled > 0 && <span>已取消 {counts.cancelled}</span>}</div>
       <progress aria-label={batch.name + " 发布完成进度"} value={done} max={Math.max(1, counts.total)} />

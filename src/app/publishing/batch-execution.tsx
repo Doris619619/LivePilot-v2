@@ -12,7 +12,7 @@ import { publishingRemovalFeedback, type PublishingDevice } from "./publishing-r
 export type JobOperation = (id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string) => Promise<boolean>;
 /** 当前修订的持久公开/完成事实不因 API 观察字段过期消失。 */
 function remoteComplete(job: VideoJob) { return ["published", "completed"].includes(publicationBucket(job)); }
-/** 按真实报告统计，不把受理、上传结束或时间已到认作公开。 */
+/** 按本轮真实报告统计，再次发布独立标记，不把受理、上传结束或时间已到认作公开。 */
 export default function BatchExecution({ plan, jobs, allJobs = jobs, busy, operate, archive, removal, devices, removeBatch }: { plan?: PublishingPlan; jobs: VideoJob[]; allJobs?: VideoJob[]; busy: boolean; operate: JobOperation; archive?(id: string): Promise<void>; removal?: PublishingBatchRemoval; devices?: PublishingDevice[]; removeBatch?: BatchRemovalOperation }) {
   const [page, setPage] = useState(0);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(jobs.length / PACKAGE_PAGE_SIZE) - 1));
@@ -24,7 +24,7 @@ export default function BatchExecution({ plan, jobs, allJobs = jobs, busy, opera
   const auxiliary = [counts.cancelled ? "已取消 " + counts.cancelled : "", counts.cancelPending ? "取消待确认 " + counts.cancelPending : ""].filter(Boolean);
   const batchId = plan?.id || jobs[0]?.spec.batchId; const batchName = plan?.batch.name || jobs[0]?.spec.profile.name || "发布任务";
   const feedback = publishingRemovalFeedback(removal, jobs, devices, plan?.profile.agentId);
-  return <section aria-label="批次执行状态"><div className="publishing-section-heading"><h2>{batchName}</h2><div className="publishing-batch-controls"><span>{counts.total} 条</span>{removeBatch && batchId && <BatchRemoval batchId={batchId} name={batchName} removal={removal} busy={busy} remove={removeBatch} />}</div></div>
+  return <section aria-label="批次执行状态"><div className="publishing-section-heading"><h2>{batchName}{!!plan?.republishJobIds?.length && " · 再次发布"}</h2><div className="publishing-batch-controls"><span>{counts.total} 条</span>{removeBatch && batchId && <BatchRemoval batchId={batchId} name={batchName} removal={removal} busy={busy} remove={removeBatch} />}</div></div>
     {feedback && <p className={feedback.tone === "error" ? "publishing-validation" : "publishing-warning"} role="status">{feedback.message}</p>}
     <dl className="publishing-execution-summary">{metrics.map(([label, count]) => <div key={label}><dt>{label}</dt><dd>{count}</dd></div>)}</dl>
     {auxiliary.length > 0 && <p className="publishing-hint" role="status">{auxiliary.join(" · ")}</p>}

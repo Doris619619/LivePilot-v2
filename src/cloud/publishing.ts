@@ -18,7 +18,7 @@ import { playlistResultSchema } from "@/shared/broadcast";
 import { unseal } from "@/core/storage";
 import { publishingTaskAccountId, type TaskPayload } from "@/shared/remote";
 import { authorizePublishingAccount, beginPublishingAccountCleanup, completePublishingAccountCleanup, createPublishingAccount as newPublishingAccount, expirePublishingAccountData, publishingAccountCleanups, publishingAccounts, requestPublishingAccountCleanup as accountCleanup, requirePublishingAccount, requirePublishingAccountsCapability } from "./publishing-accounts";
-import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport } from "@/shared/publishing";
+import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, canRepublishPublishingJob, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport } from "@/shared/publishing";
 type Profile = { owner: string; value: PublishingProfile };
 type Batch = { id: string; owner: string; actor: string; profile: PublishingProfile; assets: MediaAsset[]; thumbnails: string[]; copies: { title: string; description: string }[]; slots: { publishAt: string; local: string; overlapping: boolean }[]; skipped: string[]; confirmedAt?: number; createdAt: number };
 type Cleanup = { id: string; owner: string; actor: string; agentId: string; instanceId: string; createdAt: number; deadline: number; state: "pending" | "complete"; completedAt?: number };
@@ -220,8 +220,8 @@ export async function confirmPublishingReschedule(user: Member, id: string, revi
   });
   await audit(user.username, "publishing-plan-reschedule", old.profile.instanceId, "accepted"); return result;
 }
-/** 确认重扫输入版本，事务内再次核对频道 Slot；冲突只报错，绝不偷偷改动已展示时间。 */
-export async function confirmPublishingPlan(user: Member, id: string, revision: number, ai: boolean, temporaryPrivateTitle: boolean, replaceJobIds: string[] = []) {
+/** 确认重扫输入和频道 Slot；再次发布只豁免明确选择的已完成旧任务，重试同一计划不创建第二组上传。 */
+export async function confirmPublishingPlan(user: Member, id: string, revision: number, ai: boolean, temporaryPrivateTitle: boolean, replaceJobIds: string[] = [], republishJobIds: string[] = []) {
   const before = await readState(); const old = before.plans.find(plan => plan.id === id); if (!old) throw new AppError("PLAN", "计划不存在。", 404); await authorizePlan(user, old);
   if (old.confirmedAt) return edit(async state => { const plan = state.plans.find(value => value.id === id); if (!plan) throw new AppError("PLAN", "计划已清理，请刷新。", 404); await authorizePublishingWrite(user, plan.profile, plan.owner, state); assertRemovalControl(state.removals, id); return state.jobs.filter(job => job.spec.batchId === id); });
   if (old.archivedAt) throw new AppError("ARCHIVE", "批次已归档，未确认草稿不能再上传。", 409);
@@ -239,8 +239,12 @@ export async function confirmPublishingPlan(user: Member, id: string, revision: 
     if (plan.profile.accountId) await requirePublishingAccount(plan.profile.agentId, plan.profile.instanceId, plan.profile.accountId, plan.profile.channelId);
     else if (s.cleanups.some(c => c.agentId === plan.profile.agentId && c.instanceId === plan.profile.instanceId && c.state === "pending")) throw new AppError("CLEANUP", "等待设备授权清理。");
     if (plan.batch.issues.length || !plan.items.some(item => !item.excluded)) throw new AppError("PACKAGE", "请处理批次问题并至少选择一个发布包。");
-    const occupied = occupiedPublishingSlots(s.jobs, plan.profile.channelId); const jobs: VideoJob[] = []; const replacements = new Set(replaceJobIds);
+    const occupied = occupiedPublishingSlots(s.jobs, plan.profile.channelId); const jobs: VideoJob[] = []; const replacements = new Set(replaceJobIds); const republishing = new Set(republishJobIds);
     for (const replacement of replacements) { const previous = s.jobs.find(job => job.spec.id === replacement); if (!previous || previous.spec.profile.channelId !== plan.profile.channelId || previous.spec.profile.agentId !== plan.profile.agentId || previous.observed?.state !== "cancelled" || previous.observed.revision !== previous.spec.revision || !plan.items.some(item => !item.excluded && item.packageId === previous.spec.contentPackage?.id && plan.batch.packages.find(pkg => pkg.id === item.packageId)?.version !== previous.spec.contentPackage?.version)) throw new AppError("REPLACEMENT", "替代任务必须对应已确认取消的旧包及明确确认的新版本。", 409); }
+    for (const previousId of republishing) {
+      const previous = s.jobs.find(job => job.spec.id === previousId);
+      if (!previous || previous.spec.owner !== plan.owner || previous.spec.profile.agentId !== plan.profile.agentId || previous.spec.profile.channelId !== plan.profile.channelId || !canRepublishPublishingJob(previous) || !plan.items.some(item => !item.excluded && item.packageId === previous.spec.contentPackage?.id)) throw new AppError("REPUBLISH", "再次发布必须明确选择当前已完成的原视频。", 409);
+    }
     for (const [index, item] of plan.items.entries()) {
       if (item.excluded) continue;
       const pkg = plan.batch.packages.find(pkg => pkg.id === item.packageId)!;
@@ -249,12 +253,12 @@ export async function confirmPublishingPlan(user: Member, id: string, revision: 
       if (item.publishAt && occupied.has(Date.parse(item.publishAt))) throw new AppError("CONFLICT", "该频道时刻已被另一计划占用，请刷新预览。", 409);
       if (item.publishAt) occupied.add(Date.parse(item.publishAt));
       const previous = s.jobs.filter(job => job.spec.profile.channelId === plan.profile.channelId && job.spec.profile.agentId === plan.profile.agentId && job.spec.contentPackage?.id === pkg.id);
-      if (previous.some(job => !replacements.has(job.spec.id) && (job.observed?.state !== "cancelled" || job.observed.revision !== job.spec.revision || job.hadUpload))) throw new AppError("DUPLICATE", "该发布包已有上传记录；先核对并取消旧任务，可能已上传的新版本需明确确认替代上传。", 409);
+      if (previous.some(job => !replacements.has(job.spec.id) && !republishing.has(job.spec.id) && (job.observed?.state !== "cancelled" || job.observed.revision !== job.spec.revision || job.hadUpload))) throw new AppError("DUPLICATE", "该发布包已有上传记录；已完成的视频须明确确认再次发布，其他任务须先核对。", 409);
       const spec = jobSpecSchema.parse({ id: randomUUID(), batchId: plan.id, owner: plan.owner, actor: user.username, revision: 1, desired: "run", asset: pkg.sourceVideo, contentPackage: pkg, plan: plan.rule, scheduleSource: item.scheduleSource, profile: plan.profile, index: index + 1, originalPublishAt: item.publishAt, overrides: { ...(item.title !== undefined ? { title: item.title } : {}), ...(item.description !== undefined ? { description: item.description } : {}) }, policy: s.policy, consent: { version: PRIVACY_VERSION, acceptedAt: Date.now(), ai, temporaryPrivateTitle: true } });
       if (!spec.profile.ai.enabled) await publishingMetadata(publishingStore(), spec);
       jobs.push({ spec, initialPublishAt: item.publishAt, createdAt: Date.now() });
     }
-    plan.confirmedAt = Date.now(); s.jobs.push(...jobs); return jobs;
+    plan.confirmedAt = Date.now(); if (republishing.size) plan.republishJobIds = [...republishing]; s.jobs.push(...jobs); return jobs;
   });
   await audit(user.username, "publishing-plan-confirm", old.profile.instanceId, "succeeded"); return result;
 }
