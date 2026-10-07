@@ -6,17 +6,18 @@ import type { JobOperation } from "./batch-execution";
 import type { OverviewTarget } from "./publishing-overview";
 import { jobStatus } from "./display";
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
-import { filterHistory, historyResultLabels, historyTime, publishingHistory, type HistoryResult, type HistoryRow } from "./publishing-history-data";
+import { filterHistory, historyOutcome, historyResultLabels, historyTime, publishingHistory, type HistoryResult, type HistoryRow } from "./publishing-history-data";
 import styles from "./publishing-history.module.css";
 
 type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; targets: OverviewTarget[]; removals?: PublishingBatchRemoval[]; busy: boolean; operate: JobOperation };
 
-/** 历史详情保留原任务的核对和视频入口；旧协议的候选时间仅称排期记录，公开状态不能反证排期已确认。 */
+/** 历史先说明批次移除和视频保留结果，再展示必要异常；旧协议候选时间仅称排期记录，不能反证实际公开时间。 */
 export function HistoryDetail({ row, busy, operate, removed = false }: { row: HistoryRow; busy: boolean; operate: JobOperation; removed?: boolean }) {
   const { job, timezone } = row; const report = job.observed!;
-  const pending = report.revision !== job.spec.revision;
+  const pending = !removed && report.revision !== job.spec.revision; const outcome = historyOutcome(row, removed);
   return <section className={styles.detail} id={"history-detail-" + job.spec.id} aria-label={row.title + " 历史详情"}>
-    {(job.blockReason || report.message) && <p className={styles.message}>{job.blockReason || report.message}</p>}
+    {outcome.summary && <p className={styles.outcome}>{outcome.summary}</p>}
+    {outcome.message && <p className={styles.message}>{outcome.message}</p>}
     {pending && <p className={styles.message}>{jobStatus(job)}；以上结果为最近一次已确认记录。</p>}
     <dl className={styles.facts}>
       <div><dt>原计划</dt><dd>{historyTime(job.initialPublishAt || job.spec.originalPublishAt, timezone)}</dd></div>
@@ -27,7 +28,6 @@ export function HistoryDetail({ row, busy, operate, removed = false }: { row: Hi
       <div><dt>大小</dt><dd>{Math.round((report.prepared?.size || job.prepared?.size || job.spec.asset.size) / 1024 ** 2)} MiB</dd></div>
     </dl>
     {report.metadata?.description && <details className={styles.description}><summary>视频说明</summary><p>{report.metadata.description}</p></details>}
-    {removed && <p className={styles.message}>批次已移出总览，历史记录保留。</p>}
     <div className={styles.actions}>{!removed && <button disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>}{report.videoId && <a href={"https://www.youtube.com/watch?v=" + report.videoId} target="_blank" rel="noreferrer">查看视频</a>}</div>
   </section>;
 }

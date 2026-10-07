@@ -107,7 +107,7 @@ try {
   await page.clock.runFor(11001); await card().waitFor({ state: "hidden", timeout: 3000 }); assert.ok(heldInventory.length > 0);
   holdInventory = false; for (const release of heldInventory.splice(0)) release();
   await page.getByRole("button", { name: "历史", exact: true }).click(); await page.getByText(done.name + " 视频", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "查看" + done.name + " 视频详情" }).click(); await page.getByText("批次已移出总览，历史记录保留。", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "查看" + done.name + " 视频详情" }).click(); await page.getByText("批次已移除 · YouTube 视频保留", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "核对状态", exact: true }).count(), 0); assert.equal(view.jobs.length, 3); assert.equal(view.plans.length, 2);
   await page.getByRole("combobox", { name: "发布频道" }).selectOption(profile.channelId);
   assert.equal(await page.getByRole("combobox", { name: "发布频道" }).inputValue(), profile.channelId);

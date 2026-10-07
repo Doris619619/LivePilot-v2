@@ -6,6 +6,15 @@ export type HistoryResult = "published" | "completed" | "cancelled" | "failed";
 export type HistoryRow = { job: VideoJob; title: string; batch: string; channel: string; result: HistoryResult; resultLabel: string; plannedAt?: string; timezone: string; recordedAt: number };
 export const historyResultLabels: Record<HistoryResult, string> = { published: "已公开", completed: "已完成", cancelled: "已取消", failed: "失败" };
 
+/** 已公开与移除批次是两个独立结果；仅替换已公开取消的固定说明，其他异常仍原样显示。 */
+export function historyOutcome(row: HistoryRow, removed: boolean) {
+  const { job } = row; const published = row.result === "published";
+  const summary = removed ? published ? "批次已移除 · YouTube 视频保留" : "批次已移除" : published && job.spec.desired === "cancel" ? "视频已公开，保留在 YouTube" : undefined;
+  const message = job.blockReason || job.observed?.message;
+  const redundantCancellation = published && job.spec.desired === "cancel" && !job.blockReason && message === "视频已公开，取消未应用。";
+  return { summary, message: redundantCancellation ? undefined : message };
+}
+
 /** API 文案过期后仍可用用户确认的内容；不把未生成的 AI 或模板结果伪装成最终标题。 */
 function historyTitle(job: VideoJob, plan?: PublishingPlan) {
   const packageId = job.spec.contentPackage?.id;

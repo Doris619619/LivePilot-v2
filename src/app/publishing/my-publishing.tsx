@@ -12,7 +12,7 @@ import { publishingOverview, type OverviewTarget, type PublishingOverviewBatch }
 import type { PublishingDevice } from "./publishing-removal-feedback";
 import styles from "./my-publishing.module.css";
 
-type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void>; removeBatch?: BatchRemovalOperation };
+type Props = { initialView?: "总览" | "历史"; plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void>; removeBatch?: BatchRemovalOperation };
 
 /** 由不可变频道 ID 选择标识色；更名、筛选、分页不会变色，身份仍以名称和分区边界表示。 */
 function channelAccent(channelId: string) {
@@ -39,8 +39,8 @@ function OverviewBatch({ batch, now, open, busy, removeBatch }: { batch: Publish
 }
 
 /** 默认跨所有权限内设备按频道汇总；筛选不修改任务归属，返回保留频道与分页位置。 */
-export default function MyPublishing({ plans, jobs, allJobs, targets = [], removals = [], devices, busy, operate, archive, removeBatch }: Props) {
-  const [tab, setTab] = useState("总览"); const [selected, setSelected] = useState(""); const [channel, setChannel] = useState(""); const [page, setPage] = useState(0);
+export default function MyPublishing({ initialView = "总览", plans, jobs, allJobs, targets = [], removals = [], devices, busy, operate, archive, removeBatch }: Props) {
+  const [tab, setTab] = useState<string>(initialView); const [selected, setSelected] = useState(""); const [channel, setChannel] = useState(""); const [page, setPage] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   /** 只更新“等待公开确认”的时间提示，不根据浏览器时钟推进任务状态。 */
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(timer); }, []);

@@ -32,6 +32,7 @@
 .facts dt { color: var(--text-secondary); margin-bottom: 4px; }
 .facts dd { margin: 0; color: var(--text-primary); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .message { margin-bottom: 20px; color: var(--text-secondary); font-size: 15px; overflow-wrap: anywhere; }
+.outcome { margin: 0 0 20px; color: var(--text-primary); font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
 .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 20px; margin-top: 24px; }
 .actions a { display: inline-flex; align-items: center; min-height: 44px; font-size: 15px; }
 .description { margin: 20px 0; font-size: 14px; }
