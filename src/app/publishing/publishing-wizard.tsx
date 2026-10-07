@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { planRuleSchema, publishingTerminal, type PackageBatch, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type VideoJob } from "@/shared/publishing";
 import type { BatchRemovalOperation } from "./batch-removal";
+import type { PublishingDevice } from "./publishing-removal-feedback";
 import type { PublishingTarget } from "./profile-editor";
 import PlanConfirm from "./plan-confirm";
 import { PackageReview, WeeklySchedule } from "./package-setup";
@@ -16,7 +17,7 @@ type Props = {
   username: string; target: PublishingTarget; root: string; batches: PackageBatch[]; profiles: PublishingProfile[]; profileId: string; selectProfile(id: string): void;
   directoryMessage?: string; directoryReading?: boolean; retryDirectory?(): void; scanned?: boolean;
   plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; busy: boolean; accepted: boolean; scan(): Promise<void>; newProfile(): void;
-  removals?: PublishingBatchRemoval[]; removeBatch?: BatchRemovalOperation;
+  removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; removeBatch?: BatchRemovalOperation;
   preview(profileId: string, batchId: string, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
   update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
   reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
@@ -122,7 +123,7 @@ export default function PublishingWizard(props: Props) {
       if (confirmed) { const next = await props.rescheduleConfirm(currentPlan); if (next && current()) { setPlan(next); setSchedulePreview(undefined); setRule(next.rule); setStep(4); } }
       else if (await props.confirm(currentPlan, ai, replaceJobIds) && current()) { setPlan({ ...currentPlan, confirmedAt: Date.now() }); setUnlockedStep(4); setStep(4); }
     }} /></div>}
-    {viewStep === 4 && committedPlan && <><BatchExecution plan={committedPlan} jobs={jobs.filter(job => job.spec.batchId === committedPlan.id)} allJobs={props.allJobs} busy={busy} operate={props.operate} archive={props.archive} removal={removal} removeBatch={props.removeBatch} /><div className="publishing-actions"><button className="btn-primary" onClick={props.viewOverview}>查看我的发布</button><button onClick={() => { setPlan(undefined); setNewDraft(true); setSchedulePreview(undefined); setBatchId(""); setExcluded([]); setUnlockedStep(1); setStep(1); }}>发布下一批</button></div></>}
+    {viewStep === 4 && committedPlan && <><BatchExecution plan={committedPlan} jobs={jobs.filter(job => job.spec.batchId === committedPlan.id)} allJobs={props.allJobs} busy={busy} operate={props.operate} archive={props.archive} removal={removal} devices={props.devices} removeBatch={props.removeBatch} /><div className="publishing-actions"><button className="btn-primary" onClick={props.viewOverview}>查看我的发布</button><button onClick={() => { setPlan(undefined); setNewDraft(true); setSchedulePreview(undefined); setBatchId(""); setExcluded([]); setUnlockedStep(1); setStep(1); }}>发布下一批</button></div></>}
     </div>
   </div>;
 }
