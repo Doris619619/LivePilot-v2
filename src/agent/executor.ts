@@ -18,6 +18,7 @@ import { PublishingAccounts } from "@/core/publishing/accounts";
 import type { RemoteTask, AgentSnapshot } from "@/shared/remote";
 import type { Transport } from "./transport";
 import type { PublishingAccount } from "@/shared/publishing";
+import { audit } from "@/core/audit";
 export class Executor {
   readonly services = new Map<string, Service>();
   readonly publishing: PublishingRunner;
@@ -78,6 +79,10 @@ export class Executor {
   private async cleanPublishingAccount(accountId: string, instanceId: string, createdAt: number, requestId?: string) { await this.publishingAccounts.startCleanup(accountId, instanceId, createdAt); await this.publishing.purge(instanceId, accountId); await this.purgeYouTubeTasks?.(instanceId, accountId); await this.publishingAccounts.revoke(accountId); if (requestId) await this.transport.post("/api/agent/publishing/cleanup", { id: requestId }); await this.publishingAccounts.completeCleanup(accountId); }
   /** 退出时安全中断长上传；保留加密检查点供下次恢复。 */
   async stopPublishing() { this.publishingStopped = true; await this.publishing.stop(); await this.publishingLoop; await this.publishingAccounts.drain(); }
+  /** 频道归属完成登记后启动一次；连接中断不取消已经启用的本机聊天。 */
+  startChat() { for (const app of this.services.values()) app.chat.start(); }
+  /** 退出时先取消流和生成；聊天落盘失败由聊天状态报告，仍排空控制与发布任务。 */
+  async stopChat() { await Promise.allSettled([...this.services.values()].map(app => app.chat.stop())); }
   /** 接入前登记已有频道，跨电脑重复授权不能开始接收控制任务。 */
   async registerChannels() {
     for (const [instanceId, app] of this.services) {
@@ -96,6 +101,12 @@ export class Executor {
     if (task.agentId !== this.transport.agentId) throw new AppError("AGENT", "任务不属于这台设备。", 403);
     const app = this.services.get(task.instanceId); if (!app) throw new AppError("INSTANCE", "实例不存在。", 404);
     const p = task.payload;
+    if (p.kind === "live-chat-read") return app.chat.status();
+    if (p.kind === "live-chat-configure") {
+      const result = await app.chat.configure(p.config);
+      await audit(task.actor, "live-chat-configure", task.instanceId, "succeeded", task.id);
+      return result;
+    }
     const accountScoped = p.kind === "publishing-apply" ? !!p.job.profile.accountId : "accountId" in p && !!p.accountId;
     const clearing = await new Store(config(task.instanceId).dataDir).read<{ pending?: boolean }>("publishing-purge.json");
     if (clearing?.pending && !accountScoped && (p.kind.startsWith("publishing-") || p.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(p.kind) || p.kind === "control" && p.input.action === "start")) throw new AppError("CLEANUP", "设备正在清理授权，请完成后重新连接频道。"); const actor = task.actor; const id = task.instanceId;
@@ -127,7 +138,7 @@ export class Executor {
     if (p.kind === "oauth-begin") return app.commands.withIdle(() => app.control.exclusive(() => app.auth.begin(actor)));
     if (p.kind === "oauth-finish") {
       await app.commands.withIdle(() => app.control.exclusive(async () => { const state = await app.control.state(); await app.auth.finish(p.cookie, p.state, p.code, !["stopped", "idle"].includes(state.phase) && state.channelId ? state.channelId : await this.publishing.expectedChannel(id), actor); }));
-      app.invalidate(); return { ok: true };
+      await app.refreshChatCredentials(); return { ok: true };
     }
     if (p.kind === "upload-create") return uploads.createUpload(id, actor, p.input, p.uploadId);
     if (p.kind === "upload-status") return uploads.uploadStatus(id, actor, p.uploadId);

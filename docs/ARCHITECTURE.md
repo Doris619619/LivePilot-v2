@@ -15,10 +15,13 @@ Browser
                                  │   ├─ ObsProcessManager → 指定 exe / PID / 端口
                                  │   └─ ObsController → 该实例 WebSocket v5
                                  ├─ Media Library → 本机媒体根目录
+                                 ├─ LiveChatRunner → 本实例 YouTube 聊天 / DeepSeek 环境配置
                                  └─ YouTubeAuth / YouTubeApi → 所属频道
 
 媒体：每个 OBS ── RTMPS ──→ YouTube
 ```
+
+AI 观众互动由每个 Agent 或 local 服务的进程启动，配置写入使用独立短事务，不占开停播锁；浏览器关闭后仍运行。Cloud 只向有效 Agent 会话交付部署环境 Key，模型和 YouTube 聊天调用均在 Agent，公开快照只含配置就绪标记和受限聊天状态。协议、恢复及升级边界见 [直播 AI 观众互动](直播AI观众互动.md)。
 
 ## 配置与身份
 

@@ -11,6 +11,7 @@ import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared
 import { Executor } from "./executor";
 import { Worker } from "./worker";
 import { Transport } from "./transport";
+import { syncLiveChatEnvironment } from "./live-chat-environment";
 export type Identity = { agentId: string; origin: string; token: string };
 export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; problems?(value: Problem[]): void; error?(message: string, code?: string): void };
 /** 保留既有会话、心跳、去重与完整业务执行语义；桌面只获得受限状态回报。 */
@@ -35,6 +36,8 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
         const session = await transport.post<{ session: string; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"], ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
         delete process.env.LIVENEST_MAINTENANCE;
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
+        if (session.capabilities?.includes("live-chat-v1")) await syncLiveChatEnvironment(transport, executor.services.values()).catch(() => { /* 聊天环境故障不阻断既有广播控制；缺配置由聊天状态提示。 */ });
+        executor.startChat();
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
       }
       const result = await (await transport.request("/api/agent/poll")).json() as { tasks: unknown[] };
@@ -43,5 +46,5 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
       delay = 1000; if (result.tasks.length) await sleep(500);
     } catch (error) { connected = false; hooks.error?.(safeError(error), error instanceof AppError ? error.code : undefined); await sleep(delay); delay = Math.min(30_000, delay * 2); }
   }
-  await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
+  await executor.stopChat(); await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
 }

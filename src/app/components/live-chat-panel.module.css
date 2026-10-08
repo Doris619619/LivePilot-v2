@@ -1,0 +1,47 @@
+/* 文件用途：AI 观众互动面板的实例内布局、响应式表单与公开聊天记录样式。 */
+.panel { min-width: 0; padding-block: 24px; border-top: 1px solid var(--border-subtle); color: var(--text-primary); }
+.heading, .topRow, .runtimeHeading, .entryHeading { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-width: 0; }
+.heading { margin-bottom: 20px; align-items: flex-start; }
+.heading h3 { font-size: 18px; font-weight: 600; }
+.heading p, .hint { color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.status { flex-shrink: 0; padding: 4px 10px; border: 1px solid var(--border-default); border-radius: var(--radius-pill); color: var(--text-secondary); background: var(--surface-base); font-size: 13px; }
+.running { color: var(--success-green); border-color: var(--success-green-border); background: var(--success-green-subtle); }
+.topRow { margin-bottom: 20px; }
+.topRow strong { font-size: 15px; font-weight: 600; }
+.form, .field { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.form { gap: 16px; }
+.fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.field label { font-size: 14px; font-weight: 500; }
+.field textarea { display: block; min-width: 0; width: 100%; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); color: var(--text-primary); background: var(--surface-base); font: inherit; resize: vertical; line-height: 1.6; }
+.field textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.field textarea:disabled { background: var(--bg-subtle); color: var(--text-disabled); cursor: not-allowed; }
+.field textarea::placeholder { color: var(--text-muted); }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; min-width: 0; }
+.notice, .feedback, .error { padding: 12px 16px; border-radius: var(--radius-sm); font-size: 14px; overflow-wrap: anywhere; }
+.notice { margin-bottom: 16px; background: var(--warning-amber-subtle); color: var(--warning-amber); border: 1px solid var(--warning-amber-border); }
+.feedback { margin-top: 16px; color: var(--success-green); background: var(--success-green-subtle); }
+.error { margin-top: 16px; color: var(--error-rose); background: var(--error-rose-subtle); }
+.history { min-width: 0; margin-top: 20px; border-top: 1px solid var(--border-subtle); }
+.history summary { min-height: 44px; padding-block: 12px; cursor: pointer; color: var(--text-secondary); font-size: 14px; }
+.runtime { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-subtle); }
+.runtimeHeading h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 12px 0; }
+.counts dt { color: var(--text-secondary); font-size: 13px; }
+.counts dd { margin: 0; font: 600 20px/1.6 var(--font-mono); }
+.runtime a { display: inline; margin-left: 6px; }
+.history ol { margin: 0; padding: 0; list-style: none; }
+.history li { min-width: 0; padding-block: 12px; border-top: 1px solid var(--border-subtle); font-size: 14px; overflow-wrap: anywhere; }
+.history p { white-space: pre-wrap; }
+.entryHeading { align-items: flex-start; gap: 8px; margin-bottom: 4px; }
+.entryHeading strong { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.entryHeading span { flex-shrink: 0; color: var(--text-secondary); font-size: 12px; }
+.reply { margin-top: 4px; padding-left: 12px; border-left: 2px solid var(--accent-border); color: var(--accent-primary); }
+@media (max-width: 600px) {
+  .heading { gap: 12px; flex-wrap: wrap; }
+  .fields { grid-template-columns: minmax(0, 1fr); }
+  .field textarea, .field input, .field select { font-size: 16px; }
+  .entryHeading { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .panel button, .panel input, .panel select { transition: none; }
+}

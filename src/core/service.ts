@@ -14,12 +14,18 @@ import { YouTubeApi } from "./youtube/api";
 import { ObsController } from "./obs/controller";
 import { ObsProcessManager } from "./obs/process";
 import { saveChannelBinding } from "./youtube/bindings";
+import { LiveChatRunner } from "./live-chat/runner";
+import { YouTubeLiveChat } from "./youtube/live-chat";
+import { generateLiveChatReply, liveChatAiConfigured } from "./live-chat-ai";
+import type { Broadcast } from "./youtube/api";
+import type { LiveChatTarget } from "@/shared/live-chat";
 export class Service {
   readonly auth: YouTubeAuth;
   readonly youtube: YouTubeApi;
   readonly obs: LocalObsRuntime;
   readonly control: Control;
   readonly commands: Commands;
+  readonly chat: LiveChatRunner;
   /** 所有有状态依赖按实例创建；main 继续读取原来的 .data。 */
   constructor(readonly id: string, saveBinding = saveChannelBinding) {
     /** 始终读取构造时选定实例的配置。 */
@@ -33,11 +39,46 @@ export class Service {
       music: await resolveMedia(readConfig().mediaRoot, "music", selection.music),
     }));
     this.commands = new Commands(new Store(path.join(storage.dir, "commands")), this.control, id, () => this.invalidate());
+    const chatApi = new YouTubeLiveChat(this.auth);
+    this.chat = new LiveChatRunner(storage, {
+      observe: () => this.observeChat(),
+      configured: async () => liveChatAiConfigured(),
+      stream: (chatId, pageToken, signal) => chatApi.stream(chatId, pageToken, signal),
+      send: (chatId, text, signal) => chatApi.send(chatId, text, signal),
+      generate: (settings, message, context, signal) => generateLiveChatReply(storage, settings, message, context, signal),
+    });
   }
+  private broadcastCache?: { key: string; at: number; value: Broadcast | null };
+  private broadcastReading?: { key: string; generation: number; value: Promise<Broadcast | null> };
+  private broadcastGeneration = 0;
   private ytCache?: { key: string; at: number; value: Dashboard["youtube"] };
   private reading?: Promise<Dashboard>;
   /** 控制操作完成后丢弃所属实例的 YouTube 状态缓存。 */
-  invalidate() { this.ytCache = undefined; }
+  invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; }
+  /** 频道授权成功后通知聊天；聊天检查点异常不能把成功授权误报成失败。 */
+  async refreshChatCredentials() {
+    this.invalidate();
+    await this.chat.keyChanged().catch(() => { /* 聊天故障由独立状态上报，凭据保存事实保留。 */ });
+  }
+  /** 聊天和仪表盘共用场次查询及30秒缓存，避免空聊天额外持续消耗 REST 配额。 */
+  private async readBroadcast(id: string, channelId: string): Promise<Broadcast | null> {
+    const key = channelId + ":" + id;
+    if (this.broadcastCache?.key === key && Date.now() - this.broadcastCache.at < 30_000) return this.broadcastCache.value;
+    if (this.broadcastReading?.key === key && this.broadcastReading.generation === this.broadcastGeneration) return this.broadcastReading.value;
+    const generation = this.broadcastGeneration;
+    const reading = this.youtube.broadcast(id).then(value => { if (generation === this.broadcastGeneration) this.broadcastCache = { key, at: Date.now(), value }; return value; });
+    this.broadcastReading = { key, generation, value: reading };
+    try { return await reading; } finally { if (this.broadcastReading?.value === reading) this.broadcastReading = undefined; }
+  }
+  /** 每次发送前重新读取本机场次与停止意图；实际直播和聊天可用性来自 YouTube。 */
+  private async observeChat(): Promise<LiveChatTarget> {
+    const [state, tokens] = await Promise.all([this.control.state(), this.auth.tokens()]);
+    if (!tokens || !state.broadcastId || ["idle", "stopping", "stopped"].includes(state.phase)) return { channelId: tokens?.channelId, broadcastId: state.broadcastId, live: false };
+    const broadcast = await this.readBroadcast(state.broadcastId, tokens.channelId);
+    const current = await this.control.state();
+    if (current.broadcastId !== state.broadcastId || ["idle", "stopping", "stopped"].includes(current.phase)) return { channelId: tokens.channelId, broadcastId: current.broadcastId, live: false };
+    return { channelId: tokens.channelId, broadcastId: state.broadcastId, live: broadcast?.status.lifeCycleStatus === "live", liveChatId: broadcast?.snippet.liveChatId, available: !!broadcast?.snippet.liveChatId };
+  }
   /** 合并同一实例的并发读取，不与其他实例共享读取锁。 */
   async dashboard() {
     if (!this.reading) this.reading = this.readDashboard();
@@ -63,7 +104,7 @@ export class Service {
           try {
             const channel = await this.youtube.channel();
             youtube.channel = channel.title;
-            if (state.broadcastId) youtube.lifecycle = (await this.youtube.broadcast(state.broadcastId))?.status.lifeCycleStatus || "missing";
+            if (state.broadcastId) youtube.lifecycle = (await this.readBroadcast(state.broadcastId, tokens.channelId))?.status.lifeCycleStatus || "missing";
             if (state.streamId) youtube.ingest = (await this.youtube.stream(state.streamId))?.status.streamStatus || "missing";
             youtube.checkedAt = new Date().toISOString();
           } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome:"rejected"}); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
@@ -72,7 +113,7 @@ export class Service {
       }
     } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
-    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, configuration: { broadcastDetails: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

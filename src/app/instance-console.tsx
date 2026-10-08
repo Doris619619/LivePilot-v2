@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import BroadcastSettings from "./components/broadcast-settings";
+import LiveChatPanel from "./components/live-chat-panel";
 import OAuthFeedback from "./oauth-feedback";
 import ProblemCard from "./components/problem-card";
 import { makeProblem, configurationLabel, type Problem } from "../shared/problems";
@@ -212,6 +213,8 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             </dl>
           </section>
         </div>} />
+
+        <LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} />
 
         <details className="instance-diagnostics">
           <summary>连接与诊断</summary>

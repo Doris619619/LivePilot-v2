@@ -37,6 +37,13 @@ export async function requireBroadcastDetails(destination: Target) {
   const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
   if (!snapshot?.dashboard.configuration.broadcastDetails) throw new AppError("CONFIG", "请先升级这台直播电脑的 Agent，再设置直播详情。", 409);
 }
+/** 只向拥有新聊天能力和有效当前快照的 Agent 投递，旧版本仍可正常开停播。 */
+export async function requireLiveChat(destination: Target) {
+  await requireTarget(destination.agentId, destination.instanceId, true);
+  const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+  if (!snapshot?.dashboard.configuration.liveChat) throw new AppError("CONFIG", "请先升级这台直播电脑的 Agent，再使用 AI 观众互动。", 409);
+  if (snapshot.observedAt <= Date.now() - 20_000 || snapshot.observedAt > Date.now() + 5_000) throw new AppError("AGENT_STALE", "设备状态已过期，请等待直播电脑重新连接后操作 AI 互动。", 409);
+}
 /** 控制接口只持久化完整任务，核心执行在 Agent，不使用 Next after 编排直播。 */
 export async function remoteControl(destination: Target, actor: string, payload: Extract<TaskPayload, { kind: "control" }>, requestId: string) {
   if (payload.input.action === "start" && payload.input.broadcast) await requireBroadcastDetails(destination);

@@ -5,11 +5,13 @@ import { Store } from "../storage";
 import { config } from "../config";
 import { AppError } from "../errors";
 import { YouTubeAuth } from "./auth";
-export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string; scheduledStartTime?: string }; status: { lifeCycleStatus: string }; contentDetails?: { boundStreamId?: string } };
+export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string; scheduledStartTime?: string; liveChatId?: string }; status: { lifeCycleStatus: string; madeForKids?: boolean; selfDeclaredMadeForKids?: boolean }; contentDetails?: { boundStreamId?: string } };
 export type Stream = { id: string; snippet: { title: string }; status: { streamStatus: string }; cdn?: { ingestionInfo?: { streamName?: string; rtmpsIngestionAddress?: string } } };
 type List<T> = { items?: T[]; nextPageToken?: string };
 const reasons: Record<string, string> = {
   quotaExceeded: "YouTube API 配额已耗尽，请等待配额恢复。",
+  dailyLimitExceeded: "YouTube API 每日配额已耗尽，请等待配额恢复。",
+  rateLimitExceeded: "YouTube 请求过于频繁，请稍后重试。",
   liveStreamingNotEnabled: "YouTube Channel 尚未启用直播，请先在 YouTube Studio 启用。",
   insufficientLivePermissions: "此 Channel 没有直播权限，请检查 YouTube Studio。",
   livePermissionBlocked: "YouTube 当前禁止此 Channel 直播，请到 YouTube Studio 检查。",
@@ -31,6 +33,7 @@ export interface YouTubePort {
 }
 export class YouTubeApi implements YouTubePort {
   constructor(readonly auth: YouTubeAuth, private storage = new Store(config().dataDir)) {}
+  /** 固定服务端请求并过滤诊断；明确每日配额耗尽独立分类，临时限流保留旧错误协议。 */
   private async request<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown): Promise<T> {
     const token = await this.auth.access();
     let response: Response;
@@ -43,8 +46,10 @@ export class YouTubeApi implements YouTubePort {
     } catch { throw new AppError("YOUTUBE_NETWORK", "YouTube 请求超时或网络中断，结果尚未确认。请检查网络后重试，应用会先核对已有场次。", 502); }
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: { errors?: { reason?: string }[] } };
-      const reason = data.error?.errors?.[0]?.reason || "";
-      throw new AppError(response.status === 401 ? "YOUTUBE_AUTH" : response.status === 429 || reason === "quotaExceeded" ? "YOUTUBE_QUOTA" : response.status >= 500 ? "YOUTUBE_UNAVAILABLE" : "YOUTUBE_API", response.status === 401 ? "YouTube 授权失效，请重新连接。" : reasons[reason] || "YouTube 请求失败（HTTP " + response.status + "），请检查 API 权限、配额与 YouTube Studio。", response.status === 401 ? 409 : 502);
+      const errorReasons = (data.error?.errors || []).flatMap(error => typeof error.reason === "string" ? [error.reason] : []);
+      const daily = errorReasons.find(reason => reason === "quotaExceeded" || reason === "dailyLimitExceeded");
+      const reason = daily || errorReasons[0] || "";
+      throw new AppError(response.status === 401 ? "YOUTUBE_AUTH" : daily ? "YOUTUBE_DAILY_QUOTA" : response.status === 429 || errorReasons.includes("rateLimitExceeded") ? "YOUTUBE_QUOTA" : response.status >= 500 ? "YOUTUBE_UNAVAILABLE" : "YOUTUBE_API", response.status === 401 ? "YouTube 授权失效，请重新连接。" : reasons[reason] || "YouTube 请求失败（HTTP " + response.status + "），请检查 API 权限、配额与 YouTube Studio。", response.status === 401 ? 409 : 502);
     }
     return await response.json() as T;
   }

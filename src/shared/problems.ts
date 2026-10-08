@@ -39,6 +39,7 @@ const catalog: Record<string, Guidance> = {
   YOUTUBE_AUTH: { title: "频道授权已失效", steps: ["重新授权原频道，然后重新查询。"], actions: ["authorize", "help"] },
   GOOGLE_CONFIG: { title: "频道连接配置需要管理员处理", steps: ["联系管理员核对 Google 应用配置。重新输入客户密码不能解决此问题。"], actions: ["support"] },
   YOUTUBE_QUOTA: { title: "YouTube 请求额度暂不可用", steps: ["等待额度恢复；持续失败请联系管理员核对配额，不需要反复授权。"], actions: ["refresh", "support"] },
+  YOUTUBE_DAILY_QUOTA: { title: "YouTube 每日配额已耗尽", steps: ["等待太平洋时间次日午夜配额恢复；同一项目的频道共享配额，请联系管理员核对用量。"], actions: ["refresh", "support"] },
   STORAGE_PERMISSION: { title: "本机文件访问被拒绝", steps: ["在直播电脑使用原 Windows 账户，检查数据目录的读写权限；保留原文件。"], actions: ["refresh", "support"] },
   STORAGE_SPACE: { title: "存储空间不足", steps: ["在对应电脑检查数据盘剩余空间；整理与本应用无关的文件后重试，不要删除授权或直播状态。"], actions: ["refresh", "support"] },
   STORAGE_MISSING: { title: "所需文件暂不可访问", steps: ["连接原数据盘并核对对应目录是否存在；不要以新目录代替原身份。"], actions: ["refresh", "support"] },
