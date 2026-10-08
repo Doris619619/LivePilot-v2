@@ -169,6 +169,8 @@ UI 截图已在当前 Codex 任务中展示并目视检查；未作为仓库图�
 ## 2026-10-08 YouTube AI 观众文字互动
 
 - 独立面板、默认开启、5–60 秒限频、多语言与欢迎、后台 Agent / local 生命周期、加密恢复检查点及未知发送保护；聊天只调用部署环境 `DEEPSEEK_API_KEY`，没有用户 Key 输入入口，环境配置只通过有效 Agent 会话交付。
-- `npm run verify` 通过：98 文件、943 项测试、8 项部署检查、类型、Lint、Next 与 Agent 构建。`npm run desktop:compile` 通过；新版 NSIS 安装器尚未打包或发布。
+- `npm run verify` 通过：98 文件、943 项测试、8 项部署检查、类型、Lint、Next 与 Agent 构建。`npm run desktop:compile` 通过；[Linux / Windows Verify CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37795781089) 在最终功能 head `34cb12b2e40035adcfbb2a93cb2f81d7bd3b5d18` 通过，Linux 部署脚本和 Nginx 模板检查也通过。
+- [Windows 候选安装器 CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37795781232) 在同一功能 head 实际执行 NSIS 新装、静默覆盖升级和保留数据卸载，三项通过。候选包当时仍名为 `LiveNest_0.1.12_x64-setup.exe`，该证据属于新功能代码的安装链，不代替正式 0.1.13 标签包或客户设备升级。
 - 隔离浏览器 smoke 通过：真实键盘、44px 触控目标、直播期间独立保存、环境未就绪、权限与旧版提示、离线未知状态；1440 / 390 / 320px 无横向溢出，无页面异常。所有频道和留言均为模拟数据，截图见 [功能文档](直播AI观众互动.md)。
-- 未执行真实 OAuth、开停播或聊天发送；未部署、合并或升级客户设备。真实观众互动验收需用户授权直播后单独记录。
+- [PR #31](https://github.com/Doris619619/LivePilot-v2/pull/31) 已合并，提交为 `d62cb3df8c3773ec05f7822a5cacb06687284e14`；正在准备 0.1.13 正式发布。截至此记录，Cloud 待部署、正式安装器待 `v0.1.13` 标签 CI 与公开发行、用户设备待升级，详见 [0.1.13 发布记录](desktop/0.1.13发布.md)。
+- 未执行真实 OAuth、开停播或聊天发送。真实观众互动验收需在用户授权的直播中另记证据；自动测试、CI 安装器 smoke 和示例 UI 截图均不能替代真实收发验收。
