@@ -1,4 +1,4 @@
-/** Agent 频道授权验证：云端归属占用必须先于本机令牌保存。 */
+/** Agent 频道授权与聊天退出验证：先登记频道归属，独立聊天故障不能阻断其他执行器退出。 */
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -29,4 +29,9 @@ it("does not save a channel when the cloud rejects a duplicate binding", async (
 it("explains IP OAuth limitations without calling Google or an Agent", async () => {
   vi.stubEnv("LIVEPILOT_ORIGIN", "https://13.58.47.99");
   await expect(beginRemoteOAuth({ agentId: "studio_a", instanceId: "main" }, "alice")).rejects.toMatchObject({ code: "OAUTH_DOMAIN" }); expect(fetch).not.toHaveBeenCalled();
+});
+it("finishes chat shutdown even if an instance cannot persist its final checkpoint", async () => {
+  const executor = new Executor(new Transport("https://cloud.example.com", "studio_a", "b".repeat(64)));
+  const stop = vi.spyOn(executor.services.get("main")!.chat, "stop").mockRejectedValue(new Error("synthetic checkpoint storage failure"));
+  await expect(executor.stopChat()).resolves.toBeUndefined(); expect(stop).toHaveBeenCalledOnce(); expect(fetch).not.toHaveBeenCalled();
 });

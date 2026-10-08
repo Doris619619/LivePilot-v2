@@ -5,6 +5,7 @@ import { aiBriefSchema, aiKeySchema } from "./broadcast-ai";
 import { broadcastSchema, thumbnailInputSchema } from "./broadcast";
 import type { Dashboard, InstanceDescriptor } from "./types";
 import { problemSchema } from "./problems";
+import { liveChatConfigSchema } from "./live-chat";
 export const PROTOCOL = 1;
 export const HEARTBEAT_MS = 5_000;
 export const OFFLINE_MS = 20_000;
@@ -20,6 +21,8 @@ export const controlSchema = z.discriminatedUnion("action", [
 ]);
 export const uploadInputSchema = z.object({ kind: z.enum(["videos", "music"]), filename: z.string().min(1).max(180), size: z.number().int().positive().max(20 * 1024 ** 3), fingerprint: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export const taskPayloadSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("live-chat-read") }).strict(),
+  z.object({ kind: z.literal("live-chat-configure"), config: liveChatConfigSchema }).strict(),
   z.object({ kind: z.literal("publishing-packages"), accountId: uuidSchema.optional() }).strict(),
   z.object({ kind: z.literal("publishing-account-oauth-begin"), accountId: uuidSchema }).strict(),
   z.object({ kind: z.literal("publishing-account-oauth-finish"), accountId: uuidSchema, cookie: z.string().regex(/^[a-f0-9]{64}$/), state: z.string().max(160), code: z.string().max(4096), cancelled: z.boolean().optional(), expectedChannel: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional() }).strict(),

@@ -1,5 +1,6 @@
 /** 浏览器共享的状态与媒体选择类型，禁止添加服务端 Secret。 */
 import type { Problem } from "./problems";
+import type { LiveChatStatus } from "./live-chat";
 import type { BroadcastDetails } from "./broadcast";
 export type Selection = { video: string; music: string; videoAudio: boolean; broadcast?: BroadcastDetails };
 export type ObsStatus = {
@@ -15,12 +16,13 @@ export type ControlState = {
 /** 最近控制命令的真实受理与执行状态，不等同于直播 lifecycle。 */
 export type CommandStatus = { problem?: Problem; id: string; action: string; actor: string; status: "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "queued" | "delivering" | "uncertain" | "expired"; updatedAt: string; message?: string };
 export type Dashboard = { problems?: Problem[];
+  liveChat?: LiveChatStatus;
   device?: { agentId: string; name: string; online: boolean; lastSeen: number; observedAt?: number };
   operation?: CommandStatus;
   state: ControlState; busy: boolean; obs: ObsStatus;
   youtube: { problem?: Problem; authorization?: "missing" | "present" | "invalid"; query?: "ready" | "failed"; connected: boolean; channel?: string; channelId?: string; ingest?: string; lifecycle?: string; checkedAt?: string; error?: string };
   media: { problems?: Problem[]; videos: string[]; music: string[]; error?: string };
-  configuration: { broadcastDetails?: boolean; missing: string[]; privacy: string; madeForKids: boolean };
+  configuration: { broadcastDetails?: boolean; liveChat?: boolean; missing: string[]; privacy: string; madeForKids: boolean };
 };
 
 /** 浏览器可见的实例清单，不包含路径或凭据。 */
