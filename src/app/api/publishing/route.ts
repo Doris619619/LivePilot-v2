@@ -24,7 +24,7 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("plan-update"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema.optional(), items: z.array(planItemSchema).max(10000) }).strict(),
   z.object({ action: z.literal("plan-reschedule-preview"), planId: uuidSchema, revision: z.number().int().positive(), rule: planRuleSchema, items: z.array(planItemSchema).max(10000).optional() }).strict(),
   z.object({ action: z.literal("plan-reschedule-confirm"), planId: uuidSchema, revision: z.number().int().positive(), previewId: uuidSchema }).strict(),
-  z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
+  z.object({ action: z.literal("plan-confirm"), planId: uuidSchema, revision: z.number().int().positive(), ai: z.boolean(), temporaryPrivateTitle: z.literal(true), replaceJobIds: z.array(uuidSchema).max(1000).default([]), republishJobIds: z.array(uuidSchema).max(1000).default([]) }).strict(),
   z.object({ action: z.literal("plan-archive"), planId: uuidSchema }).strict(),
   z.object({ action: z.literal("batch-remove"), batchId: uuidSchema }).strict(),
   z.object({ action: z.literal("profile"), profile: profileSchema }).strict(),
@@ -54,7 +54,7 @@ export async function POST(request: Request) {
     else if (value.action === "plan-update") result = await updatePublishingPlan(user, value.planId, value.revision, value.items, value.rule);
     else if (value.action === "plan-reschedule-preview") result = await previewPublishingReschedule(user, value.planId, value.revision, value.rule, value.items);
     else if (value.action === "plan-reschedule-confirm") result = await confirmPublishingReschedule(user, value.planId, value.revision, value.previewId);
-    else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds);
+    else if (value.action === "plan-confirm") result = await confirmPublishingPlan(user, value.planId, value.revision, value.ai, value.temporaryPrivateTitle, value.replaceJobIds, value.republishJobIds);
     else if (value.action === "plan-archive") result = await archivePublishingPlan(user, value.planId);
     else if (value.action === "batch-remove") result = await removePublishingBatch(user, value.batchId);
     else if (value.action === "profile") result = await savePublishingProfile(user, value.profile);

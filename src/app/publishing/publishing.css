@@ -44,6 +44,11 @@
 .publishing-message { background: var(--accent-subtle); color: var(--text-secondary); }
 .publishing-warning p + p { margin-top: 8px; }
 .publishing-warning .publishing-actions { margin: 16px 0 0; }
+.publishing-upload-review details { margin-top: 8px; }
+.publishing-upload-review summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.publishing-upload-review ul { list-style: none; padding: 0; max-height: 280px; overflow-y: auto; }
+.publishing-upload-review li { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px 0; }
+.publishing-upload-review li a { min-height: 44px; display: inline-flex; align-items: center; }
 .publishing-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 72px 16px; color: var(--text-muted); }
 .publishing-empty h2 { color: var(--text-secondary); }
 .publishing-empty p { font-size: 15px; }
