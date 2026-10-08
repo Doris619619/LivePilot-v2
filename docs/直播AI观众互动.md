@@ -45,15 +45,20 @@ Key 无效、余额不足或授权失效时暂停并等待处理，避免持续�
 
 自动验证使用合成频道、消息、授权与模拟 gRPC/HTTP。测试通过、构建成功和界面截图都不能证明真实观众收到回复。真实验收须由用户完成或授权实际直播与聊天发送，再检查观众端显示、不同语言、关闭网页后的持续运行、关闭开关及断线恢复。
 
-功能 [PR #31](https://github.com/Doris619619/LivePilot-v2/pull/31) 已合并为 `d62cb3df8c3773ec05f7822a5cacb06687284e14`，正在准备 0.1.13 正式发行。截至此发布准备记录，Cloud 待部署、`v0.1.13` 正式安装器待标签 CI 与公开发布、用户设备待升级；真实聊天收发未验收。部署完成后应按实际证据更新 [0.1.13 发布与验收记录](desktop/0.1.13发布.md)。
+功能 [PR #31](https://github.com/Doris619619/LivePilot-v2/pull/31) 已合并为 `d62cb3df8c3773ec05f7822a5cacb06687284e14`；版本 [PR #32](https://github.com/Doris619619/LivePilot-v2/pull/32) 已合并为 `50f4346e6caafe5a8588b17a6bae37130466debd`，稳定标签 `v0.1.13` 指向该正式提交。[标签发行 CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37802000344) 已成功，[0.1.13 正式安装版](https://github.com/Doris619619/LiveNest-Releases/releases/tag/v0.1.13) 于 `2026-10-08T15:44:21Z` 公开。最终 Cloud `50f4346` 和网站 0.1.13 静态下载已上线，服务器三项安装资产实算与原始 CI 清单、GitHub digest 和更新元数据匹配；客户设备尚未升级，真实频道、在线互动面板及聊天收发未验收。
+
+先上线兼容 Cloud `d62cb3d`，再切换为最终 `50f4346`，服务器完整 verify / build、静态安装资产同步与切换均成功。原 0.1.12 下载仍可访问；既有账号、设备身份、发布数据及同一 OBS 推流的新鲜连续快照保留。项目私有环境中的 DeepSeek Key 已安全配置到服务器进程并实际确认存在，未调用真实 DeepSeek。当前新鲜 Agent 尚未声明聊天能力，原频道 YouTube 授权失效，因此不能把 OBS 推流状态认定为 YouTube 直播已确认或 AI 聊天正在运行。完整部署证据、客户会话检查与待办见 [0.1.13 发布与验收记录](desktop/0.1.13发布.md)。
 
 ## 本次自动验证（2026-10-08）
 
-- `npm run verify` 完整通过：98 个测试文件、943 项测试、8 项部署检查、TypeScript、ESLint、Next 生产构建与独立 Agent 构建。
+- `npm run verify` 完整通过：98 个测试文件、943 项测试、8 项部署检查、TypeScript、ESLint、Next 生产构建与独立 Agent 构建；交付前最后一轮仍为 943 / 8 通过，本机忽略日志为 `.data/chat-delivery-verify.log`。
 - `npm run desktop:compile` 通过：Electron 主进程、preload 和内嵌 Agent bundle 编译成功。[Linux / Windows Verify](https://github.com/Doris619619/LivePilot-v2/actions/runs/37795781089) 在 PR #31 的最终功能 head `34cb12b2e40035adcfbb2a93cb2f81d7bd3b5d18` 通过，Linux 的部署脚本及 Nginx 模板检查也通过。
 - [Windows 候选安装器 CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37795781232) 已执行 `desktop:build` 与真实 NSIS smoke：一次性 Windows 用户下的新安装、静默覆盖升级、保留数据卸载均通过。该功能候选当时仍使用 0.1.12 文件名，不代表正式 0.1.13 标签包或客户旧版升级已通过。
+- 版本 PR #32 的 head `abe828f` 已通过 [Linux / Windows Verify](https://github.com/Doris619619/LivePilot-v2/actions/runs/37800680449) 和 [Windows 安装器 CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37800680604)。[正式标签发行 CI](https://github.com/Doris619619/LivePilot-v2/actions/runs/37802000344) 在确切提交 `50f4346` 成功，正式安装器的 NSIS 新安装、静默覆盖升级、保留数据卸载均实际执行并通过。
 - 运行器模拟覆盖默认与保存、欢迎、多语言上下文、取消、旧场次迟到结果、历史及自身过滤、刷屏、限频、100 条溢出、两分钟过期、断线、重启去重、未知发送、存储失败和跨夏令时配额重置。协议验证含本机真实 gRPC 服务及独立 wire 字段断言，均未访问真实 YouTube。
 - 访问测试覆盖客户归属、管理员审计、目标设备与实例、新旧能力、过期快照、环境 Key 只向有效 Agent 会话投递、环境轮换和撤销；浏览器 Key 提交被拒绝，公开状态剔除未知私密字段。
 - `node tests/live-chat-ui.smoke.mjs` 使用隔离 Next 服务和全部模拟 API，验证 1440px 桌面、390/320px 手机、真实键盘操作与焦点、44px 控件、直播期间独立操作、无 Key 输入、环境未就绪、授权入口、旧 Agent、离线和无页面异常。
 - 面板截图全部为示例数据：[桌面](images/live-chat-ai/desktop-1440.png)、[390px 手机](images/live-chat-ai/mobile-390.png)、[320px 手机](images/live-chat-ai/mobile-320.png)。截取面板时仅临时隐藏面板外的固定页头和跳转链接。
-- 发布准备尚待最终版本提交与 `v0.1.13` 标签 CI、公开资产校验、Cloud 部署和客户 Agent 升级。观众端收发、模型实际语言与人设效果、关闭网页后的持续互动、真实网络恢复仍需在用户授权的直播中单独验收。
+- 最终 Cloud 上线后，客户 Do 的临时会话登录和鉴权读取返回 200；该账号没有分配设备，未验收真实在线互动面板。浏览器访问 Agent 环境路由返回 403 且没有密钥，临时会话已撤销；匿名聊天请求返回 401。
+- 最终 Cloud `50f4346` 的服务器阶段 verify / build、静态安装资产部署及切换退出码均为 0。真实 TLS Playwright 检查下载页的 0.1.13 链接、健康 200、clean/release 清单 200、安装器 HEAD 200 / Range 206 / `MZ`、更新元数据和旧 0.1.12 下载通过。服务器三项资产大小 / SHA-256、`latest.yml` 两处 SHA-512 验证通过；原始 CI 清单由成功 artifact 的 ZIP Range 提取并核对 entry CRC，没有将整份 ZIP 或本地 CI 三资产实算列为通过。
+- 仍待客户 Agent 升级、原频道重新授权及真实在线面板、观众收发验收。未执行真实 OAuth、开停播、聊天发送或 DeepSeek 请求；实际语言与人设、关闭网页后的持续互动和真实网络恢复需在用户授权的直播中单独验收。
