@@ -8,7 +8,7 @@ import UploadPanel, { type UploadRequest } from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
-import DevicePairing from "./device-pairing";
+import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
 import WorkspaceSidebar from "./components/workspace-sidebar";
 import Link from "next/link";
@@ -34,6 +34,7 @@ export default function Console() {
   }, []);
   const [instances, setInstances] = useState<InstanceDescriptor[]>([]);
   const [agents, setAgents] = useState<AgentDescriptor[] | undefined>();
+  const pairing = useDevicePairing(agents || []);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -88,7 +89,7 @@ export default function Console() {
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
         </nav>
-        {agents && <DevicePairing agents={agents} />}
+        {agents && <DevicePairing model={pairing} />}
       </WorkspaceSidebar>
 
       <main className="main-wrapper" id="workspace" tabIndex={-1}>

@@ -59,18 +59,27 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .broadcast-section-heading p { font-size: 13px; }
 .broadcast-editor-grid { gap: 28px; grid-template-columns: minmax(0,1fr) 300px; }
 .broadcast-edit-column { min-width: 0; }
+/* 编辑卡片只有一层外框；页签沿用下划线分隔，不叠加独立圆角容器。 */
+.broadcast-settings .ui-tabs-list { gap: 24px; padding: 0 24px; border: 0; border-bottom: 1px solid var(--border-subtle); border-radius: 0; background: transparent; }
+.broadcast-settings .ui-tabs-trigger { flex: 0 1 auto; gap: 8px; min-height: 60px; padding: 16px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; white-space: nowrap; font-size: 14px; }
+.broadcast-settings .ui-tabs-trigger[data-state="active"] { border-bottom-color: var(--accent-primary); color: var(--accent-primary); }
+.broadcast-settings .ui-tabs-trigger .step-number { width: 28px; height: 28px; background: var(--bg-subtle); color: var(--text-secondary); }
+.broadcast-settings .ui-tabs-trigger[data-state="active"] .step-number { background: var(--accent-subtle); color: var(--accent-primary); }
 .broadcast-settings .studio-panel { padding-top: 24px; }
 .broadcast-settings .studio-step-footer { margin-top: 24px; padding-top: 16px; }
-.studio-rail .broadcast-preview { border-radius: 12px; background: var(--surface-hover); padding: 18px; border-color: var(--border-subtle); }
+.studio-rail .broadcast-preview { border-radius: 12px; background: var(--surface-base); padding: 18px; border-color: var(--border-subtle); }
 .thumbnail-preview { border-radius: 9px; }
 .thumbnail-placeholder { background: var(--bg-subtle); }
 .studio-rail .ui-dropzone { padding: 18px 12px; background: var(--surface-base); }
 .studio-rail .ui-dropzone-icon { display: none; }
 .studio-panel .studio-start { margin-top: 0; }
+.broadcast-settings .broadcast-control-row { padding: 0; border: 0; border-radius: 0; }
+.broadcast-settings .broadcast-actions { flex-direction: row; flex-wrap: wrap; }
+.broadcast-settings .broadcast-actions button { flex: 0 1 auto; min-width: 160px; }
 .studio-connections { border-bottom: 1px solid var(--border-subtle); margin-bottom: 24px; }
 .studio-connections > summary { font-size: 13px; }
-.broadcast-ai { border-radius: 12px; background: var(--surface-hover); border: 1px solid var(--border-subtle); }
-.broadcast-ai textarea { background: var(--surface-base); }
+/* AI 与标题共用面板留白，只保留原有底部分隔线，避免无内边距的嵌套卡片。 */
+.broadcast-ai { border-radius: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-subtle); }
 .media-dock { margin-bottom: 24px; }
 .dock-content { background: var(--surface-base); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 24px; animation: none; margin: 0 0 24px; box-shadow: 0 8px 24px #26365006; }
 .upload-progress { padding: 18px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-hover); }
@@ -115,8 +124,13 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .main-wrapper .setup-step { border-radius: 10px; }
 @media (min-width: 761px) { .main-wrapper { animation: ui-enter 220ms ease-out; } }
 @media (max-width: 1200px) { .broadcast-editor-grid { grid-template-columns: minmax(0,1fr); } .studio-rail { display: grid; grid-template-columns: minmax(0,1fr); max-width: 600px; } }
+/* 侧栏仍可见的平板宽度下，编辑列也可能不足 500px，四步入口提前换成等宽布局。 */
+@media (max-width: 1000px) {
+  .broadcast-settings .ui-tabs-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding-inline: 14px; }
+  .broadcast-settings .ui-tabs-trigger { flex-direction: column; gap: 6px; padding: 12px 0; font-size: 12px; white-space: normal; }
+}
 @media (max-width: 760px) {
-  .app-header { height: 60px; } .header-container { padding-inline: 16px; gap: 8px; } .brand-name { font-size: 19px; } .brand-tag { display: none; } .header-actions { gap: 4px; } .header-actions > a { font-size: 12px; padding: 8px; }
+  .app-header { height: auto; min-height: 60px; } .header-container { height: auto; min-height: 60px; padding-inline: 16px; gap: 8px; } .brand-name { font-size: 19px; } .brand-tag { display: none; } .header-actions { gap: 4px; } .header-actions > a { font-size: 12px; padding: 8px; }
   .workspace-shell { display: block; } .workspace-mobile-navigation { display: block; padding: 12px 16px 0; background: var(--surface-base); } .sidebar-mobile-trigger { min-height: 44px; font-size: 13px; }
   .ui-dialog .workspace-sidebar-content { padding: 0; min-height: 60vh; } .ui-dialog .sidebar-link { width: 100%; justify-content: start; }
   .main-wrapper { padding: 20px 16px 40px; } .workspace-heading h1, .dock-heading h1 { font-size: 23px; } .workspace-subtitle { font-size: 12px; }
@@ -124,6 +138,8 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
   .broadcast-editor-grid { gap: 24px; } .broadcast-section-heading { gap: 8px; } .broadcast-settings .studio-step-footer { align-items: start; flex-wrap: wrap; gap: 12px; }
   .device-offline-alert { padding: 12px; } .publishing-workspace .publishing-target { padding: 16px; } .publishing-shell .publishing-inbox { padding: 18px; }
   .publishing-shell .publishing-days label { padding-inline: 9px; } .main-wrapper table :is(th, td) { padding: 12px; }
+  .main-wrapper .settings-actions { flex-wrap: wrap; flex-shrink: 1; min-width: 0; max-width: 100%; }
+  .desktop-header-actions { flex-wrap: wrap; gap: 8px; min-width: 0; max-width: 100%; }
   input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
