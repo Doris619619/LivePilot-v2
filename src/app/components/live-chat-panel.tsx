@@ -5,6 +5,7 @@ import { api } from "../client-request";
 import { defaultLiveChatConfig, liveChatConfigSchema, type LiveChatConfig, type LiveChatStatus } from "@/shared/live-chat";
 import type { InstanceDescriptor } from "@/shared/types";
 import styles from "./live-chat-panel.module.css";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/primitives";
 
 const states: Record<LiveChatStatus["state"], string> = {
   disabled: "已关闭", needs_key: "环境未就绪", waiting_live: "等待直播", connecting: "连接聊天中",
@@ -89,6 +90,7 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
     </div>
     {!supported ? <p className={styles.notice}>这台直播电脑的 Agent 暂不支持 AI 观众互动，请升级 Agent 后刷新状态。</p> : <>
       {stale && <p className={styles.notice} role="status">设备离线或状态已过期，当前互动状态未知。以下显示上次记录，重新连接后再调整设置。</p>}
+      <Tabs defaultValue="settings"><TabsList aria-label="AI 互动视图"><TabsTrigger value="settings">互动设置</TabsTrigger><TabsTrigger value="activity">活动记录</TabsTrigger></TabsList><TabsContent value="settings" className={styles.tabContent}>
       <div className={styles.topRow}>
         <div><strong>自动回复观众</strong><p className={styles.hint}>默认开启；直播电脑环境就绪、频道开播且聊天可用时自动工作。</p></div>
         <button type="button" role="switch" aria-checked={current?.config.enabled ?? true} aria-label={`${instance.name} AI 自动回复观众`} disabled={locked} className={`switch-btn ${(current?.config.enabled ?? true) ? "active" : ""}`} onClick={() => void configure({ ...(current?.config || defaultLiveChatConfig), enabled: !current?.config.enabled }, false)}>
@@ -103,6 +105,7 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
         <div className={styles.field}><label htmlFor={`chat-prompt-${id}`}>{config.preset === "custom" ? "自定义人设描述" : "补充人设描述（可选）"}</label><textarea id={`chat-prompt-${id}`} rows={3} maxLength={2000} disabled={locked} value={config.customPrompt} onChange={event => edit({ customPrompt: event.target.value })} placeholder="例如：像温柔的电台主持人一样陪大家聊天，回答简短自然。" aria-describedby={`chat-prompt-hint-${id}`} /><span className={styles.hint} id={`chat-prompt-hint-${id}`}>始终跟随观众留言的语言，欢迎首次发言者；回复包含 [AI] 和观众称呼，最多 200 字符。</span></div>
         <div className={styles.actions}><button type="submit" className="btn-secondary" disabled={locked || !dirty}>{working === "configure" ? "保存中…" : "保存互动设置"}</button><span className={styles.hint}>{dirty ? "有尚未保存的设置" : "设置按频道实例保存，跨场次和重启保留"}</span></div>
       </form>
+      </TabsContent><TabsContent value="activity" className={styles.tabContent}>
       <div className={styles.runtime}>
         <div className={styles.runtimeHeading}><h4>互动状态</h4><button type="button" className="btn-ghost" disabled={!!working} onClick={() => void readStatus()}>{working === "read" ? "读取中…" : stale ? "刷新设备状态" : "刷新互动状态"}</button></div>
         <p className={styles.hint} role="status">{stale ? "当前状态未知；发送数量及互动记录是上次设备报告。" : current?.state === "needs_key" ? "直播电脑的 DeepSeek 环境配置未就绪，请联系管理员" : current?.message || "正在读取直播电脑的互动状态。"}</p>
@@ -111,7 +114,8 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
         <dl className={styles.counts}><div><dt>已发送</dt><dd>{stale ? "—" : current?.sent ?? "—"}</dd></div><div><dt>已跳过</dt><dd>{stale ? "—" : current?.skipped ?? "—"}</dd></div><div><dt>排队中</dt><dd>{stale ? "—" : current?.queued ?? "—"}</dd></div></dl>
         <p className={styles.hint}>每日回复条数无上限，仍受 DeepSeek 余额和 YouTube 项目共享配额限制。队列最多 100 条，超过 2 分钟或溢出的旧留言会跳过。<a href="https://developers.google.com/youtube/v3/determine_quota_cost" target="_blank" rel="noopener noreferrer">查看配额说明</a></p>
       </div>
-      <details className={styles.history}><summary>最近 30 条互动{stale ? " · 上次记录" : ""}</summary>{current?.recent.length ? <ol>{current.recent.slice(-30).reverse().map(entry => <li key={entry.id}><div className={styles.entryHeading}><strong>{entry.author || "观众"}</strong><span>{entryStates[entry.status]}</span></div><p>{entry.text}</p>{entry.reply && <p className={styles.reply}>{entry.reply}</p>}{entry.reason && <p className={styles.hint}>{entry.reason}</p>}</li>)}</ol> : <p className={styles.hint}>还没有互动记录；启用后只回复新留言。</p>}</details>
+      <section className={styles.history}><h4>最近 30 条互动{stale ? " · 上次记录" : ""}</h4>{current?.recent.length ? <ol>{current.recent.slice(-30).reverse().map(entry => <li key={entry.id}><div className={styles.entryHeading}><strong>{entry.author || "观众"}</strong><span>{entryStates[entry.status]}</span></div><p>{entry.text}</p>{entry.reply && <p className={styles.reply}>{entry.reply}</p>}{entry.reason && <p className={styles.hint}>{entry.reason}</p>}</li>)}</ol> : <p className={styles.hint}>还没有互动记录；启用后只回复新留言。</p>}</section>
+      </TabsContent></Tabs>
       {message && <p className={styles.feedback} role="status">{message}</p>}{error && <p className={styles.error} role="alert">{error}</p>}
     </>}
   </section>;

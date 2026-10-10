@@ -1,6 +1,7 @@
 /** 持久计划确认：月历与清单共用单项编辑、人工时间保护和必要的上传同意。 */
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { SurfaceDialog } from "../components/ui/primitives";
 import { UPLOAD_NOTICE, type PublishingPlan, type PublishingPlanItem } from "@/shared/publishing";
 import { videoCopySchema } from "@/shared/video-metadata";
 import { descriptionBytes, inputUtc, localInputTime, planTime, titleCharacters, visibilityLabel } from "./display";
@@ -12,15 +13,12 @@ type Props = { plan: PublishingPlan; channel?: string; busy: boolean; disabled?:
 export default function PlanConfirm({ plan, channel, busy, disabled, blocked, scheduleOnly = false, lockedPackageIds, replacements, update, confirm, back, viewExecution }: Props) {
   const [page, setPage] = useState(0); const [editing, setEditing] = useState<PublishingPlanItem>(); const [date, setDate] = useState("");
   const [error, setError] = useState(""); const [accepted, setAccepted] = useState(false); const [ai, setAi] = useState(false); const [replace, setReplace] = useState(false);
-  const editorHeading = useRef<HTMLHeadingElement>(null);
   const active = plan.items.filter(item => !item.excluded); const ordered = active.map(item => item.publishAt).filter((value): value is string => !!value).sort();
   const copies = new Map(plan.copies.map(copy => [copy.packageId, copy])); const packages = new Map(plan.batch.packages.map(item => [item.id, item]));
   const currentCopy = editing && copies.get(editing.packageId);
   const title = editing?.title ?? currentCopy?.title ?? ""; const description = editing?.description ?? currentCopy?.description ?? "";
   const valid = scheduleOnly || !editing || videoCopySchema.safeParse({ title, description }).success;
   const timezone = plan.rule.timezone;
-  /** 事件激活后将键盘焦点和页面定位移到唯一编辑区，保留月历所选月份。 */
-  useEffect(() => { if (editing?.packageId) editorHeading.current?.focus(); }, [editing?.packageId]);
   /** 一次只编辑一个发布包，日期输入始终使用已确认的计划时区。 */
   function begin(item: PublishingPlanItem) { if (lockedPackageIds?.includes(item.packageId)) return; setEditing({ ...item }); setDate(item.publishAt ? localInputTime(item.publishAt, timezone) : ""); setError(""); }
   /** 日期改动成为manual，恢复auto由服务端寻找空闲时刻；其他人工覆盖原样保留。 */
@@ -51,8 +49,8 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
       })}</div>
       <Pagination page={page} total={plan.items.length} change={setPage} />
     </>}
-    {editing && <div className="publishing-inline-editor publishing-plan-editor" role="group" aria-label={"编辑 " + packages.get(editing.packageId)?.name}>
-      <div className="publishing-plan-editor-heading"><h3 ref={editorHeading} tabIndex={-1}>编辑 {packages.get(editing.packageId)?.name}</h3><button className="btn-ghost" disabled={busy} onClick={() => setEditing(undefined)}>关闭</button></div>
+    <SurfaceDialog open={!!editing} onOpenChange={open => { if (!open) setEditing(undefined); }} title="编辑发布内容" description={editing ? (packages.get(editing.packageId)?.name || "视频") + " · " + timezone : ""} side="right" locked={busy}>
+    {editing && <div className="publishing-shell publishing-sheet-editor" role="group" aria-label={"编辑 " + packages.get(editing.packageId)?.name}>
       {!scheduleOnly && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
       {!editing.excluded && <>
         {plan.profile.scheduled && <label>发布时间 · {timezone}<input type="datetime-local" disabled={busy} required value={date} onChange={e => setDate(e.target.value)} /></label>}
@@ -62,7 +60,7 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
       </>}
       {error && <p className="publishing-validation" role="alert">{error}</p>}
       <div className="publishing-actions"><button className="btn-primary" disabled={busy || !editing.excluded && !valid} onClick={() => void save()}>{busy ? "保存中…" : "保存修改"}</button><button disabled={busy} onClick={() => setEditing(undefined)}>返回</button>{editing.scheduleSource === "manual" && <button className="btn-ghost" disabled={busy} onClick={() => void restoreAutomatic()}>恢复自动排期</button>}</div>
-    </div>}
+    </div>}</SurfaceDialog>
     <details className="publishing-details publishing-plan-details"><summary>计划详情</summary><dl className="publishing-summary">
       {plan.profile.scheduled && <><div><dt>每周</dt><dd>{plan.rule.weeklySlots.length} 条</dd></div><div><dt>首条 / 末条</dt><dd>{planTime(ordered[0], timezone)} / {planTime(ordered.at(-1), timezone)}</dd></div><div><dt>已避开占用时间</dt><dd>{plan.skippedOccupied} 个</dd></div></>}
       <div><dt>配置</dt><dd>{plan.profile.name}</dd></div><div><dt>提前上传</dt><dd>{plan.rule.preuploadDays} 天</dd></div><div><dt>儿童内容</dt><dd>{plan.profile.madeForKids ? "是" : "否"}</dd></div>

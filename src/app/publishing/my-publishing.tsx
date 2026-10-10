@@ -10,8 +10,9 @@ import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import { planTime } from "./display";
 import { publishingOverview, type OverviewTarget, type PublishingOverviewBatch } from "./publishing-overview";
 import styles from "./my-publishing.module.css";
+import { Progress } from "../components/ui/primitives";
 
-type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; removals?: PublishingBatchRemoval[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void>; removeBatch?: BatchRemovalOperation };
+type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; removals?: PublishingBatchRemoval[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void>; removeBatch?: BatchRemovalOperation; create?: () => void };
 
 /** 由不可变频道 ID 选择标识色；更名、筛选、分页不会变色，身份仍以名称和分区边界表示。 */
 function channelAccent(channelId: string) {
@@ -29,7 +30,7 @@ function OverviewBatch({ batch, now, open, busy, removeBatch }: { batch: Publish
     <div className={styles.batchHeading}><h3>{batch.name}</h3><span className={styles.status + " " + styles[batch.tone]}>{batch.state}</span></div>
     <div className={styles.progressArea}>
       <div className={styles.counts}><strong>{label} {done}</strong><span>待发布 {counts.pending}</span>{counts.attention > 0 && <span className={styles.error}>需处理 {counts.attention}</span>}{counts.cancelled > 0 && <span>已取消 {counts.cancelled}</span>}</div>
-      <progress aria-label={batch.name + " 发布完成进度"} value={done} max={Math.max(1, counts.total)} />
+      <Progress aria-label={batch.name + " 发布完成进度"} value={done / Math.max(1, counts.total) * 100} />
       {counts.excluded > 0 && <span className={styles.excluded}>暂不发布 {counts.excluded}</span>}
     </div>
     <div className={styles.batchAction}>{next && !batch.removal && <span>{Date.parse(next.instant) <= now ? "待核对" : "下一条"} <time dateTime={next.instant}>{planTime(next.instant, next.timezone)}</time></span>}<div className={styles.batchButtons}><button className="btn-ghost" onClick={open}>查看详情</button>{removeBatch && <BatchRemoval batchId={batch.plan?.id || batch.jobs[0].spec.batchId} name={batch.name} removal={batch.removal} busy={busy} remove={removeBatch} />}</div></div>
@@ -37,7 +38,7 @@ function OverviewBatch({ batch, now, open, busy, removeBatch }: { batch: Publish
 }
 
 /** 默认跨所有权限内设备按频道汇总；筛选不修改任务归属，返回保留频道与分页位置。 */
-export default function MyPublishing({ plans, jobs, allJobs, targets = [], removals = [], busy, operate, archive, removeBatch }: Props) {
+export default function MyPublishing({ plans, jobs, allJobs, targets = [], removals = [], busy, operate, archive, removeBatch, create }: Props) {
   const [tab, setTab] = useState("总览"); const [selected, setSelected] = useState(""); const [channel, setChannel] = useState(""); const [page, setPage] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   /** 只更新“等待公开确认”的时间提示，不根据浏览器时钟推进任务状态。 */
@@ -63,7 +64,7 @@ export default function MyPublishing({ plans, jobs, allJobs, targets = [], remov
           <header className={styles.channelHeading}><div className={styles.channelIdentity}><span className={styles.channelAvatar} aria-hidden="true">{Array.from(value.name.trim())[0]?.toLocaleUpperCase() || "Y"}</span><div className={styles.channelTitle}><h2>{value.name}</h2>{value.device && <p>{value.device}</p>}</div></div><span className={styles.packageCount}>{value.batches.length} 个发布包</span></header>
           {pageBatches.map(item => <OverviewBatch key={item.key} batch={item} now={now} busy={busy} removeBatch={removeBatch} open={() => setSelected(item.key)} />)}
         </section>; })}<Pagination page={currentPage} total={batches.length} change={setPage} />
-          {!batches.length && <div className="publishing-empty"><h2>还没有配置好的发布包</h2></div>}
+          {!batches.length && <div className="publishing-empty"><h2>还没有配置好的发布包</h2><p>准备素材、设置时间后，在这里跟进发布进度。</p>{create && <button className="btn-primary" onClick={create}>发布第一批视频</button>}</div>}
         </>}
   </section>;
 }

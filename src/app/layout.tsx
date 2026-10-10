@@ -4,6 +4,8 @@ import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./login.css";
+import "./components/ui/ui.css";
+import "./workspace-refresh.css";
 import LegalLinks from "./legal-links";
 
 // 自托管同一套中英文字形；构建及访问均不需要请求外部字体服务。

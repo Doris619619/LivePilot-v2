@@ -1,5 +1,6 @@
 /** 管理员总览：可点击指标、客户分组与浏览器保存的显示时区。 */
 "use client";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/primitives";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "../client-request";
@@ -57,8 +58,7 @@ export default function Admin() {
   ];
   return <main className="main-wrapper admin-page" id="workspace">
     <div className="workspace-heading admin-heading"><h1>管理员总览</h1><div className="admin-heading-actions"><label className="admin-timezone">显示时区<select value={timeZone} onChange={e => chooseZone(e.target.value)}>{zones.map(zone => <option key={zone} value={zone}>{zoneLabels[zone] ? zoneLabels[zone] + " · " : ""}{zone}</option>)}</select></label><Link href="/workspace">进入直播工作台 ↗</Link></div></div>
-    <nav className="desktop-actions" aria-label="管理员功能"><button aria-pressed={tab === "devices"} onClick={() => setTab("devices")}>设备总览</button><button aria-pressed={tab === "accounts"} onClick={() => setTab("accounts")}>客户账号</button></nav>
-    {tab === "accounts" ? <Accounts /> : <>
+    <Tabs value={tab} onValueChange={value => setTab(value as "devices" | "accounts")}><TabsList aria-label="管理员功能"><TabsTrigger value="devices">设备总览</TabsTrigger><TabsTrigger value="accounts">客户账号</TabsTrigger></TabsList><TabsContent value="accounts"><Accounts /></TabsContent><TabsContent value="devices">
     {error && <div className="banner error" role="alert">{error} · 以下为上次获取的数据，不能视为实时状态。</div>}
     {!data ? <p role="status">正在读取设备状态…</p> : <>
       <div className="admin-metrics">{metrics.map(metric => <button key={metric.scope} className="admin-metric" aria-pressed={scope === metric.scope} aria-controls="admin-results" disabled={!!error} title={scope === metric.scope ? "再次点击查看全部电脑" : undefined} onClick={() => chooseScope(metric.scope)}><span>{metric.label}</span><strong>{error ? "—" : metric.value}</strong></button>)}</div>
@@ -66,6 +66,6 @@ export default function Admin() {
       <section id="admin-results" aria-label="客户与 OBS 明细"><div className="admin-section-heading"><h2>{query.trim() ? "搜索结果" : scope === "all" ? "全部电脑" : scopes[scope]}</h2><span className="admin-result-count" role="status">{groups.reduce((count, group) => count + group.devices.length, 0)} 台电脑 · {groups.reduce((count, group) => count + group.devices.reduce((sum, device) => sum + device.rows.length, 0), 0)} 个 OBS</span></div><GroupedList groups={groups} timeZone={timeZone} stale={!!error} /></section>
       <Assignment data={data} busy={busy} notice={notice} noticeTarget={noticeTarget} noticeFailed={noticeFailed} assign={assign} />
     </>}
-    </>}
+    </TabsContent></Tabs>
   </main>;
 }

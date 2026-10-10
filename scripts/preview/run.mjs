@@ -7,8 +7,9 @@ import { build } from 'esbuild';
 import { parseEnv } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { seed, refresh, control, password } from './fixtures.mjs';
-import { guardPreview, authorizePreviewControl } from './security.mjs';
+import { seed, refresh, control, password, dashboard, agents } from './fixtures.mjs';
+import { guardPreview, authorizePreviewControl, previewCookies } from './security.mjs';
+import { createPublishingPreview } from './publishing.mjs';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(directory, '../..');
 process.chdir(repo);
@@ -17,11 +18,12 @@ await mkdir('.data/preview', { recursive: true });
 const root = await mkdtemp(path.join(repo, '.data/preview/session-'));
 await seed(root);
 // 仅加载本机显式配置的 DeepSeek 密钥；其他预览配置仍完全隔离。
-try { const local = parseEnv(await readFile(path.join(repo, '.env.local'), 'utf8')); if (local.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = local.DEEPSEEK_API_KEY; } catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取本地 AI 环境配置'); }
+try { const local = parseEnv(await readFile(path.join(repo, '.env.local'), 'utf8')); if (process.env.LIVENEST_PREVIEW_REAL_AI === '1' && local.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = local.DEEPSEEK_API_KEY; } catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取本地 AI 环境配置'); }
 const aiBundle = path.join(root, 'ai-runtime.mjs');
 await build({ stdin: { contents: 'export { generateCopy, aiStatus } from "./src/core/broadcast-ai"; export { Store } from "./src/core/storage";', resolveDir: repo, loader: 'ts' }, outfile: aiBundle, bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
 const ai = await import(pathToFileURL(aiBundle).href);
 const aiStore = new ai.Store(path.join(root, 'ai'));
+if (process.env.LIVENEST_PREVIEW_REAL_AI !== '1') delete process.env.DEEPSEEK_API_KEY;
 let aiBusy = false;
 const origin = 'http://127.0.0.1:3022';
 const env = { ...process.env };
@@ -45,16 +47,35 @@ function json(response, status, body) { response.writeHead(status, { 'Content-Ty
 async function body(request) { let value = ''; for await (const chunk of request) { value += chunk; if (Buffer.byteLength(value) > 3 * 1024 ** 2) throw new Error('本地预览不接收实际素材文件'); } return value; }
 /** 每个端口持有独立演示会话，避免客户与管理员标签页相互覆盖角色。 */
 async function proxy(port, username) {
+  const publishing = createPublishingPreview();
   const session = await fetch(origin + '/api/session', { method: 'POST', headers: { Origin: origin, 'x-livepilot': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
   if (!session.ok) throw new Error('Preview login failed');
-  let cookie = session.headers.get('set-cookie').split(';')[0];
+  let cookie = previewCookies('', session.headers);
   const server = createServer(async (request, response) => {
     try {
       guardPreview(request, port);
       const url = new URL(request.url, origin);
       if (url.origin !== origin) return json(response, 400, { error: 'Invalid local preview URL' });
+      if (url.pathname === '/api/uploads' && request.method === 'GET') {
+        await authorizePreviewControl(origin, cookie, { agentId: url.searchParams.get('agentId'), instanceId: url.searchParams.get('instanceId'), action: 'launch' });
+        return json(response, 200, []);
+      }
       if (/^\/api\/(uploads|youtube)/.test(url.pathname)) return json(response, 409, { error: '本地界面预览：不上传真实素材或连接 YouTube。' });
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
+      if (url.pathname === '/api/live-chat' && request.method === 'POST') {
+        const value = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...value, action: 'launch' });
+        if (value.action !== 'read') return json(response, 409, { error: '本地预览只展示合成互动记录，不修改真实聊天配置。' });
+        const agent = agents.find(agent => agent.id === value.agentId); const instance = agent.instances.find(instance => instance.id === value.instanceId);
+        return json(response, 200, dashboard(agent, instance).liveChat);
+      }
+      if (url.pathname === '/api/publishing') {
+        const inputValue = input ? JSON.parse(input) : undefined;
+        await authorizePreviewControl(origin, cookie, { agentId: 'preview_liang', instanceId: 'main', action: 'launch' });
+        if (request.method === 'GET') return json(response, 200, publishing.view);
+        if (request.method !== 'POST') return json(response, 405, { error: 'Read-only preview' });
+        if (inputValue?.agentId && (inputValue.agentId !== 'preview_liang' || inputValue.instanceId !== 'main')) return json(response, 409, { error: '请选择示例发布账号对应的电脑。' });
+        try { return json(response, 200, publishing.request(inputValue)); } catch (error) { return json(response, 409, { error: error.message }); }
+      }
       if (url.pathname === '/api/broadcast-assets' && request.method === 'POST') {
         const body = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...body, action: 'launch' });
         if (body.action === 'ai-status') return json(response, 200, await ai.aiStatus(aiStore));
@@ -76,7 +97,7 @@ async function proxy(port, username) {
       for (const [key, value] of Object.entries(request.headers)) if (value && !['host', 'connection', 'accept-encoding', 'content-length', 'cookie'].includes(key)) headers.set(key, String(value));
       headers.set('Cookie', cookie); if (headers.has('origin')) headers.set('Origin', origin);
       const upstream = await fetch(url, { method: request.method, headers, body: input, redirect: 'manual' });
-      if (url.pathname === '/api/session' && upstream.headers.has('set-cookie')) cookie = upstream.headers.get('set-cookie').split(';')[0];
+      if (url.pathname.startsWith('/api/session') && upstream.headers.has('set-cookie')) cookie = previewCookies(cookie, upstream.headers);
       for (const [key, value] of upstream.headers) if (!['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'set-cookie'].includes(key)) response.setHeader(key, value);
       response.statusCode = upstream.status; response.end(Buffer.from(await upstream.arrayBuffer()));
     } catch (error) { json(response, error.status || 500, { error: error.message }); }

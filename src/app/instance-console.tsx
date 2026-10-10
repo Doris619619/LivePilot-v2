@@ -12,6 +12,7 @@ import { useInstance } from "./use-instance";
 import { targetKey } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
 import { StatusBadge, type StatusType } from "./components/status-indicator";
+import { Reveal } from "./components/ui/primitives";
 import {
   ObsIcon,
   YouTubeIcon,
@@ -36,7 +37,7 @@ function formatDuration(ms: number): string {
 /**
  * 单个 OBS 直播实例的极简折叠与展开控制卡片。
  */
-export default function InstanceConsole({ instance, onChannelChange, onUpload }: { instance: InstanceDescriptor; onChannelChange: (key: string, channel: string) => void; onUpload: (target: string, kind: "videos" | "music") => void }) {
+export default function InstanceConsole({ instance, onChannelChange, onUpload, initiallyExpanded = true, deviceOffline = false }: { instance: InstanceDescriptor; initiallyExpanded?: boolean; deviceOffline?: boolean; onChannelChange: (key: string, channel: string) => void; onUpload: (target: string, kind: "videos" | "music") => void }) {
   const { name } = instance;
   const id = instance.agentId ? `${instance.agentId}-${instance.id}` : instance.id;
   const model = useInstance(instance);
@@ -60,7 +61,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
   } = model;
 
   const [detailsBusy, setDetailsBusy] = useState(false);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
   const key = targetKey(instance);
@@ -126,7 +127,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
       <div className="card-compact-bar">
         <div className="compact-info-col">
           <h2 className="compact-title" id={`title-${id}`}>{title}</h2>
-          <div className="compact-channel"><ObsIcon /><span>{instance.agentName || "本机"} · {name} · {instance.id}</span></div>
+          <div className="compact-channel"><ObsIcon /><span>{name}{channel ? " · YouTube 频道" : " · 频道待连接"}</span></div>
         </div>
         <div className="instance-state">
           <StatusBadge status={statusType} label={stateLabel} />
@@ -142,11 +143,11 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
       <OAuthFeedback instance={instance} />
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {issues.map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
+      {issues.filter(problem => !(deviceOffline && problem.code === "CLOUD_UNAVAILABLE" && problem.stage === "读取实例状态" && !problem.attemptId)).map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
-      {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
+      <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
         <details className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
@@ -237,7 +238,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             <button type="button" className="btn-ghost" onClick={() => void refresh()}><RefreshIcon />刷新状态</button>
           </div>
         </details>
-      </div>}
+      </div></Reveal>
     </article>
   );
 }

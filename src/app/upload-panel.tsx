@@ -10,11 +10,11 @@ import ProblemCard from "./components/problem-card";
 import { makeProblem } from "../shared/problems";
 import { api } from "./client-request";
 import UploadRecovery from "./upload-recovery";
+import FileDropzone from "./components/ui/file-dropzone";
+import { Reveal, Progress } from "./components/ui/primitives";
 import { identify, transfer, uploadUrl } from "./upload-client";
 import {
   UploadIcon,
-  VideoIcon,
-  MusicIcon,
   CheckCircleIcon,
   RefreshIcon,
   DeviceIcon,
@@ -41,7 +41,6 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   const [requestNotice, setRequestNotice] = useState("");
   const [lastRequest, setLastRequest] = useState(0);
   const [hasIntent, setHasIntent] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const createIntent = useRef<{ fingerprint: string; target: string; kind: string; requestId: string } | null>(null);
   const abort = useRef<AbortController | null>(null);
@@ -241,7 +240,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
         </button>
       </div>
       {!isOpen && (error || (record && record.status !== "complete")) && <div className="instance-feedback" role="status">{record?.filename || "素材上传"} · {error ? "需要处理" : busy ? "传输中" : record?.verification === "failed" ? "校验未完成" : record?.status === "verifying" ? "正在校验" : "已暂停"}<button onClick={()=>setIsOpen(true)}>查看进度与处理步骤</button></div>}
-      {isOpen && <div className="dock-content" id="upload-content" tabIndex={-1}>
+      <Reveal open={isOpen}><div className="dock-content" id="upload-content" tabIndex={-1}>
         {requestNotice && <p className="upload-hint" role="status">{requestNotice}</p>}
         <form onSubmit={submit}>
           {record || busy ? <p className="upload-destination"><DeviceIcon /><span>{destinationLabel}</span><span>{kind === "videos" ? "视频" : "音乐"}</span></p> : <div className="form-row">
@@ -258,14 +257,10 @@ export default function UploadPanel({ instances, channels, heading, request }: {
               </select>
             </div>
           </div>}
-          {!busy && (!record || record.status === "uploading") && <div className="upload-file-picker">
-            <input ref={fileInput} id="upload-file" className="visually-hidden" type="file" aria-label={kind === "videos" ? "选择视频文件" : "选择音乐文件"} accept={kind === "videos" ? ".mp4,.mkv,.mov,.webm,.avi,.m4v" : ".mp3,.wav,.flac,.aac,.m4a,.ogg"} onChange={e => setFile(e.target.files?.[0])} />
-            <button type="button" className="btn-secondary" onClick={() => fileInput.current?.click()}>{kind === "videos" ? <VideoIcon /> : <MusicIcon />}{record ? "重新选择同一文件" : file ? "更换文件" : kind === "videos" ? "选择视频" : "选择音乐"}</button>
-            <span>{file?.name || (record ? "选择原文件后继续上传" : kind === "videos" ? "支持 MP4、MKV、MOV、WEBM 等" : "支持 MP3、WAV、FLAC、AAC 等")}</span>
-          </div>}
+          {!busy && (!record || record.status === "uploading") && <FileDropzone id="upload-file" label={record ? "重新选择同一文件" : file ? "更换文件" : kind === "videos" ? "选择视频文件" : "选择音乐文件"} name={file?.name} hint={record ? "选择原文件后继续上传" : kind === "videos" ? "MP4、MKV、MOV、WEBM 等 · 文件发送到所选直播电脑" : "MP3、WAV、FLAC、AAC 等 · 文件发送到所选直播电脑"} accept={kind === "videos" ? { "video/*": [".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"] } : { "audio/*": [".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg"] }} onFile={setFile} />}
           {record ? <div className="upload-progress">
             <div className="upload-progress-title"><strong>{record.filename}</strong><span role="status">{progressLabel}</span></div>
-            <progress aria-label="素材上传进度" max={record.size} value={record.received} />
+            <Progress aria-label="素材上传进度" value={record.received / Math.max(1, record.size) * 100} />
             <div className="upload-progress-meta"><span>{bytes(record.received)} / {bytes(record.size)}</span><span>{Math.floor(record.received / Math.max(1, record.size) * 100)}%</span></div>
             {record.status === "complete" ? <p className="upload-success"><CheckCircleIcon />已添加到素材库，可回到下方选择使用。</p> : <p className="upload-hint">{record.status === "verifying" ? record.verification === "failed" ? "文件已传完，但尚未发布。请查看原因后重新提交校验；文件损坏时取消此上传并重传。" : "文件已传完，正在确认完整性。" : "支持暂停，稍后可继续上传。"}</p>}
           </div> : busy && <p className="upload-hint" role="status">{stage}</p>}
@@ -278,7 +273,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
         </form>
         {error && <ProblemCard objectName={destinationLabel} problem={record?.problem || makeProblem(paused?"CANCELLED":"UPLOAD",error,{domain:"media",target:{agentId:record?.agentId,instanceId:record?.instanceId,uploadId:record?.id},stage:"上传素材"})} onRefresh={record ? ()=>void api<UploadStatus>(uploadUrl(record)).then(remember,e=>setError(e.message)) : undefined} />}
         <UploadRecovery key={instanceId} agentId={destination?.agentId} instanceId={destination?.id || "main"} currentId={record?.id} disabled={busy} restore={remember} cancelled={cancelled} />
-      </div>}
+      </div></Reveal>
     </section>
   );
 }

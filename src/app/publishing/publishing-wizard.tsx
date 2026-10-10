@@ -1,5 +1,6 @@
 /** 四步发布向导：本地批次检查、独立时间设置、持久计划确认和自动执行。 */
 "use client";
+import WorkflowSteps from "../components/ui/workflow-steps";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { planRuleSchema, publishingTerminal, type PackageBatch, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type VideoJob } from "@/shared/publishing";
 import type { BatchRemovalOperation } from "./batch-removal";
@@ -101,7 +102,7 @@ export default function PublishingWizard(props: Props) {
     if (next && current()) { if (confirmed) setSchedulePreview(next); else setPlan(next); setRule(next.rule); setBatchId(next.batch.id); setUnlockedStep(confirmed ? 4 : 3); setStep(3); }
   }
   return <div className="publishing-wizard">
-    <ol className="publishing-steps" aria-label="发布步骤">{steps.map((name, index) => <li className={viewStep === index + 1 ? "is-current" : unlockedStep > index + 1 ? "is-done" : ""} key={name}><button type="button" className="publishing-step-button" aria-label={name} aria-current={viewStep === index + 1 ? "step" : undefined} aria-controls="publishing-step-content" disabled={!canNavigate(index + 1)} onClick={() => navigate(index + 1)}><span aria-hidden="true">{index + 1}</span><span>{name}</span></button></li>)}</ol>
+    <WorkflowSteps labels={steps} current={viewStep} reached={unlockedStep} canNavigate={canNavigate} navigate={navigate} label="发布步骤" />
     <div id="publishing-step-content">
     <div className="publishing-step-heading"><h2 ref={heading} tabIndex={-1}>{steps[viewStep - 1]}</h2><span>{viewStep} / 4</span></div>
     {viewStep === 1 && <>
