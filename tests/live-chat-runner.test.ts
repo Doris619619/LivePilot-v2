@@ -132,7 +132,7 @@ describe("LiveChatRunner", () => {
 
   it.each(["AI_CONFIG", "AI_BALANCE", "YOUTUBE_AUTH"])("blocks %s until an explicit key or config operation, without repeating paid generation", async code => {
     const f = fixture(); vi.mocked(f.ports.generate).mockRejectedValueOnce(new AppError(code, "raw upstream token secret")); f.runner.start(); await advance(); f.feeds[0].push({ messages: [message("blocked")] }); await advance(200);
-    expect(await f.runner.status()).toMatchObject({ state: "needs_attention", queued: 0, message: expect.not.stringContaining("secret") }); const reads = vi.mocked(f.ports.observe).mock.calls.length; await advance(60000); expect(f.ports.generate).toHaveBeenCalledOnce(); expect(f.ports.observe).toHaveBeenCalledTimes(reads);
+    expect(await f.runner.status()).toMatchObject({ state: "needs_attention", recoveryAction: code === "YOUTUBE_AUTH" ? "authorize" : "contact_admin", queued: 0, message: expect.not.stringContaining("secret") }); const reads = vi.mocked(f.ports.observe).mock.calls.length; await advance(60000); expect(f.ports.generate).toHaveBeenCalledOnce(); expect(f.ports.observe).toHaveBeenCalledTimes(reads);
     await f.runner.keyChanged(); await advance(); f.feeds.at(-1)!.push({ messages: [message("recovered")] }); await advance(); expect(f.ports.send).toHaveBeenCalledOnce();
   });
 
@@ -153,13 +153,13 @@ describe("LiveChatRunner", () => {
   });
 
   it("maps existing observer auth failures to a permanent safe state and unknown errors to a fixed reconnect message", async () => {
-    const f = fixture(); vi.mocked(f.ports.observe).mockRejectedValueOnce(new AppError("GOOGLE_AUTH", "raw refresh token")); f.runner.start(); await advance(); expect(await f.runner.status()).toMatchObject({ state: "needs_attention", message: expect.not.stringContaining("token") });
+    const f = fixture(); vi.mocked(f.ports.observe).mockRejectedValueOnce(new AppError("GOOGLE_AUTH", "raw refresh token")); f.runner.start(); await advance(); expect(await f.runner.status()).toMatchObject({ state: "needs_attention", recoveryAction: "authorize", message: expect.not.stringContaining("token") });
     await f.runner.keyChanged(); vi.mocked(f.ports.observe).mockRejectedValueOnce(new Error("raw password response")); await advance(); expect(await f.runner.status()).toMatchObject({ state: "reconnecting", message: expect.not.stringContaining("password") });
   });
 
   it("stops networking on a failed checkpoint write and reports a safe state without an unhandled stream rejection", async () => {
     const f = fixture(); f.runner.start(); await advance(); const writes = vi.spyOn(f.store, "write").mockRejectedValue(new Error("raw disk path secret"));
-    f.feeds[0].push({ messages: [message("disk-failed")] }); await advance(); expect(await f.runner.status()).toMatchObject({ state: "needs_attention", message: expect.not.stringContaining("secret") }); expect(f.ports.send).not.toHaveBeenCalled();
+    f.feeds[0].push({ messages: [message("disk-failed")] }); await advance(); expect(await f.runner.status()).toMatchObject({ state: "needs_attention", recoveryAction: "check_storage", message: expect.not.stringContaining("secret") }); expect(f.ports.send).not.toHaveBeenCalled();
     writes.mockRestore(); await f.runner.configure(defaultLiveChatConfig); await advance(); expect((await f.runner.status()).state).toBe("connecting"); f.feeds.at(-1)!.push({ messages: [] }); await advance(); expect((await f.runner.status()).state).toBe("running");
   });
 

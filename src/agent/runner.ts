@@ -11,7 +11,7 @@ import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared
 import { Executor } from "./executor";
 import { Worker } from "./worker";
 import { Transport } from "./transport";
-import { syncLiveChatEnvironment } from "./live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
 export type Identity = { agentId: string; origin: string; token: string };
 export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; problems?(value: Problem[]): void; error?(message: string, code?: string): void };
 /** 保留既有会话、心跳、去重与完整业务执行语义；桌面只获得受限状态回报。 */
@@ -21,9 +21,14 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
   const executor = new Executor(transport); const worker = new Worker(new Store(path.join(dataRoot(), "agent", "tasks")), task => executor.execute(task), identity.agentId);
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
+  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values()), failed => {
+    if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
+    else health.delete("chat-environment");
+  });
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let connected = false;
   const readers = instanceDescriptors().map(async instance => { while (!hooks.stopped()) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); health.delete(instance.id); hooks.snapshots?.([...snapshots.values()]); } catch { health.set(instance.id, makeProblem("SNAPSHOT_READ", "此实例状态读取失败，保留最后一次成功快照供核对。", {source:"agent",target:{instanceId:instance.id},stage:"读取实例状态"})); } await sleep(HEARTBEAT_MS); } });
   const heartbeat = (async () => { while (!hooks.stopped()) {
+    if (connected) void chatEnvironment.refresh();
     if (connected) try { const result = await transport.post<{ acknowledged: string[] }>("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems)); await acknowledgeFeedback(worker, result.acknowledged, health); hooks.heartbeat?.(); }
     catch (error) { if (error instanceof AppError && [401, 409].includes(error.status)) connected = false; hooks.error?.(safeError(error), error instanceof AppError ? error.code : undefined); }
     hooks.problems?.([...health.values(), ...worker.problems.values()]);
@@ -36,7 +41,8 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
         const session = await transport.post<{ session: string; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"], ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
         delete process.env.LIVENEST_MAINTENANCE;
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
-        if (session.capabilities?.includes("live-chat-v1")) await syncLiveChatEnvironment(transport, executor.services.values()).catch(() => { /* 聊天环境故障不阻断既有广播控制；缺配置由聊天状态提示。 */ });
+        chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
+        void chatEnvironment.refresh();
         executor.startChat();
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
       }
@@ -46,5 +52,5 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
       delay = 1000; if (result.tasks.length) await sleep(500);
     } catch (error) { connected = false; hooks.error?.(safeError(error), error instanceof AppError ? error.code : undefined); await sleep(delay); delay = Math.min(30_000, delay * 2); }
   }
-  await executor.stopChat(); await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
+  await chatEnvironment.stop(); await executor.stopChat(); await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
 }
