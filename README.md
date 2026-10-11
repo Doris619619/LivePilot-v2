@@ -39,7 +39,7 @@
 
 本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，独立于旧 LivePilot。开发验证：`npm.cmd ci` → `npm.cmd run verify`。真实频道授权及音画验收由用户主动完成。
 
-界面组件、动效与 localhost 演示入口见 [工作台组件与动效](docs/UI组件来源.md)。
+界面组件、动效与 localhost 演示入口见 [工作台组件与动效](docs/UI组件来源.md)。PR #34 同时收紧直播/发布信息层级、统一客户端更新提示，并补齐 AI 环境同步的自动重试；这些分支改动尚未发布到安装包，检查边界见 [前端回归检查](docs/前端回归检查.md)。
 
 ## 故障恢复
 

@@ -47,3 +47,11 @@
 @media (prefers-reduced-motion: reduce) {
   .panel button, .panel input, .panel select { transition: none; }
 }
+
+/* 常驻运行状态，次要设置与帮助逐级展开。 */
+.settings, .help { border-top: 1px solid var(--border-subtle); margin-top: 16px; }
+.settings summary, .help summary { cursor: pointer; padding: 14px 0; min-height: 44px; font-size: 14px; }
+.runtime { margin-top: 0; padding-top: 0; border-top: 0; }
+.counts { display: flex; flex-wrap: wrap; gap: 24px; }
+.counts div { display: flex; align-items: baseline; gap: 8px; }
+.counts dd { font-size: 15px; }

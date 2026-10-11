@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import BroadcastSettings from "./components/broadcast-settings";
 import LiveChatPanel from "./components/live-chat-panel";
 import OAuthFeedback from "./oauth-feedback";
@@ -113,11 +114,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   if(data?.configuration.missing.length)issues.push(makeProblem("CONFIG",[...new Set(data.configuration.missing.map(configurationLabel))].join("；"),{target:{agentId:instance.agentId,instanceId:instance.id},outcome:"rejected",stage:"检查开播配置"}));
   const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
 
+  const stoppable = canStopBroadcast(data);
   const broadcastControls = <>
           <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
           </button>
-          <button type="button" className="btn-danger" disabled={busy || stale || !data} onClick={() => void act("stop")}>
+          <button type="button" className="btn-danger" disabled={busy || stale || !stoppable} onClick={() => void act("stop")}>
             <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
           </button>
   </>;
@@ -134,7 +136,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           {live && data?.obs.streaming && <span className="compact-timer">{durationMs === null ? "—" : formatDuration(durationMs)}</span>}
         </div>
         <div className="compact-actions-col">
-          {!expanded && broadcastControls}
+          {(!expanded || stoppable) && broadcastControls}
           <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
             <span>{expanded ? "收起" : "设置"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
@@ -180,13 +182,13 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
             {data && !stale && !data.media.error && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
           </div>
           <div className="field-group">
-            <label htmlFor={`music-${id}`} className="field-label">背景音乐</label>
+            <label htmlFor={`music-${id}`} className="field-label">背景音乐（必选）</label>
             <select id={`music-${id}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
               <option value="">选择背景音乐</option>
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
-            {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>还没有音乐，可添加背景音乐。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
+            {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>请添加背景音乐后开播。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
           </div>
         </div>
         <div className="media-options">
@@ -203,14 +205,14 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
             <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
-            <div className="broadcast-actions">{broadcastControls}</div>
+            {!stoppable && <div className="broadcast-actions">{broadcastControls}</div>}
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
             <h3 id={`step-4-${id}`}>运行状态</h3>
             <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
             <dl className="runtime-values">
               <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
-              <div><dt>YouTube</dt><dd>{stale ? "未知" : data?.youtube.lifecycle || "—"}</dd></div>
+              <div><dt>YouTube</dt><dd>{stale ? "未知" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
             </dl>
           </section>
         </div>} />

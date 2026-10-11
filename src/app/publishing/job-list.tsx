@@ -10,12 +10,12 @@ import JobProgress from "./job-progress";
 export function jobTime(job: VideoJob, actual = false, original = false) {
   const value = actual ? job.observed?.effectivePublishAt : original ? job.initialPublishAt || job.spec.originalPublishAt : job.spec.originalPublishAt;
   const timezone = jobTimezone(job);
-  return value ? new Date(value).toLocaleString("zh-CN", { timeZone: timezone }) + " · " + timezone : "整理完成后";
+  return value ? new Date(value).toLocaleString("zh-CN", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) + " · " + timezone : "整理完成后";
 }
 /** 操作仅提交期望状态；尚未收到修订报告时保留“等待设备确认”。 */
 export default function JobList({ jobs, busy, operate, cancelling = false, removed = false }: { jobs: VideoJob[]; busy: boolean; cancelling?: boolean; removed?: boolean; operate(id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string): Promise<boolean> }) {
   const [editing, setEditing] = useState(""); const [date, setDate] = useState(""); const [dateError, setDateError] = useState(""); const [expanded, setExpanded] = useState("");
-  /** 一次展开一个视频的操作，所有视频的阶段仍默认可见；关掉旧详情不会清除新展开行。 */
+  /** 一次展开一个视频的操作，详细阶段随操作展开；关掉旧详情不会清除新展开行。 */
   function toggleOperations(event: SyntheticEvent<HTMLDetailsElement>, id: string) { if (event.currentTarget.open) setExpanded(id); else setExpanded(current => current === id ? "" : current); }
   /** 编辑从当前计划预填墙上时间；重新打开可采用最新计划，失败提交保留本次输入。 */
   function editDate(job: VideoJob) {
@@ -40,14 +40,14 @@ export default function JobList({ jobs, busy, operate, cancelling = false, remov
     const pendingCancel = job.spec.desired === "cancel" && report?.revision !== job.spec.revision;
     const controlsAvailable = !removed && (!publishingTerminal(state) || cancelling && state === "failed") && !pendingCancel;
     return <article key={job.spec.id} className="publishing-job">
-      <div className="publishing-job-heading"><div className="publishing-file"><h2>{report?.metadata?.title || job.spec.contentPackage?.name || job.spec.asset.filename}</h2><span>{job.spec.contentPackage?.name && job.spec.contentPackage.name + " · "}{job.spec.profile.name} · {Math.round((report?.prepared?.size || job.spec.asset.size) / 1024 ** 2)} MiB{state === "uploading" && " · " + percent + "%"}</span></div><span className={"publishing-status state-" + state}>{jobStatus(job)}</span></div>
+      <div className="publishing-job-heading"><div className="publishing-file"><h2>{report?.metadata?.title || job.spec.contentPackage?.name || job.spec.asset.filename}</h2></div><span className={"publishing-status state-" + state}>{jobStatus(job)}</span></div>
       {state === "uploading" && <progress aria-label={job.spec.asset.filename + " 上传进度"} max={report?.total} value={report?.offset} />}
       {job.spec.originalPublishAt && <p className="publishing-job-time">当前计划 · {jobTime(job)}{scheduleNotice && <span className="publishing-hint"> · {scheduleNotice}</span>}</p>}
       {confirmedAt && Date.parse(confirmedAt) !== Date.parse(job.spec.originalPublishAt || "") && <p className="publishing-hint">YouTube 已确认时间 · {jobTime(job, true)}</p>}
-      <JobProgress job={job} />
       {job.blockReason && <p className="publishing-warning" role="status">{job.blockReason}</p>}
       {report?.message && <p className="publishing-message" role="status">{report.message}</p>}
       <details className="publishing-details publishing-job-operations" open={expanded === job.spec.id} onToggle={event => toggleOperations(event, job.spec.id)}><summary>操作与详情</summary>
+      <JobProgress job={job} />
       <div className="publishing-actions">
         {controlsAvailable && <>
           {!cancelling && <button disabled={busy} onClick={() => { if (continued) void operate(job.spec.id, "resume"); else if (state === "scheduled" || report?.effectivePublishAt) setEditing(job.spec.id + "-pause"); else void operate(job.spec.id, "pause"); }}>{continued ? "继续" : "暂停处理"}</button>}
@@ -57,14 +57,16 @@ export default function JobList({ jobs, busy, operate, cancelling = false, remov
         {!removed && (job.hadUpload || report?.videoId) && <button className="btn-ghost" disabled={busy} onClick={() => void operate(job.spec.id, "reconcile")}>核对状态</button>}
         {report?.videoId && <a href={"https://www.youtube.com/watch?v=" + report.videoId} target="_blank" rel="noreferrer">查看视频</a>}
       </div>
-      <details className="publishing-details"><summary>任务详情</summary><dl className="publishing-summary">
+      <dl className="publishing-summary">
         <div><dt>原计划</dt><dd>{jobTime(job, false, true)}</dd></div>
         {job.initialPublishAt && job.initialPublishAt !== job.spec.originalPublishAt && <div><dt>当前计划</dt><dd>{jobTime(job)}</dd></div>}
         {confirmedAt && <div><dt>YouTube 已确认时间</dt><dd>{jobTime(job, true)}</dd></div>}
+        <div><dt>发布配置</dt><dd>{job.spec.profile.name}</dd></div>
+        <div><dt>大小</dt><dd>{Math.round((report?.prepared?.size || job.spec.asset.size) / 1024 ** 2)} MiB</dd></div>
         <div><dt>文件</dt><dd>{job.spec.asset.filename}</dd></div>
         <div><dt>频道</dt><dd>{job.spec.profile.channelId}</dd></div>
         <div><dt>已上传</dt><dd>{percent}%</dd></div>
-      </dl></details>
+      </dl>
       {controlsAvailable && !cancelling && editing === job.spec.id + "-pause" && <div className="publishing-warning"><p>暂停本地处理后，YouTube 已确认的排期仍会执行。要阻止公开，请取消任务并等待确认。</p><div className="publishing-actions"><button disabled={busy} onClick={async () => { if (await operate(job.spec.id, "pause")) setEditing(""); }}>确认暂停</button><button onClick={() => setEditing("")}>返回</button></div></div>}
       {controlsAvailable && editing === job.spec.id && <div className="publishing-warning"><p>取消任务并清除未公开的排期。设备离线时无法保证阻止公开；本地文件和视频保留。</p><div className="publishing-actions"><button className="btn-danger" disabled={busy} onClick={async () => { if (await operate(job.spec.id, "cancel")) setEditing(""); }}>确认取消</button><button onClick={() => setEditing("")}>保留任务</button></div></div>}
       {controlsAvailable && !cancelling && state !== "needs_attention" && job.spec.desired !== "cancel" && editing === job.spec.id + "-date" && <form className="publishing-reschedule" onSubmit={e => void submitDate(e, job)}><label>新发布时间 · {jobTimezone(job)}<input required disabled={busy} type="datetime-local" value={date} onChange={e => { setDate(e.target.value); setDateError(""); }} /></label>{dateError && <p className="publishing-validation" role="alert">{dateError}</p>}<div className="publishing-actions"><button className="btn-primary" disabled={busy} type="submit">提交改期</button><button type="button" disabled={busy} onClick={() => setEditing("")}>返回</button></div></form>}

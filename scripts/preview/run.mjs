@@ -7,7 +7,7 @@ import { build } from 'esbuild';
 import { parseEnv } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { seed, refresh, control, password, dashboard, agents } from './fixtures.mjs';
+import { seed, refresh, control, password, dashboard, agents, configureChat } from './fixtures.mjs';
 import { guardPreview, authorizePreviewControl, previewCookies } from './security.mjs';
 import { createPublishingPreview } from './publishing.mjs';
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -20,7 +20,7 @@ await seed(root);
 // 仅加载本机显式配置的 DeepSeek 密钥；其他预览配置仍完全隔离。
 try { const local = parseEnv(await readFile(path.join(repo, '.env.local'), 'utf8')); if (process.env.LIVENEST_PREVIEW_REAL_AI === '1' && local.DEEPSEEK_API_KEY) process.env.DEEPSEEK_API_KEY = local.DEEPSEEK_API_KEY; } catch (error) { if (error.code !== 'ENOENT') throw new Error('无法读取本地 AI 环境配置'); }
 const aiBundle = path.join(root, 'ai-runtime.mjs');
-await build({ stdin: { contents: 'export { generateCopy, aiStatus } from "./src/core/broadcast-ai"; export { Store } from "./src/core/storage";', resolveDir: repo, loader: 'ts' }, outfile: aiBundle, bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
+await build({ stdin: { contents: 'export { liveChatConfigSchema } from "./src/shared/live-chat"; export { generateCopy, aiStatus } from "./src/core/broadcast-ai"; export { Store } from "./src/core/storage";', resolveDir: repo, loader: 'ts' }, outfile: aiBundle, bundle: true, platform: 'node', format: 'esm', packages: 'external', logLevel: 'silent' });
 const ai = await import(pathToFileURL(aiBundle).href);
 const aiStore = new ai.Store(path.join(root, 'ai'));
 if (process.env.LIVENEST_PREVIEW_REAL_AI !== '1') delete process.env.DEEPSEEK_API_KEY;
@@ -64,8 +64,9 @@ async function proxy(port, username) {
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
       if (url.pathname === '/api/live-chat' && request.method === 'POST') {
         const value = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...value, action: 'launch' });
-        if (value.action !== 'read') return json(response, 409, { error: '本地预览只展示合成互动记录，不修改真实聊天配置。' });
         const agent = agents.find(agent => agent.id === value.agentId); const instance = agent.instances.find(instance => instance.id === value.instanceId);
+        if (value.action === 'configure') { const config = ai.liveChatConfigSchema.parse(value.config); const status = configureChat(agent, instance, config); await refresh(root); return json(response, 200, status); }
+        if (value.action !== 'read') return json(response, 400, { error: '无效预览操作' });
         return json(response, 200, dashboard(agent, instance).liveChat);
       }
       if (url.pathname === '/api/publishing') {

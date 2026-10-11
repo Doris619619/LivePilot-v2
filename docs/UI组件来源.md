@@ -7,11 +7,11 @@
 
 | 来源 | 当前实现 | 适配 |
 | --- | --- | --- |
-| [shadcn Tabs](https://21st.dev/@shadcn/components/tabs) | 直播四步、AI 互动、管理员页签 | Radix 键盘导航；隐藏面板继续挂载，保留草稿 |
+| [shadcn Tabs](https://21st.dev/@shadcn/components/tabs) | 直播四步、管理员页签 | Radix 键盘导航；隐藏面板继续挂载，保留草稿 |
 | [shadcn Collapsible](https://21st.dev/@shadcn/components/collapsible) | 实例展开、上传区域、故障详情 | CSS grid 高度过渡；关闭时 inert，保留异步状态 |
 | [shadcn Sheet](https://21st.dev/@shadcn/components/sheet) / [Dialog](https://21st.dev/@shadcn/components/dialog) | 窄屏导航、排期编辑、设备与批次移除确认 | 中文标题、焦点返回；提交中禁止遮罩和 Escape 关闭 |
-| [shadcn Popover](https://21st.dev/@shadcn/components/popover) | 登录账户切换 | 门户防止裁切；账户隔离及重新登录逻辑不变 |
-| [shadcn Progress](https://21st.dev/@shadcn/components/progress) | 素材上传、发布完成量 | 修正上游示例未传 Root value 的问题；ARIA 数值与视觉值一致，只使用真实报告 |
+| [shadcn Popover](https://21st.dev/@shadcn/components/popover) | 登录账户切换、客户端更新详情 | 门户防止裁切；账户隔离及重新登录逻辑不变 |
+| [shadcn Progress](https://21st.dev/@shadcn/components/progress) | 素材上传、发布完成量、客户端更新下载 | 修正上游示例未传 Root value 的问题；ARIA 数值与视觉值一致，只使用真实报告 |
 | [Origin UI Stepper](https://21st.dev/@originui/components/stepper/controlled-vertical) | 发布向导受控步骤导航 | 参考步骤圆点及连接线，独立实现横向布局，不将已访问误报为任务完成 |
 | [Image Preview Dropzone](https://21st.dev/@uilayout.contact/components/imgpreview-dropzone) | 封面及素材拖拽选择 | 参考其 react-dropzone 交互，独立实现单文件入口；保留 2 MB 封面上限与 Agent 上传逻辑 |
 | [File Upload Progress List](https://21st.dev/@sean0205/components/c-progress-5) | 文件名、进度、大小、动作分层 | 参考布局，不采用演示计时器或虚构上传速度 |
@@ -31,7 +31,7 @@ shadcn 适配源码：`src/app/components/ui/primitives.tsx`。上游路径为 `
 | 封面 | 原生文件按钮 | 单文件拖拽、选择、替换、校验、16:9 预览 |
 | 素材上传 | 文件按钮和原生进度条 | 拖拽入口、可收起面板、Radix 进度；恢复逻辑不变 |
 | 故障恢复 | 长段说明和技术报告直接占据主区域 | 事实和恢复动作可见，处理说明与报告展开查看 |
-| AI 互动 | 设置、计数、记录连续堆叠 | 设置 / 活动记录页签，滚动消息列表与回复气泡 |
+| AI 互动 | 设置、计数、记录连续堆叠 | 状态、故障与开关常驻；设置、活动记录和帮助默认收起 |
 | 视频发布 | 分散步骤外观 | 统一受控步骤；目录、批次、星期选择和表单分组统一样式 |
 | 排期 | 月历下方插入编辑表单 | 点击事件打开右侧抽屉；月份、时区与计划数据保留 |
 | 我的发布 | 原生进度和空白提示 | 真实完成进度条；空状态提供“发布第一批视频”入口 |
@@ -75,3 +75,11 @@ npm run preview:local
 - 截图均为隔离的示例数据：[工作台](screenshots/ui-refresh-20261010/workspace.jpg)、[排期抽屉](screenshots/ui-refresh-20261010/publishing-sheet.jpg)、[窄屏导航](screenshots/ui-refresh-20261010/publishing-mobile.jpg)、[客户端](screenshots/ui-refresh-20261010/desktop.jpg)。
 
 浏览器模拟不等于 Windows 安装包、真实 OBS 或 YouTube 集成验收。本次 PR 不自动合并、部署或发布安装包。
+
+## 客户流程修正（PR #34，2026-10-10）
+
+- 登录更新区采用紧凑提示布局，复用上表的成熟 Radix/shadcn Progress 与 Popover。版本、失败原因、操作留在正文；次要说明放入浮层。不复制未核实许可证的社区 Banner 源码，也不新增更新确认层。
+- 标题栏更新浮层移除手写定位、外部点击与键盘监听，由 Radix 负责避让、Escape 和焦点恢复。未知下载量显示不确定进度，不冒充 0%。
+- 标题、说明优先，文案生成收进“帮我生成文案”；运行中的开停播操作常驻实例摘要，空闲实例不能结束直播；音乐明确必选，YouTube 状态显示中文。
+- 发布任务默认只显示标题、状态和计划时间；详细阶段、文件及操作展开查看，保留时区与未确认排期提醒。尚未选择电脑与没有电脑使用不同入口。
+- 本地客户端更新样例：`http://127.0.0.1:3020/desktop?scene=login&update=available`；`update=downloading/error/unknown/latest` 检查各状态。预览更新与 AI 开关只修改演示内存，不下载安装器、不发送真实聊天。
