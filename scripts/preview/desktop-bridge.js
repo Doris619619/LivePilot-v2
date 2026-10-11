@@ -4,6 +4,22 @@
   let authenticated = scenario !== 'login';
   const instance = id => ({ id, name: id === 'main' ? '第一路 · 视频直播' : '第二路 · 音乐直播', managed: true, initialized: true, exe: `D:\\LiveNest\\obs\\${id}\\bin\\64bit\\obs64.exe`, port: id === 'main' ? 4455 : 4456 });
   const state = { version: '0.1.2', dataRoot: 'D:\\LiveNest', paired: scenario !== 'first', agentRunning: scenario !== 'first', online: scenario !== 'first', autoStart: false, busy: false, instances: scenario === 'first' ? [] : [instance('main')], candidates: [], checks: [], snapshots: [], update: { status: 'idle', message: '本地预览，发布等待确认' } };
+  const updateScene = new URLSearchParams(location.search).get('update') || 'available';
+  const updates = {
+    available: { status: 'available', version: '0.1.13', message: '可更新至 0.1.13' },
+    downloading: { status: 'downloading', version: '0.1.13', percent: 42, message: '正在下载更新' },
+    unknown: { status: 'downloading', version: '0.1.13', message: '正在下载更新' },
+    error: { status: 'error', stage: 'download', version: '0.1.13', message: '下载中断，请检查网络后重试。' },
+    latest: { status: 'idle', message: '已是最新版本' },
+  };
+  state.version = '0.1.11'; state.update = updates[updateScene] || updates.available;
+  /** 演示更新只修改当前页内存，不下载安装包、不退出实际客户端。 */
+  async function update(action) {
+    if (action === 'update-check') state.update = updates.available;
+    else if (action === 'update-apply') state.update = updates.downloading;
+    else state.update = { status: 'downloaded', version: '0.1.13', message: '演示：更新已准备好，不会重启电脑或应用。' };
+    return { ok: true, state: { version: state.version, busy: false, update: structuredClone(state.update) } };
+  }
   /** 演示正常状态及截图中的未启动问题，可通过真实页面按钮切换。 */
   function refresh() {
     state.checks = ['Windows x64', '数据目录', '磁盘空间', '内置 Node 与 Agent', 'Agent 程序', '内置 OBS', '网页服务'].map((label, n) => ({ id: n === 6 ? 'cloud' : 'base_' + n, label, status: 'ready' }));
@@ -14,6 +30,8 @@
   state.diagnostic = scenario === 'diagnostic';
   /** 配置交互只在当前标签内模拟，刷新可恢复，不访问生产服务。 */
   window.liveNest = {
+    updateState: async () => ({ version: state.version, busy: false, update: structuredClone(state.update) }),
+    update,
     session: async () => ({ authenticated, username: authenticated ? 'Liang' : undefined }),
     login: async username => { if (['ULiang', 'UDo'].includes(username)) return { ok: false, message: '管理员请使用管理员网页端。' }; authenticated = true; return { ok: true }; },
     logout: async () => { authenticated = false; },

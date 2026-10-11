@@ -3,6 +3,15 @@ export class PreviewError extends Error {
   /** 状态码用于本机 HTTP 响应，消息不包含凭据。 */
   constructor(status, message) { super(message); this.status = status; }
 }
+/** 保留多账号登录返回的全部 Cookie；只处理本机预览内存，不写入浏览器或日志。 */
+export function previewCookies(previous, headers) {
+  const values = new Map(previous.split(';').map(value => value.trim()).filter(Boolean).map(value => { const index = value.indexOf('='); return [value.slice(0, index), value.slice(index + 1)]; }));
+  for (const item of headers.getSetCookie()) {
+    const pair = item.split(';')[0]; const index = pair.indexOf('='); const name = pair.slice(0, index); const value = pair.slice(index + 1);
+    if (!value || /Max-Age=0(?:;|$)/i.test(item)) values.delete(name); else values.set(name, value);
+  }
+  return [...values].map(([name, value]) => name + '=' + value).join('; ');
+}
 /** 在改写上游 Origin 之前校验浏览器的原始来源。 */
 export function guardPreview(request, port) {
   const host = `127.0.0.1:${port}`;

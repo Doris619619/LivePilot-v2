@@ -1,12 +1,14 @@
 /** 网页与桌面共用就地恢复卡；只有调用方提供的白名单动作可以执行。 */
 "use client";
 import { useState } from "react";
+import { Reveal } from "./ui/primitives";
 import { guidance, problemSummary, type Problem, type ProblemAction } from "../../shared/problems";
 import { problemPresentation } from "../../shared/problem-policy";
 type Props = { problem: Problem; objectName?: string; disabled?: boolean; onRefresh?: () => void; onLogin?: () => void; onAuthorize?: () => void; onSettings?: () => void; onHelp?: () => void };
 /** 客户问题仅显示事实与操作；非阻塞检查只进入折叠的技术报告。 */
 export default function ProblemCard({ problem, objectName, disabled, onRefresh, onLogin, onAuthorize, onSettings, onHelp }: Props) {
   const [copied, setCopied] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const info = guidance(problem);
   const presentation = problemPresentation(problem);
   const handlers: Partial<Record<ProblemAction, (() => void) | undefined>> = { login:onLogin, refresh:onRefresh, authorize:onAuthorize, settings:onSettings, help:onHelp };
@@ -21,8 +23,9 @@ export default function ProblemCard({ problem, objectName, disabled, onRefresh, 
     <strong>{objectName && objectName + " · "}{info.title}</strong>
     <p>{customerMessage}</p>
     {problem.outcome === "unknown" && <p>结果尚未确认，请先查询，避免重复操作。</p>}
-    <p>{info.steps[0]}</p>
+
     <div className="problem-actions">{problem.actions.filter(action=>handlers[action]).map(action=><button type="button" key={action} disabled={disabled} onClick={handlers[action]}>{labels[action]}</button>)}</div>
-    {report}
+    <button type="button" className="problem-detail-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起处理说明" : "处理说明与技术报告"}</button>
+    <Reveal open={expanded}><p>{info.steps[0]}</p>{report}</Reveal>
   </section>;
 }

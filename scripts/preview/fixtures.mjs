@@ -11,6 +11,9 @@ export const agents = [
 ];
 const live = new Set();
 const selections = new Map();
+const chatConfigs = new Map();
+/** 演示配置只在本次预览内存保存，不调用真实聊天或 AI。 */
+export function configureChat(agent, instance, config) { chatConfigs.set(agent.id + ':' + instance.id, config); return dashboard(agent, instance).liveChat; }
 /** 可视化用直播状态，所有频道、素材和时间均为示例，不执行 OBS。 */
 export function dashboard(agent, instance) {
   const streaming = live.has(agent.id + ':' + instance.id);
@@ -18,7 +21,7 @@ export function dashboard(agent, instance) {
   return { busy: false, state: { phase: streaming ? 'live' : 'idle', stage: streaming ? '演示直播中' : '等待开始', updatedAt: new Date().toISOString(), selection: selections.get(agent.id + ':' + instance.id) || { video: '海边日落.mp4', music: '夜晚钢琴.mp3', videoAudio: false }, ...(streaming ? { startedAt: new Date(Date.now() - 3723000).toISOString() } : {}) },
     obs: { ready: !error, running: true, streaming, durationMs: streaming ? 3723000 : 0, scene: 'LIVE', version: '32.2.2', ...(error ? { message: '演示：OBS WebSocket 密码不匹配，请检查连接设置。' } : {}) },
     youtube: { connected: true, channel: instance.id === 'obs_2' ? '演示 · Calm Piano' : '演示 · Ocean Studio', channelId: 'demo_' + agent.id + '_' + instance.id, lifecycle: streaming ? 'live' : 'complete', ingest: streaming ? 'active' : 'inactive' },
-    media: { videos: ['海边日落.mp4', '雨夜城市.mp4', '山间云海.mp4'], music: ['夜晚钢琴.mp3', '轻柔爵士.mp3'] }, configuration: { broadcastDetails: true, missing: [], privacy: 'public', madeForKids: false } };
+    media: { videos: ['海边日落.mp4', '雨夜城市.mp4', '山间云海.mp4'], music: ['夜晚钢琴.mp3', '轻柔爵士.mp3'] }, liveChat: { config: chatConfigs.get(agent.id + ':' + instance.id) || { enabled: true, preset: 'gentle', customPrompt: '', intervalSeconds: 5 }, configured: true, state: chatConfigs.get(agent.id + ':' + instance.id)?.enabled === false ? 'disabled' : streaming ? 'running' : 'waiting_live', message: '演示记录 · 不会发送到真实聊天', sent: 2, skipped: 0, queued: 0, recent: [{ id: 'demo_message', author: '演示观众', text: '这首音乐很适合读书。', reply: '[AI] 谢谢你，愿这些旋律陪你度过安静的阅读时光。', status: 'sent', at: Date.now() }], updatedAt: Date.now() }, configuration: { liveChat: true, broadcastDetails: true, missing: [], privacy: 'public', madeForKids: false } };
 }
 /** 原子替换演示心跳，避免预览刷新恰好读到半个 JSON。 */
 async function json(filename, value) { await mkdir(path.dirname(filename), { recursive: true }); const temp = filename + '.' + randomBytes(8).toString('hex') + '.tmp'; await writeFile(temp, JSON.stringify(value)); await rename(temp, filename); }

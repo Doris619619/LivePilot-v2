@@ -17,6 +17,7 @@ type Guidance = { title: string; steps: string[]; actions: ProblemAction[] };
 const obsSettings = "在对应直播电脑的 OBS 中打开“工具 → WebSocket 服务器设置”，核对启用状态、端口和密码，再重新检查。";
 const network = "在直播电脑检查系统网络与代理是否能访问该服务；网页能打开不代表直播电脑能访问。处理后重新查询。";
 const catalog: Record<string, Guidance> = {
+  CHAT_ENVIRONMENT: { title: "AI 互动配置暂未同步", steps: ["客户端会自动重试。持续失败时请联系管理员检查 AI 服务配置；直播控制不受影响。"], actions: ["support"] },
   AUTH: {title:"需要重新登录",steps:["使用客户账号重新登录。登录状态变化不会停止 OBS。"],actions:["login"]},
   FORBIDDEN: {title:"当前账号无权访问这台电脑",steps:["核对当前登录账号。仍绑定其他客户的设备需要使用对应客户账号，或由管理员确认归属。"],actions:["login","refresh"]},
   AGENT_DELETED: {title:"设备已删除，需要重新配对",steps:["在网页添加直播电脑并生成新配对码，然后在本机粘贴连接。"],actions:["refresh"]},

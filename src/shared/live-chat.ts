@@ -22,6 +22,7 @@ export const liveChatStatusSchema = z.object({
   message: z.string().max(500), sent: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(),
   queued: z.number().int().min(0).max(100), recent: z.array(liveChatEntrySchema).max(30),
   nextRetryAt: z.number().int().nonnegative().optional(), updatedAt: z.number().int().nonnegative(),
+  recoveryAction: z.enum(["authorize", "contact_admin", "check_storage"]).optional(),
 });
 export type LiveChatStatus = z.infer<typeof liveChatStatusSchema>;
 export type LiveChatMessage = { id: string; authorId: string; author: string; text: string; publishedAt: number; type: string; firstMessage?: boolean };

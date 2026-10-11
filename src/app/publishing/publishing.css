@@ -186,12 +186,6 @@
   .publishing-preview-row > button { grid-column: 3; grid-row: 1 / 3; }
 }
 @media (max-width: 760px) {
-  .publishing-sidebar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
-  .publishing-sidebar nav { grid-column: 1; }
-  .publishing-settings-navigation { margin: 0; padding: 0; border: 0; grid-column: 2; grid-row: 1; }
-  .publishing-admin-navigation { padding-top: 4px; margin: 0; grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
-  .publishing-admin-navigation .sidebar-heading { margin: 0; padding: 0 12px; font-size: 12px; }
-  .publishing-admin-navigation button.sidebar-link { width: auto; font-size: 14px; }
   .publishing-steps { gap: 8px; margin-bottom: 24px; }
   .publishing-shell .publishing-step-button { flex-direction: column; justify-content: center; gap: 6px; padding: 8px 2px 12px; }
   .publishing-step-button > span:last-child { display: block; font-size: 12px; white-space: nowrap; }
@@ -204,8 +198,6 @@
   .publishing-weekly-row { grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
   .publishing-weekly-times input { width: 112px; }
   .publishing-execution-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px 12px; }
-  .publishing-sidebar nav { display: flex; flex-wrap: nowrap; gap: 4px; overflow-x: auto; max-width: 100%; scrollbar-width: thin; }
-  .publishing-sidebar button.sidebar-link { width: auto; flex: none; }
   .publishing-fields { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .publishing-target label, .publishing-profile-picker label { min-width: 100%; }
   .publishing-target > button { margin-left: auto; }
