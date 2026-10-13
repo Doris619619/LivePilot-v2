@@ -22,15 +22,16 @@ const secondAccountId = "22222222-2222-4222-8222-222222222222";
 done.job.spec.profile = { ...profile, accountId: secondAccountId, channelId: "second_channel" }; done.plan.profile = done.job.spec.profile;
 const view = { accounts: [{ id: accountId, agentId: "pc", instanceId: "main", name: "测试账号", channelId: profile.channelId, channel: "测试频道", owner: "alice", status: "connected", createdAt: 1, updatedAt: 1 }], profiles: [profile], plans: [active.plan, done.plan], jobs: [active.job, done.job, legacy.job], removals: [], cleanups: [], policy, consent: { version: "2026-10-01" }, administrator: false };
 view.accounts.push({ ...view.accounts[0], id: secondAccountId, channelId: "second_channel", channel: "另一频道" });
-const requests = []; const errors = []; let rejectNext = true;
+const requests = []; const errors = []; let rejectNext = true; let devices; let inventoryFails = false; let holdInventory = false; let inventoryStarted; const heldInventory = [];
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); page.on("pageerror", error => errors.push(error.message));
+await page.clock.install();
 /** 白名单 mock 保证删除确认只能写到合成批次，所有意外操作直接失败。 */
 await page.route(origin + "/api/**", async route => {
   const url = new URL(route.request().url()); let result;
   if (url.pathname === "/api/session") result = { user: { username: "alice", role: "customer" } };
   else if (url.pathname === "/api/accounts") result = { accounts: [{ username: "alice", role: "customer", current: true }] };
-  else if (url.pathname === "/api/instances") result = { instances: [{ id: "main", name: "Main", agentId: "pc", agentName: "测试电脑" }] };
+  else if (url.pathname === "/api/instances") { if (holdInventory) await new Promise(resolve => { heldInventory.push(resolve); inventoryStarted?.(); }); if (inventoryFails) { await route.fulfill({ status: 503, json: { error: "Synthetic device read unavailable" } }); return; } result = { agents: devices, instances: [{ id: "main", name: "Main", agentId: "pc", agentName: "测试电脑" }] }; }
   else if (url.pathname === "/api/agents/pc/publishing-directory") result = { root: "D:\\Synthetic\\Publishing" };
   else if (url.pathname === "/api/publishing" && route.request().method() === "GET") result = view;
   else if (url.pathname === "/api/publishing") {
@@ -65,8 +66,30 @@ try {
   assert.equal(await page.getByRole("button", { name: "改期", exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "提交改期", exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "归档批次", exact: true }).count(), 0);
+  devices = [{ id: "pc", online: false, maintenance: false }];
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("设备离线，打开这台电脑的 LiveNest 后会继续删除。", { exact: true }).waitFor();
+  await page.setViewportSize({ width: 320, height: 950 }); await page.screenshot({ path: path.join(output, "offline-detail-320.png"), fullPage: true }); await page.setViewportSize({ width: 1440, height: 1000 });
+  devices[0].online = true;
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("删除待确认。未确认前，已排期的视频仍可能公开。", { exact: true }).waitFor();
+  assert.equal(await page.getByText("设备离线，打开这台电脑的 LiveNest 后会继续删除。", { exact: true }).count(), 0);
+  devices[0].maintenance = true;
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("设备正在维护，完成后会继续删除。", { exact: true }).waitFor();
+  devices = undefined;
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("删除待确认。未确认前，已排期的视频仍可能公开。", { exact: true }).waitFor();
+  devices = [{ id: "pc", online: false, maintenance: false }];
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("设备离线，打开这台电脑的 LiveNest 后会继续删除。", { exact: true }).waitFor();
+  inventoryFails = true; await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.getByText("删除待确认。未确认前，已排期的视频仍可能公开。", { exact: true }).waitFor();
+  assert.equal(await page.getByText("设备离线，打开这台电脑的 LiveNest 后会继续删除。", { exact: true }).count(), 0); inventoryFails = false;
   await page.getByRole("button", { name: "返回总览" }).click();
   assert.equal(await card().isVisible(), true);
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await card().getByText("等待设备上线", { exact: true }).waitFor();
+  await card().getByText("设备离线，打开这台电脑的 LiveNest 后会继续删除。", { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, "offline-overview-1440.png"), fullPage: true });
+  active.job.observed.revision = active.job.spec.revision; active.job.observed.state = "needs_attention"; active.job.observed.message = "合成取消失败，请核对原频道。";
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await card().getByText("删除需处理", { exact: true }).waitFor(); await card().getByText(active.job.observed.message, { exact: true }).waitFor();
+  await card().getByRole("button", { name: "查看详情" }).click(); await page.getByText("操作与详情", { exact: true }).click(); await page.getByRole("button", { name: "取消任务", exact: true }).waitFor();
+  await page.getByRole("button", { name: "返回总览" }).click(); active.job.observed.revision--; active.job.observed.state = "scheduled"; delete active.job.observed.message;
+  devices[0].online = true; await page.getByRole("button", { name: "刷新发布状态" }).click(); await card().getByText("删除待确认", { exact: true }).waitFor();
   for (const width of [320, 390, 1024, 1440]) {
     await page.setViewportSize({ width, height: 950 }); const button = page.getByRole("article", { name: "批次 " + done.name }).getByRole("button", { name: "删除批次：" + done.name });
     await button.scrollIntoViewIfNeeded(); const bounds = await button.boundingBox(); assert.ok(bounds && bounds.width >= 44 && bounds.height >= 44);
@@ -78,10 +101,13 @@ try {
   await page.getByRole("article", { name: "批次 " + done.name }).waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "删除批次：视频任务 · " + legacy.name }).click(); await dialog.getByRole("button", { name: "确认删除" }).click();
   await page.getByRole("article", { name: "批次 视频任务 · " + legacy.name }).waitFor({ state: "hidden" });
+  const started = new Promise(resolve => { inventoryStarted = resolve; }); holdInventory = true;
+  await page.getByRole("button", { name: "刷新发布状态" }).click(); await page.clock.runFor(10001); await started;
   const removal = view.removals.find(value => value.batchId === active.id); removal.completedAt = Date.now(); active.job.observed.state = "cancelled"; active.job.observed.revision = active.job.spec.revision;
-  await page.getByRole("button", { name: "刷新发布状态" }).click(); await card().waitFor({ state: "hidden" });
+  await page.clock.runFor(11001); await card().waitFor({ state: "hidden", timeout: 3000 }); assert.ok(heldInventory.length > 0);
+  holdInventory = false; for (const release of heldInventory.splice(0)) release();
   await page.getByRole("button", { name: "历史", exact: true }).click(); await page.getByText(done.name + " 视频", { exact: true }).waitFor();
-  await page.getByRole("button", { name: "查看" + done.name + " 视频详情" }).click(); await page.getByText("批次已移出总览，历史记录保留。", { exact: true }).waitFor();
+  await page.getByRole("button", { name: "查看" + done.name + " 视频详情" }).click(); await page.getByText("批次已移除 · YouTube 视频保留", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "核对状态", exact: true }).count(), 0); assert.equal(view.jobs.length, 3); assert.equal(view.plans.length, 2);
   await page.getByRole("combobox", { name: "发布频道" }).selectOption(profile.channelId);
   assert.equal(await page.getByRole("combobox", { name: "发布频道" }).inputValue(), profile.channelId);
@@ -91,6 +117,6 @@ try {
   await page.evaluate(({ id, accountId, rule }) => localStorage.setItem("livenest-publishing-draft:alice:pc:main:" + accountId, JSON.stringify({ planId: id, batchId: "e".repeat(64), step: 4, rule })), { id: active.id, accountId, rule });
   await page.reload(); await page.getByRole("heading", { name: "准备素材", exact: true }).waitFor();
   assert.equal(requests.length, 4); assert.deepEqual(errors, []);
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, widths: [320, 390, 1024, 1440], requests: requests.length, synthetic: true }, null, 2));
-  process.stdout.write("Batch removal UI passed: visible actions, keyboard confirmation, failed submission, pending/complete, legacy/history/draft, four widths.\n");
-} finally { await browser.close(); }
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, widths: [320, 390, 1024, 1440], requests: requests.length, deviceFeedback: ["offline", "online", "maintenance", "unknown", "read-failure", "cancel-failure", "slow-inventory-does-not-block-completion"], synthetic: true }, null, 2));
+  process.stdout.write("Batch removal UI passed: visible actions, keyboard confirmation, failed submission, offline/online/maintenance/unknown feedback, cancellation retry entry, pending/complete, legacy/history/draft, four widths.\n");
+} finally { for (const release of heldInventory) release(); await browser.close(); }

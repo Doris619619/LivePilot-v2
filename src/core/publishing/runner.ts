@@ -65,7 +65,7 @@ export class PublishingRunner {
   async apply(value: JobSpec) {
     const next = this.accepting.then(() => this.applyOnce(value)); this.accepting = next.catch(() => {}); return next;
   }
-  /** 串行检查版本和落盘，防止同时接收两条修订时旧版本覆盖新版本。 */
+  /** 串行检查版本和落盘；取消沿用旧上传关联，不被离线期间尚未送达的改期差异拦截。 */
   private async applyOnce(value: JobSpec) {
     await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
@@ -81,7 +81,7 @@ export class PublishingRunner {
     }
     if (old) {
       delete old.reconciliation;
-      const rescheduled = old.spec.originalPublishAt !== spec.originalPublishAt;
+      const rescheduled = spec.desired !== "cancel" && old.spec.originalPublishAt !== spec.originalPublishAt;
       const rescheduleRejected = rescheduled && (publishingTerminal(old.report.state) || old.report.state === "needs_attention");
       if (rescheduled && !rescheduleRejected && old.report.videoId) old.reschedulePreviousAt ??= old.report.effectivePublishAt || old.spec.originalPublishAt;
       old.spec = spec; if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;

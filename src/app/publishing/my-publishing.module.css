@@ -18,6 +18,8 @@
 .packageCount { flex: none; margin-left: auto; padding: 4px 10px; border: 1px solid var(--channel-border); border-radius: var(--radius-pill); background: var(--surface-base); color: var(--text-secondary); font-size: 14px; }
 .batch { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(240px, 1.25fr) minmax(180px, .8fr); align-items: center; gap: 24px; padding: 20px 24px; border-bottom: 1px solid var(--border-subtle); }
 .batch:last-child { border-bottom: 0; }
+.removalFeedback { grid-column: 1 / -1; margin: 0; padding: 12px 16px; border-radius: var(--radius-xs); background: var(--warning-amber-subtle); color: var(--text-primary); font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.removalFeedback.error { background: var(--error-rose-subtle); color: var(--error-rose); }
 .batchHeading { min-width: 0; display: grid; justify-items: start; gap: 8px; }
 .batchHeading h3 { font-size: 16px; font-weight: 500; overflow-wrap: anywhere; }
 .status { font-size: 14px; line-height: 1.5; padding: 3px 8px; border-radius: var(--radius-xs); background: var(--surface-hover); color: var(--text-secondary); }

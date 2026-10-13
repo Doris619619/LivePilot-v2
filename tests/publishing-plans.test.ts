@@ -9,11 +9,11 @@ vi.mock("@/cloud/tasks", async importOriginal => ({ ...await importOriginal<type
 import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, setAgentOwner } from "@/cloud/agents";
 import { cloudStore } from "@/cloud/store";
 import { accessStore, emptyAccess } from "@/server/access";
-import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, completePublishingCleanup, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
+import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, completePublishingCleanup, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, removePublishingBatch, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
 import { occupiedPublishingSlots, schedulePlanSlots } from "@/core/publishing/schedule";
 import { AppError } from "@/core/errors";
 import { makeProblem } from "@/shared/problems";
-import { defaultPolicy, PRIVACY_VERSION, type PackageBatch, type PublishingPlanRule } from "@/shared/publishing";
+import { canRepublishPublishingJob, defaultPolicy, PRIVACY_VERSION, type PackageBatch, type PublishingPlan, type PublishingPlanRule, type VideoJob } from "@/shared/publishing";
 import { fixtureJob } from "./publishing-fixtures";
 import { createPublishingAccount, claimPublishingAccount } from "@/cloud/publishing-accounts";
 let root: string; let batch: PackageBatch; let profile: ReturnType<typeof fixtureJob>["profile"];
@@ -106,6 +106,96 @@ it("hides plans and blocks former-owner edits after device reassignment", async 
 it("requires explicit replacement for a cancelled old remote video and keeps the old linkage", async () => {
   const first = await preview(); const jobs = await confirmPublishingPlan(alice, first.id, 1, false, true); for (const job of jobs) { const cancelled = await changePublishingJob(alice, job.spec.id, "cancel"); await reportPublishing("pc", [{ id: job.spec.id, revision: cancelled.spec.revision, sequence: 1, state: "cancelled", videoId: "old_video_" + job.spec.index, offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); }
   batch.version = "e".repeat(64); for (const pkg of batch.packages) pkg.version = "f".repeat(64); const second = await preview(); await expect(confirmPublishingPlan(alice, second.id, 1, false, true)).rejects.toMatchObject({ code: "DUPLICATE" }); const replacements = await confirmPublishingPlan(alice, second.id, 1, false, true, jobs.map(job => job.spec.id)); expect(replacements).toHaveLength(2); expect((await publishingView(alice)).jobs.filter(job => job.observed?.videoId)).toHaveLength(2);
+});
+/** 先确认合成最终文件再提交进度，遵守既有发布包报告顺序。 */
+async function prepareForRepublishing(job: VideoJob) {
+  await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state: "uploading", offset: 0, total: job.spec.asset.size, prepared: { size: job.spec.asset.size, version: job.spec.contentPackage!.version, sha256: "f".repeat(64) }, updatedAt: Date.now() }]);
+}
+/** 完成观察通过原报告入口保存，供再次发布验证，不进行真实 YouTube 操作。 */
+async function finishForRepublishing(jobs: VideoJob[]) {
+  for (const job of jobs) { await prepareForRepublishing(job); await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 2, state: "published", videoId: "old_video_" + job.spec.index, observedPrivacy: "public", effectivePublishAt: job.spec.originalPublishAt, offset: job.spec.asset.size, total: job.spec.asset.size, updatedAt: Date.now() }]); }
+}
+/** 合成持久历史变化仅用于验证事务内再次核对；不触碰客户或真实远端视频。 */
+async function reviseStoredPublishingJob(id: string, change: (job: VideoJob) => void) {
+  const state = (await publishingStore().read<{ jobs: VideoJob[]; plans: PublishingPlan[] }>("state.json"))!;
+  change(state.jobs.find(job => job.spec.id === id)!); await publishingStore().write("state.json", state);
+}
+it("requires deliberate repeat publication, creates independent jobs and preserves removed public history", async () => {
+  const original = await preview(); const old = await confirmPublishingPlan(alice, original.id, original.revision, false, true); await finishForRepublishing(old);
+  expect((await removePublishingBatch(alice, original.id)).state).toBe("complete"); const historical = (await publishingView(alice)).jobs;
+  const next = await preview(); await expect(confirmPublishingPlan(alice, next.id, next.revision, false, true)).rejects.toMatchObject({ code: "DUPLICATE" });
+  const ids = old.map(job => job.spec.id); const repeated = await confirmPublishingPlan(alice, next.id, next.revision, false, true, [], ids);
+  expect(repeated).toHaveLength(2); expect(repeated.map(job => job.spec.batchId)).toEqual([next.id, next.id]); expect(repeated.every(job => !ids.includes(job.spec.id) && !job.observed && !job.hadUpload)).toBe(true);
+  const current = await publishingView(alice); expect(current.jobs.filter(job => ids.includes(job.spec.id))).toEqual(historical); expect(current.plans.find(plan => plan.id === next.id)?.republishJobIds).toEqual(ids); expect(current.removals.find(value => value.batchId === original.id)?.completedAt).toBeDefined();
+  expect((await confirmPublishingPlan(alice, next.id, next.revision, false, true, [], ids)).map(job => job.spec.id)).toEqual(repeated.map(job => job.spec.id));
+  expect((await confirmPublishingPlan(alice, next.id, next.revision, false, true)).map(job => job.spec.id)).toEqual(repeated.map(job => job.spec.id)); expect((await publishingView(alice)).jobs).toHaveLength(4);
+  const third = await preview(); await expect(confirmPublishingPlan(alice, third.id, third.revision, false, true, [], ids)).rejects.toMatchObject({ code: "DUPLICATE" });
+});
+it("deduplicates concurrent confirmations of the same deliberate repeat plan", async () => {
+  const first = await preview(); const old = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing(old); const next = await preview(); const ids = old.map(job => job.spec.id);
+  const [one, two] = await Promise.all([confirmPublishingPlan(alice, next.id, next.revision, false, true, [], ids), confirmPublishingPlan(alice, next.id, next.revision, false, true, [], ids)]);
+  expect(one.map(job => job.spec.id)).toEqual(two.map(job => job.spec.id)); expect((await publishingView(alice)).jobs.filter(job => job.spec.batchId === next.id)).toHaveLength(2);
+  expect((await publishingView(alice)).plans.find(plan => plan.id === next.id)?.republishJobIds).toEqual(ids);
+});
+it.each(["private", "unlisted", "public"] as const)("allows explicitly repeating a valid completed %s video", async privacy => {
+  batch = packageBatch(1); if (privacy !== "public") profile = await savePublishingProfile(alice, { ...profile, privacy, scheduled: false, revision: profile.revision + 1 });
+  const first = await preview(); const [old] = await confirmPublishingPlan(alice, first.id, first.revision, false, true);
+  await prepareForRepublishing(old); await reportPublishing("pc", [{ id: old.spec.id, revision: old.spec.revision, sequence: 2, state: "completed", videoId: "completed_video", observedPrivacy: privacy, offset: old.spec.asset.size, total: old.spec.asset.size, updatedAt: Date.now() }]);
+  const next = await preview(); expect(await confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old.spec.id])).toHaveLength(1);
+  expect((await publishingView(alice)).jobs.find(job => job.spec.id === old.spec.id)?.observed?.videoId).toBe("completed_video");
+});
+it.each(["ready", "uploading", "processing", "finalizing", "scheduled", "needs_attention", "retry_wait", "failed", "paused", "cancelled"] as const)("rejects an explicit republish allowlist for a %s task", async state => {
+  batch = packageBatch(1); const first = await preview(); const [old] = await confirmPublishingPlan(alice, first.id, first.revision, false, true);
+  await reportPublishing("pc", [{ id: old.spec.id, revision: old.spec.revision, sequence: 1, state, offset: 0, total: old.spec.asset.size, updatedAt: Date.now() }]); const next = await preview();
+  await expect(confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old.spec.id])).rejects.toMatchObject({ code: "REPUBLISH" });
+  const current = await publishingView(alice); expect(current.jobs).toHaveLength(1); expect(current.plans.find(plan => plan.id === next.id)?.confirmedAt).toBeUndefined(); expect(current.plans.find(plan => plan.id === next.id)?.republishJobIds).toBeUndefined();
+});
+it.each(["stale-public", "pending-cancellation", "invalid-authorization", "unconfirmed-completed"] as const)("rejects repeat publication when the old result is %s", async kind => {
+  batch = packageBatch(1); const first = await preview(); const [old] = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing([old]);
+  await reviseStoredPublishingJob(old.spec.id, job => {
+    if (kind === "stale-public" || kind === "pending-cancellation") { job.spec.revision++; if (kind === "pending-cancellation") job.spec.desired = "cancel"; }
+    if (kind === "invalid-authorization") job.observed!.authorizationInvalid = true;
+    if (kind === "unconfirmed-completed") { job.observed!.state = "completed"; job.observed!.observedPrivacy = "private"; }
+  });
+  const next = await preview(); await expect(confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old.spec.id])).rejects.toMatchObject({ code: "REPUBLISH" }); expect((await publishingView(alice)).jobs).toHaveLength(1);
+});
+it.each(["unknown", "other-owner", "other-agent", "other-channel", "other-package", "excluded"] as const)("rejects foreign or irrelevant repeat-publication evidence: %s", async kind => {
+  const first = await preview(); const old = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing(old);
+  if (!["unknown", "excluded"].includes(kind)) await reviseStoredPublishingJob(old[0].spec.id, job => {
+    if (kind === "other-owner") job.spec.owner = "bob";
+    if (kind === "other-agent") job.spec.profile.agentId = "another_pc";
+    if (kind === "other-channel") job.spec.profile.channelId = "another_channel";
+    if (kind === "other-package") job.spec.contentPackage!.id = "f".repeat(64);
+  });
+  let next = await preview(); if (kind === "excluded") next = await updatePublishingPlan(alice, next.id, next.revision, next.items.map((item, index) => ({ ...item, excluded: index === 0 })));
+  const ids = kind === "unknown" ? [randomUUID()] : old.map(job => job.spec.id);
+  await expect(confirmPublishingPlan(alice, next.id, next.revision, false, true, [], ids)).rejects.toMatchObject({ code: "REPUBLISH" }); expect((await publishingStore().read<{ jobs: VideoJob[] }>("state.json"))!.jobs).toHaveLength(2);
+});
+it("does not let another customer explicitly repeat a device owner's videos", async () => {
+  const first = await preview(); const old = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing(old); const next = await preview();
+  await expect(confirmPublishingPlan({ username: "bob", role: "customer" }, next.id, next.revision, false, true, [], old.map(job => job.spec.id))).rejects.toMatchObject({ code: "FORBIDDEN" }); expect((await publishingView(alice)).jobs).toHaveLength(2);
+});
+it("rechecks repeat-publication evidence after the final Agent scan returns", async () => {
+  batch = packageBatch(1); const first = await preview(); const [old] = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing([old]); const next = await preview();
+  let finishScan!: (value: unknown) => void; let scanning!: () => void; const started = new Promise<void>(resolve => { scanning = resolve; });
+  remote.rpc.mockImplementationOnce(() => { scanning(); return new Promise(resolve => { finishScan = resolve; }); });
+  const pending = confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old.spec.id]); const rejection = expect(pending).rejects.toMatchObject({ code: "REPUBLISH" }); await started;
+  await reviseStoredPublishingJob(old.spec.id, job => { job.spec.revision++; job.spec.desired = "cancel"; }); finishScan({ root: "Synthetic/Publishing/Inbox", batches: [structuredClone(batch)], thumbnails: [], channelId: profile.channelId });
+  await rejection; const current = await publishingView(alice); expect(current.jobs).toHaveLength(1); expect(current.plans.find(plan => plan.id === next.id)?.republishJobIds).toBeUndefined();
+});
+it("preserves independent confirmation and allows combining completed repeats with changed cancelled replacements", async () => {
+  const first = await preview(); const old = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing([old[0]]);
+  const cancelling = await changePublishingJob(alice, old[1].spec.id, "cancel"); await reportPublishing("pc", [{ id: old[1].spec.id, revision: cancelling.spec.revision, sequence: 1, state: "cancelled", videoId: "cancelled_original", observedPrivacy: "private", offset: 0, total: old[1].spec.asset.size, updatedAt: Date.now() }]);
+  batch.version = "e".repeat(64); batch.packages[1].version = "f".repeat(64); const next = await preview();
+  await expect(confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old[0].spec.id])).rejects.toMatchObject({ code: "DUPLICATE" });
+  const repeated = await confirmPublishingPlan(alice, next.id, next.revision, false, true, [old[1].spec.id], [old[0].spec.id]); expect(repeated).toHaveLength(2);
+  expect((await publishingView(alice)).jobs.filter(job => old.some(previous => previous.spec.id === job.spec.id)).map(job => job.observed?.videoId)).toEqual(["old_video_1", "cancelled_original"]);
+});
+it("retains durable published evidence for explicit repeat after remote API cache expiry", async () => {
+  batch = packageBatch(1); const first = await preview(); const [old] = await confirmPublishingPlan(alice, first.id, first.revision, false, true); await finishForRepublishing([old]);
+  vi.setSystemTime(new Date("2026-11-02T00:00:00Z")); await publishingTick(); const historical = (await publishingView(alice)).jobs[0]; expect(historical.observed?.videoId).toBeUndefined(); expect(canRepublishPublishingJob(historical)).toBe(true);
+  const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []);
+  const next = await preview(); expect(await confirmPublishingPlan(alice, next.id, next.revision, false, true, [], [old.spec.id])).toHaveLength(1); expect((await publishingView(alice)).jobs[0]).toEqual(historical);
 });
 it("archives only true published/completed batches, records pending failures and retries safely", async () => {
   const plan = await preview(); const jobs = await confirmPublishingPlan(alice, plan.id, 1, false, true); await expect(archivePublishingPlan(alice, plan.id)).rejects.toMatchObject({ code: "ARCHIVE" }); for (const job of jobs) await reportPublishing("pc", [{ id: job.spec.id, revision: 1, sequence: 1, state: "published", observedPrivacy: "public", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]);

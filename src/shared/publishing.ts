@@ -27,7 +27,8 @@ export const planItemSchema = z.object({ packageId: z.string().regex(/^[a-f0-9]{
 export type PublishingPlanItem = z.infer<typeof planItemSchema>;
 /** 整批移出总览须等待当前任务的真实安全结果；用户内容与历史记录不随标记删除。 */
 export type PublishingBatchRemoval = { batchId: string; requestedAt: number; completedAt?: number; name?: string };
-export type PublishingPlan = { id: string; revision: number; owner: string; actor: string; profile: PublishingProfile; batch: PackageBatch; rule: PublishingPlanRule; items: PublishingPlanItem[]; copies: { packageId: string; title: string; description: string }[]; skippedOccupied: number; skipped: string[]; createdAt: number; confirmedAt?: number; archivedAt?: number; archivePending?: boolean; schedulePreviewId?: string; scheduleLockedPackageIds?: string[] };
+/** 再次发布的明确确认只记录于 Cloud 计划，不修改旧视频或 Agent 上传协议。 */
+export type PublishingPlan = { id: string; revision: number; owner: string; actor: string; profile: PublishingProfile; batch: PackageBatch; rule: PublishingPlanRule; items: PublishingPlanItem[]; copies: { packageId: string; title: string; description: string }[]; skippedOccupied: number; skipped: string[]; createdAt: number; confirmedAt?: number; republishJobIds?: string[]; archivedAt?: number; archivePending?: boolean; schedulePreviewId?: string; scheduleLockedPackageIds?: string[] };
 /** Agent 先报告经过完整 Hash 验证的最终文件，再报告上传进度；不暴露本机路径。 */
 export const preparedUploadSchema = z.object({ version: z.string().regex(/^[a-f0-9]{64}$/), size: z.number().int().positive().max(256 * 1024 ** 3), sha256: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 export type PreparedUpload = z.infer<typeof preparedUploadSchema>;
@@ -53,6 +54,13 @@ export const publishingReportSchema = z.object({ id: z.string().uuid(), revision
 export type PublishingReport = z.infer<typeof publishingReportSchema>;
 /** 预算等候由 Cloud 自动重试；可选标记兼容旧记录，不改变 Agent 上传状态机。 */
 export type VideoJob = { spec: JobSpec; initialPublishAt?: string; pendingPublishAt?: string; pendingPublishAts?: string[]; hadUpload?: boolean; blockReason?: string; budgetWaiting?: true; observed?: PublishingReport; delivery?: { id: string; revision: number }; prepared?: PreparedUpload; createdAt: number };
+/** 只有当前修订的真实完成事实可供用户明确再次发布；取消等待、未知上传和授权异常均不算。 */
+export function canRepublishPublishingJob(job: VideoJob) {
+  const report = job.observed;
+  if (!report || report.revision !== job.spec.revision || report.authorizationInvalid) return false;
+  if (report.state === "published") return true;
+  return report.state === "completed" && (report.observedPrivacy === "public" || !job.spec.profile.scheduled && ["private", "unlisted"].includes(job.spec.profile.privacy));
+}
 export const assetsResultSchema = z.object({ assets: z.array(assetSchema).max(10000), thumbnails: z.array(safeName).max(10000), channelId: z.string().optional(), channel: z.string().optional() }).strict();
 /** 终态任务不继续自动执行或自动重新上传。 */
 export function publishingTerminal(state?: string) { return !!state && ["published", "completed", "cancelled", "failed"].includes(state); }
