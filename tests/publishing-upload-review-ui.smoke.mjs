@@ -13,6 +13,7 @@ const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name:
 const rule = { timezone: "UTC", startDate: "2030-10-01", weeklySlots: [{ weekday: 1, time: "18:00" }], preuploadDays: 28 };
 const backendMessage = "该发布包已有上传记录；先核对并取消旧任务，可能已上传的新版本需明确确认替代上传。";
 const lostResponseMessage = "提交响应中断，请重试。";
+const editFailureMessage = "计划已被其他操作更新，请刷新后重试。";
 
 /** 稳定索引只作为前端快照；未创建、读取或上传视频文件。 */
 function digest(number) { return number.toString(16).padStart(64, "0"); }
@@ -71,6 +72,7 @@ async function createPage(browser, data, draftStep = 3) {
         const body = route.request().postDataJSON(); data.requests.push(body);
         if (body.action === "packages") result = { root: "D:\\Synthetic\\Publishing", batches: [data.batch], thumbnails: [], channelId: profile.channelId, channel: "测试频道" };
         else if (body.action === "plan-update") {
+          if (data.rejectUpdate) { await route.fulfill({ status: 409, json: { error: editFailureMessage } }); return; }
           assert.equal(body.planId, data.plan.id); assert.equal(body.revision, data.plan.revision); data.plan.revision++; data.plan.rule = body.rule; data.plan.items = body.items; result = data.plan;
         } else if (body.action === "plan-confirm") {
           assert.equal(body.planId, data.plan.id); assert.equal(body.revision, data.plan.revision);
@@ -107,6 +109,21 @@ function checkFixture(data, name) { assert.deepEqual(data.errors, [], name + " b
 
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
 try {
+  const editing = fixture(false); editing.rejectUpdate = true;
+  const editSession = await createPage(browser, editing); const editPage = editSession.page;
+  await editPage.getByRole("button", { name: "编辑发布包 001", exact: true }).click();
+  const editor = editPage.getByRole("dialog", { name: "编辑发布内容", exact: true });
+  await editor.getByLabel("标题", { exact: true }).fill("审计修改");
+  await editor.getByRole("button", { name: "保存修改", exact: true }).click();
+  await editor.getByRole("alert").filter({ hasText: editFailureMessage }).waitFor({ timeout: 5000 });
+  assert.equal(await editor.getByLabel("标题", { exact: true }).inputValue(), "审计修改");
+  await noGlobalError(editPage, "editor save failure");
+  editing.rejectUpdate = false;
+  await editor.getByRole("button", { name: "保存修改", exact: true }).click();
+  await editor.waitFor({ state: "hidden" });
+  assert.equal(editing.plan.items[0].title, "审计修改");
+  checkFixture(editing, "editor save failure and retry"); await editSession.context.close();
+
   const known = fixture(); const first = await createPage(browser, known); const { page } = first;
   const confirmation = () => page.getByRole("region", { name: "确认发布计划", exact: true });
   const consent = () => confirmation().getByRole("checkbox", { name: /确认频道、内容和时间/ });
@@ -245,6 +262,6 @@ try {
   assert.equal(discovered.requests.filter(request => request.action !== "packages").length, 0);
   checkFixture(discovered, "in-progress history discovered in time settings"); await sixth.context.close();
 
-  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, synthetic: true, backendIdempotencyIsMocked: true, widths, screenshots, repeatConfirmRequests: retryRequests.length, racedConfirmRequests: 1, checks: ["finished-history-continues-to-settings", "explicit-repeat-checkbox-required", "repeat-payload-identifies-prior-jobs", "confirmation-retry-retains-plan-and-allowlist", "old-video-links-retained", "repeat-round-starts-independent-statistics", "repeat-round-marked-in-overview-execution-history", "candidate-exclusions-reset-consent", "new-historical-ids-reset-consent", "excluded-old-content-releases-new-content", "refresh-retains-exclusions", "unknown-cancellation-never-reuploads", "in-progress-history-blocks-new-generation", "direct-history-entry-preserves-draft", "server-conflict-local-to-plan-revision"] }, null, 2));
-  process.stdout.write("Upload review UI passed: explicit intentional repeats, same-plan retry payload, retained old video references, unknown upload protection, consent reset, draft persistence, and four viewport widths. All API and file data were synthetic; backend idempotency was mocked.\n");
+  await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, synthetic: true, backendIdempotencyIsMocked: true, widths, screenshots, repeatConfirmRequests: retryRequests.length, racedConfirmRequests: 1, checks: ["editor-error-visible-and-retry-preserves-input", "finished-history-continues-to-settings", "explicit-repeat-checkbox-required", "repeat-payload-identifies-prior-jobs", "confirmation-retry-retains-plan-and-allowlist", "old-video-links-retained", "repeat-round-starts-independent-statistics", "repeat-round-marked-in-overview-execution-history", "candidate-exclusions-reset-consent", "new-historical-ids-reset-consent", "excluded-old-content-releases-new-content", "refresh-retains-exclusions", "unknown-cancellation-never-reuploads", "in-progress-history-blocks-new-generation", "direct-history-entry-preserves-draft", "server-conflict-local-to-plan-revision"] }, null, 2));
+  process.stdout.write("Upload review UI passed: editor failure and retry, explicit intentional repeats, same-plan retry payload, retained old video references, unknown upload protection, consent reset, draft persistence, and four viewport widths. All API and file data were synthetic; backend idempotency was mocked.\n");
 } finally { await browser.close(); }

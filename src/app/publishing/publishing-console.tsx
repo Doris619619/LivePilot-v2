@@ -165,10 +165,10 @@ export default function PublishingConsole() {
     });
     return accepted ? true : failure;
   }
-  /** 单条覆盖保存新修订，仍以服务端分配和冲突检查为准。 */
-  async function update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-update", planId: plan.id, revision: plan.revision, rule, items }); await refresh(); return result; }); }
-  /** 已配置批次改期先生成独立预览，预览不会投递指令或创建上传任务。 */
-  async function reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]) { return perform(async () => post<PublishingPlan>({ action: "plan-reschedule-preview", planId: plan.id, revision: plan.revision, rule, items })); }
+  /** 单条覆盖保存新修订；弹窗调用方接收异常并就地显示，其余入口使用全局提示。 */
+  async function update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError = false) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-update", planId: plan.id, revision: plan.revision, rule, items }); await refresh(); return result; }, localError); }
+  /** 已配置批次改期先生成独立预览；弹窗可接收异常，预览不会投递指令或创建上传任务。 */
+  async function reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError = false) { return perform(async () => post<PublishingPlan>({ action: "plan-reschedule-preview", planId: plan.id, revision: plan.revision, rule, items }), localError); }
   /** 明确确认新排期后更新原任务修订，远端实际时间继续等待设备核对。 */
   async function rescheduleConfirm(plan: PublishingPlan) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-reschedule-confirm", planId: plan.id, revision: plan.revision, previewId: plan.schedulePreviewId }); await refresh(); setNotice("已提交排期，等待设备确认"); return result; }, true); }
   /** 两个主入口保留清晰的返回路径，设置入口不会重置正在准备的向导。 */
