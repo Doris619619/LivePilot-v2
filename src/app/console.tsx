@@ -8,8 +8,10 @@ import UploadPanel, { type UploadRequest } from "./upload-panel";
 import { targetKey, type AgentDescriptor } from "@/shared/remote";
 import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
-import DevicePairing from "./device-pairing";
+import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
+import WorkspaceSidebar from "./components/workspace-sidebar";
+import Link from "next/link";
 import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
@@ -32,6 +34,7 @@ export default function Console() {
   }, []);
   const [instances, setInstances] = useState<InstanceDescriptor[]>([]);
   const [agents, setAgents] = useState<AgentDescriptor[] | undefined>();
+  const pairing = useDevicePairing(agents || []);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -72,8 +75,10 @@ export default function Console() {
 
   return (
     <OAuthFeedbackProvider><div className="workspace-shell">
-      <aside className="workspace-sidebar" aria-label="工作台导航">
+      <WorkspaceSidebar label="工作台导航">
+        <div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div>
         <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
+        <Link className="sidebar-link" href="/publishing"><VideoIcon /><span>视频发布</span></Link>
         <div className="sidebar-heading device-heading">直播设备</div>
         <nav aria-label="设备定位">
           {devices ? devices.map(agent => (
@@ -84,11 +89,11 @@ export default function Console() {
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
         </nav>
-        {agents && <DevicePairing agents={agents} />}
-      </aside>
+        {agents && <DevicePairing model={pairing} />}
+      </WorkspaceSidebar>
 
       <main className="main-wrapper" id="workspace" tabIndex={-1}>
-        {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<h1>直播工作台</h1>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
+        {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<><h1>直播工作台</h1><p className="workspace-subtitle">{devices ? `${devices.length} 台直播电脑 · ` : ""}{instances.length} 个直播实例</p></>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
         <OAuthFeedback available={loaded?instances:undefined} />
@@ -100,7 +105,8 @@ export default function Console() {
           return (
             <section className="device-section" id={"device-" + agent.id} key={agent.id} aria-label={agent.name}>
               <DeviceRemove agent={agent} changed={() => setRefreshKey(v => v + 1)}><h2><DeviceIcon />{agent.name}<span className={"device-state " + (agent.online ? "online" : "")}>{agent.maintenance ? "维护中" : agent.paired === false ? "等待配对" : agent.online ? "在线" : "离线"}</span></h2></DeviceRemove>
-              <div className="instance-grid">{agentInstances.map(instance => <InstanceConsole key={targetKey(instance)} instance={instance} onChannelChange={updateChannel} onUpload={openUpload} />)}</div>
+              {!agent.online && <div className="device-offline-alert" role="status"><AlertCircleIcon /><div><strong>电脑离线 · 等待重新连接</strong><p>暂时无法确认这台电脑的实际直播状态。离线不代表已停播，请在直播电脑恢复连接后核对。</p></div></div>}
+              <div className="instance-grid">{agentInstances.map((instance, index) => <InstanceConsole key={targetKey(instance)} instance={instance} initiallyExpanded={index === 0} deviceOffline={!agent.online} onChannelChange={updateChannel} onUpload={openUpload} />)}</div>
               {!agentInstances.length && <p className="device-empty">设备尚未上报直播实例。</p>}
             </section>
           );

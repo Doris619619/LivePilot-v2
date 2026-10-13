@@ -1,6 +1,6 @@
 /** 合成环境密钥同步验证：白名单、缺省兼容、变更通知及错误无秘密；不访问真实 Cloud 或 AI。 */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { syncLiveChatEnvironment } from "@/agent/live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "@/agent/live-chat-environment";
 import type { Service } from "@/core/service";
 import { Store } from "@/core/storage";
 import { AppError } from "@/core/errors";
@@ -75,4 +75,43 @@ it("restores the original administrator Agent key when Cloud stops providing its
   const f = serviceFixture(); const transport = { post: vi.fn().mockResolvedValueOnce({ apiKey: cloudKey }).mockResolvedValue({}) };
   await syncLiveChatEnvironment(transport, [f.service]); expect(process.env.DEEPSEEK_API_KEY).toBe(cloudKey);
   await syncLiveChatEnvironment(transport, [f.service]); expect(process.env.DEEPSEEK_API_KEY).toBe(agentKey); expect(f.refreshChatCredentials).toHaveBeenCalledTimes(2);
+});
+
+
+it("retries failed instance application even when the next Cloud response has the same key", async () => {
+  const first = serviceFixture(); const second = serviceFixture(); first.refreshChatCredentials.mockRejectedValueOnce(new Error("synthetic failure"));
+  const transport = { post: vi.fn().mockResolvedValue({ apiKey: cloudKey }) };
+  await expect(syncLiveChatEnvironment(transport, [first.service, second.service])).rejects.toMatchObject({ code: "CHAT_ENVIRONMENT" });
+  await syncLiveChatEnvironment(transport, [first.service, second.service]);
+  expect(first.refreshChatCredentials).toHaveBeenCalledTimes(2); expect(second.refreshChatCredentials).toHaveBeenCalledOnce();
+  await syncLiveChatEnvironment(transport, [first.service, second.service]); expect(first.refreshChatCredentials).toHaveBeenCalledTimes(2);
+});
+
+it("recovers failed bootstrap without reconnecting, reports recovery and periodically observes key rotation", async () => {
+  let now = 0; const sync = vi.fn().mockRejectedValueOnce(new Error("synthetic network failure")).mockResolvedValue(undefined); const report = vi.fn();
+  const scheduler = new LiveChatEnvironmentSync(sync, report, () => now);
+  scheduler.connect(true); await scheduler.refresh(); expect(report).toHaveBeenLastCalledWith(true);
+  now = 999; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(1);
+  now = 1000; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(2); expect(report).toHaveBeenLastCalledWith(false);
+  now = 60999; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(2);
+  now = 61000; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(3);
+  await scheduler.stop(); now += 60000; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(3);
+});
+
+it("coalesces in-flight synchronization, skips old Clouds and drains on shutdown", async () => {
+  let resolve!: () => void; const sync = vi.fn(() => new Promise<void>(done => { resolve = done; }));
+  const scheduler = new LiveChatEnvironmentSync(sync, vi.fn());
+  scheduler.connect(false); await scheduler.refresh(); expect(sync).not.toHaveBeenCalled();
+  scheduler.connect(true); const first = scheduler.refresh(); expect(scheduler.refresh()).toBe(first); expect(sync).toHaveBeenCalledOnce();
+  let stopped = false; const stopping = scheduler.stop().then(() => { stopped = true; }); await Promise.resolve(); expect(stopped).toBe(false);
+  resolve(); await stopping; expect(stopped).toBe(true); await scheduler.refresh(); expect(sync).toHaveBeenCalledOnce();
+});
+
+it("bounds repeated failures with exponential backoff", async () => {
+  let now = 0; const sync = vi.fn().mockRejectedValue(new Error("synthetic")); const scheduler = new LiveChatEnvironmentSync(sync, vi.fn(), () => now);
+  scheduler.connect(true);
+  for (const wait of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+    await scheduler.refresh(); const calls = sync.mock.calls.length; now += wait - 1; await scheduler.refresh(); expect(sync).toHaveBeenCalledTimes(calls); now++;
+  }
+  await scheduler.stop();
 });

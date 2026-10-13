@@ -2,6 +2,8 @@
 "use client";
 import { useState, type ReactNode } from "react";
 import BroadcastAi from "./broadcast-ai";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/primitives";
+import FileDropzone from "./ui/file-dropzone";
 import { api } from "../client-request";
 import { defaultBroadcast, type BroadcastDetails, type Playlist } from "@/shared/broadcast";
 import type { InstanceDescriptor } from "@/shared/types";
@@ -15,7 +17,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
   onChange: (value: BroadcastDetails) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const [tab, setTab] = useState("content");
-  const tabs = [{ id: "content", label: "直播内容" }, { id: "media", label: "音视频" }, { id: "publish", label: "发布设置" }];
+  const tabs = [{ id: "content", label: "直播内容" }, { id: "media", label: "音视频" }, { id: "publish", label: "发布设置" }, { id: "start", label: "开始直播" }];
   const details = value || defaultBroadcast();
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
@@ -52,26 +54,25 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
     } catch (e) { setError(e instanceof Error ? e.message : "封面上传失败，请重试。"); }
     finally { setWorking(""); onBusyChange(false); }
   }
-  return <section className="broadcast-settings" aria-labelledby={`broadcast-heading-${id}`}>
-    <div className="broadcast-section-heading"><div><h3 id={`broadcast-heading-${id}`}>直播工作台</h3><p>按 1–4 步准备开播，设置可随时返回修改。</p></div><span className="draft-label">{disabled ? "本场设置" : "本页草稿 · 开播时应用"}</span></div>
+  return <Tabs value={tab} onValueChange={setTab} asChild><section className="broadcast-settings" aria-labelledby={`broadcast-heading-${id}`}>
+    <div className="broadcast-section-heading"><div><h3 id={`broadcast-heading-${id}`}>直播设置</h3></div><span className="draft-label">{disabled ? "本场设置" : "本页草稿 · 开播时应用"}</span></div>
     <div className="broadcast-editor-grid">
       <div className="broadcast-edit-column">
-      <div className="studio-tabs" role="tablist" aria-label="开播配置">{tabs.map((item, index) => <button key={item.id} type="button" role="tab" id={`studio-tab-${id}-${item.id}`} aria-controls={`studio-panel-${id}-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onClick={() => setTab(item.id)} onKeyDown={event => {
-        const next = event.key === "ArrowRight" ? (index + 1) % tabs.length : event.key === "ArrowLeft" ? (index + tabs.length - 1) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
-        if (next < 0) return;
-        event.preventDefault(); setTab(tabs[next].id); document.getElementById(`studio-tab-${id}-${tabs[next].id}`)?.focus();
-      }}><span className="step-number" aria-hidden="true">{index + 1}</span><span>{item.label}</span></button>)}</div>
-      <div className="studio-panel" role="tabpanel" id={`studio-panel-${id}-content`} aria-labelledby={`studio-tab-${id}-content`} hidden={tab !== "content"}>
-      <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
+      <TabsList aria-label="开播配置">{tabs.map((item, index) => <TabsTrigger key={item.id} value={item.id} id={`studio-tab-${id}-${item.id}`}><span className="step-number" aria-hidden="true">{index + 1}</span><span>{item.label}</span></TabsTrigger>)}</TabsList>
+      <TabsContent className="studio-panel" value="content" aria-labelledby={`studio-tab-${id}-content`}>
+
       <fieldset disabled={locked} className="broadcast-fields">
         <legend className="visually-hidden">直播详情配置</legend>
         <div className="field-group"><label htmlFor={`broadcast-title-${id}`}>标题 <span className="field-required">必填</span></label><input id={`broadcast-title-${id}`} value={details.title} placeholder="例如：东京雨夜 · Lofi 陪你学习与放松" onChange={e => onChange({ ...details, title: e.target.value })} aria-describedby={`title-hint-${id}`} /><span className="field-hint" id={`title-hint-${id}`}>{titleCharacters(details.title)}/100 · 显示在 YouTube 直播页面</span></div>
         <div className="field-group"><label htmlFor={`broadcast-description-${id}`}>说明</label><textarea id={`broadcast-description-${id}`} rows={5} value={details.description} placeholder="介绍这场直播，也可以添加频道介绍和相关链接。" onChange={e => onChange({ ...details, description: e.target.value })} /><span className="field-hint">{descriptionBytes(details.description)}/5000 字节</span></div>
 
       </fieldset>
-      </div>
-      <div className="studio-panel" role="tabpanel" id={`studio-panel-${id}-media`} aria-labelledby={`studio-tab-${id}-media`} hidden={tab !== "media"}>{media}</div>
-      <div className="studio-panel" role="tabpanel" id={`studio-panel-${id}-publish`} aria-labelledby={`studio-tab-${id}-publish`} hidden={tab !== "publish"}>
+      <details className="studio-options broadcast-ai-disclosure"><summary>帮我生成文案</summary>
+      <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
+      </details>
+      </TabsContent>
+      <TabsContent className="studio-panel" value="media" aria-labelledby={`studio-tab-${id}-media`}>{media}</TabsContent>
+      <TabsContent className="studio-panel" value="publish" aria-labelledby={`studio-tab-${id}-publish`}>
         <fieldset disabled={locked} className="broadcast-fields"><legend className="visually-hidden">发布设置</legend>        <div className="broadcast-pair">
           <div className="field-group"><label htmlFor={`broadcast-privacy-${id}`}>公开范围</label><select id={`broadcast-privacy-${id}`} value={details.privacy} onChange={e => onChange({ ...details, privacy: e.target.value as BroadcastDetails["privacy"] })}><option value="public">公开（默认）</option><option value="unlisted">不公开列出</option><option value="private">私密</option></select><span className="field-hint">{details.privacy === "public" ? "任何人都可以观看和搜索到这场直播。" : details.privacy === "unlisted" ? "有链接的人可以观看，不公开列出。" : "仅你和获准的用户可以观看。"}</span></div>
           <div className="field-group"><label htmlFor={`broadcast-audience-${id}`}>观众</label><select id={`broadcast-audience-${id}`} value={String(details.madeForKids)} onChange={e => onChange({ ...details, madeForKids: e.target.value === "true" })}><option value="false">不，内容不是面向儿童的</option><option value="true">是，内容是面向儿童的</option></select><span className="field-hint">{details.madeForKids ? "面向儿童的内容会限制实时聊天等功能。" : "请根据本场直播的实际内容选择。"}</span></div>
@@ -80,12 +81,13 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
           {!playlists && <p className="field-hint">{details.playlistIds.length ? `已选择 ${details.playlistIds.length} 个列表，读取频道列表后可修改。` : "可将直播加入已绑定频道的播放列表。"}</p>}
           {playlists && <div className="playlist-options" role="group" aria-labelledby={`playlist-label-${id}`}>{playlists.length ? playlists.map(item => <label key={item.id}><input type="checkbox" checked={details.playlistIds.includes(item.id)} onChange={e => onChange({ ...details, playlistIds: e.target.checked ? [...details.playlistIds, item.id] : details.playlistIds.filter(key => key !== item.id) })} />{item.title}</label>) : <p className="field-hint">这个频道还没有播放列表，可先在 Studio 中创建。</p>}</div>}
         </div>
-</fieldset>    <details className="studio-options"><summary>更多 YouTube 设置</summary><p>年龄限制、字幕、片尾画面、卡片、付费宣传与联合创作需在 YouTube Studio 中设置；本页不会代为保存这些项目。部分功能仅在直播结束后可用。</p><a href={studio} target="_blank" rel="noopener noreferrer">打开 YouTube Studio<ExternalLinkIcon /></a></details></div>
-      <div className="studio-step-footer"><span>第 {tabs.findIndex(item => item.id === tab) + 1} 步 / 共 4 步</span>{tab !== "publish" ? <button type="button" className="btn-secondary" onClick={() => { const next = tab === "content" ? "media" : "publish"; setTab(next); document.getElementById(`studio-tab-${id}-${next}`)?.focus(); }}>下一步：{tab === "content" ? "音视频" : "发布设置"} →</button> : <span>确认预览后，在「4 开始直播」区开播。</span>}</div>
+</fieldset>    <details className="studio-options"><summary>更多 YouTube 设置</summary><p>年龄限制、字幕、片尾画面、卡片、付费宣传与联合创作需在 YouTube Studio 中设置；本页不会代为保存这些项目。部分功能仅在直播结束后可用。</p><a href={studio} target="_blank" rel="noopener noreferrer">打开 YouTube Studio<ExternalLinkIcon /></a></details></TabsContent>
+      <TabsContent className="studio-panel" value="start" aria-labelledby={`studio-tab-${id}-start`}>{controls}</TabsContent>
+      <div className="studio-step-footer"><span>第 {tabs.findIndex(item => item.id === tab) + 1} 步 / 共 4 步</span>{tab !== "start" && <button type="button" className="btn-secondary" onClick={() => { const next = tabs[tabs.findIndex(item => item.id === tab) + 1].id; setTab(next); document.getElementById(`studio-tab-${id}-${next}`)?.focus(); }}>下一步：{tabs[tabs.findIndex(item => item.id === tab) + 1].label} →</button>}</div>
       </div>
-      <div className="studio-rail"><aside className="broadcast-preview" aria-label="直播信息预览"><span className="preview-eyebrow">观众视角预览</span><div className="thumbnail-preview">{preview && details.thumbnail?.id === preview.id ? <img /* eslint-disable-line @next/next/no-img-element -- 本地上传图片的 data URL 预览。 */ src={preview.url} alt="本场直播封面预览" /> : <div className="thumbnail-placeholder"><YouTubeIcon /><span>{details.thumbnail ? details.thumbnail.name : "上传一张直播封面"}</span><small>{details.thumbnail ? "封面已保存在直播电脑" : "未上传时由 YouTube 生成缩略图"}</small></div>}<span className="preview-live-label">直播</span></div><h4>{details.title.trim() || "你的直播标题"}</h4><p>{channel || "当前绑定的 YouTube 频道"}</p><div className="preview-privacy">{privacy} · {details.madeForKids ? "面向儿童" : "非儿童内容"}</div><fieldset disabled={locked} className="broadcast-fields">        <div className="field-group"><div className="field-label-row"><label htmlFor={`broadcast-thumbnail-${id}`}>封面 / 缩略图</label>{details.thumbnail && <button type="button" className="btn-ghost" onClick={() => { onChange({ ...details, thumbnail: undefined }); setPreview(undefined); }}>移除封面</button>}</div><div className="thumbnail-upload"><input type="file" id={`broadcast-thumbnail-${id}`} accept="image/jpeg,image/png" onChange={e => { void upload(e.target.files?.[0]); e.target.value = ""; }} /><span className="field-hint">{working === "thumbnail" ? "正在上传到直播电脑…" : details.thumbnail ? `已上传：${details.thumbnail.name}` : "JPG 或 PNG，最大 2 MB；建议使用 16:9 横图。"}</span></div></div>
-</fieldset></aside>{controls}</div>
+      <div className="studio-rail"><aside className="broadcast-preview" aria-label="直播信息预览"><span className="preview-eyebrow">观众视角预览</span><div className="thumbnail-preview">{preview && details.thumbnail?.id === preview.id ? <img /* eslint-disable-line @next/next/no-img-element -- 本地上传图片的 data URL 预览。 */ src={preview.url} alt="本场直播封面预览" /> : <div className="thumbnail-placeholder"><YouTubeIcon /><span>{details.thumbnail ? details.thumbnail.name : "上传一张直播封面"}</span><small>{details.thumbnail ? "封面已保存在直播电脑" : "未上传时由 YouTube 生成缩略图"}</small></div>}<span className="preview-live-label">直播</span></div><h4>{details.title.trim() || "你的直播标题"}</h4><p>{channel || "当前绑定的 YouTube 频道"}</p><div className="preview-privacy">{privacy} · {details.madeForKids ? "面向儿童" : "非儿童内容"}</div><fieldset disabled={locked} className="broadcast-fields">        <div className="field-group"><div className="field-label-row"><label htmlFor={`broadcast-thumbnail-${id}`}>封面 / 缩略图</label>{details.thumbnail && <button type="button" className="btn-ghost" onClick={() => { onChange({ ...details, thumbnail: undefined }); setPreview(undefined); }}>移除封面</button>}</div><FileDropzone id={`broadcast-thumbnail-${id}`} label={details.thumbnail ? "更换封面" : "选择封面"} name={details.thumbnail?.name} hint={working === "thumbnail" ? "正在上传到直播电脑…" : "JPG / PNG · 最大 2 MB · 建议 16:9"} accept={{ "image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"] }} maxSize={2 * 1024 ** 2} disabled={locked} onFile={file => void upload(file)} /></div>
+</fieldset></aside></div>
     </div>
     {error && <p role="alert" className="broadcast-error">{error}</p>}
-  </section>;
+  </section></Tabs>;
 }

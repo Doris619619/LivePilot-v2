@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import BroadcastSettings from "./components/broadcast-settings";
 import LiveChatPanel from "./components/live-chat-panel";
 import OAuthFeedback from "./oauth-feedback";
@@ -12,6 +13,7 @@ import { useInstance } from "./use-instance";
 import { targetKey } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
 import { StatusBadge, type StatusType } from "./components/status-indicator";
+import { Reveal } from "./components/ui/primitives";
 import {
   ObsIcon,
   YouTubeIcon,
@@ -36,7 +38,7 @@ function formatDuration(ms: number): string {
 /**
  * 单个 OBS 直播实例的极简折叠与展开控制卡片。
  */
-export default function InstanceConsole({ instance, onChannelChange, onUpload }: { instance: InstanceDescriptor; onChannelChange: (key: string, channel: string) => void; onUpload: (target: string, kind: "videos" | "music") => void }) {
+export default function InstanceConsole({ instance, onChannelChange, onUpload, initiallyExpanded = true, deviceOffline = false }: { instance: InstanceDescriptor; initiallyExpanded?: boolean; deviceOffline?: boolean; onChannelChange: (key: string, channel: string) => void; onUpload: (target: string, kind: "videos" | "music") => void }) {
   const { name } = instance;
   const id = instance.agentId ? `${instance.agentId}-${instance.id}` : instance.id;
   const model = useInstance(instance);
@@ -60,7 +62,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
   } = model;
 
   const [detailsBusy, setDetailsBusy] = useState(false);
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(initiallyExpanded);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
   const key = targetKey(instance);
@@ -112,11 +114,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
   if(data?.configuration.missing.length)issues.push(makeProblem("CONFIG",[...new Set(data.configuration.missing.map(configurationLabel))].join("；"),{target:{agentId:instance.agentId,instanceId:instance.id},outcome:"rejected",stage:"检查开播配置"}));
   const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
 
+  const stoppable = canStopBroadcast(data);
   const broadcastControls = <>
           <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
           </button>
-          <button type="button" className="btn-danger" disabled={busy || stale || !data} onClick={() => void act("stop")}>
+          <button type="button" className="btn-danger" disabled={busy || stale || !stoppable} onClick={() => void act("stop")}>
             <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
           </button>
   </>;
@@ -126,14 +129,14 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
       <div className="card-compact-bar">
         <div className="compact-info-col">
           <h2 className="compact-title" id={`title-${id}`}>{title}</h2>
-          <div className="compact-channel"><ObsIcon /><span>{instance.agentName || "本机"} · {name} · {instance.id}</span></div>
+          <div className="compact-channel"><ObsIcon /><span>{name}{channel ? " · YouTube 频道" : " · 频道待连接"}</span></div>
         </div>
         <div className="instance-state">
           <StatusBadge status={statusType} label={stateLabel} />
           {live && data?.obs.streaming && <span className="compact-timer">{durationMs === null ? "—" : formatDuration(durationMs)}</span>}
         </div>
         <div className="compact-actions-col">
-          {!expanded && broadcastControls}
+          {(!expanded || stoppable) && broadcastControls}
           <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
             <span>{expanded ? "收起" : "设置"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
@@ -142,11 +145,11 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
 
       <OAuthFeedback instance={instance} />
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {issues.map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
+      {issues.filter(problem => !(deviceOffline && problem.code === "CLOUD_UNAVAILABLE" && problem.stage === "读取实例状态" && !problem.attemptId)).map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
-      {expanded && <div className="card-expanded-drawer" id={`details-${id}`}>
+      <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
         <details className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
@@ -179,13 +182,13 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             {data && !stale && !data.media.error && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
           </div>
           <div className="field-group">
-            <label htmlFor={`music-${id}`} className="field-label">背景音乐</label>
+            <label htmlFor={`music-${id}`} className="field-label">背景音乐（必选）</label>
             <select id={`music-${id}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
               <option value="">选择背景音乐</option>
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
             </select>
-            {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>还没有音乐，可添加背景音乐。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
+            {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>请添加背景音乐后开播。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
           </div>
         </div>
         <div className="media-options">
@@ -202,14 +205,14 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
           </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
             <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
-            <div className="broadcast-actions">{broadcastControls}</div>
+            {!stoppable && <div className="broadcast-actions">{broadcastControls}</div>}
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
             <h3 id={`step-4-${id}`}>运行状态</h3>
             <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
             <dl className="runtime-values">
               <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
-              <div><dt>YouTube</dt><dd>{stale ? "未知" : data?.youtube.lifecycle || "—"}</dd></div>
+              <div><dt>YouTube</dt><dd>{stale ? "未知" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
             </dl>
           </section>
         </div>} />
@@ -237,7 +240,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload }:
             <button type="button" className="btn-ghost" onClick={() => void refresh()}><RefreshIcon />刷新状态</button>
           </div>
         </details>
-      </div>}
+      </div></Reveal>
     </article>
   );
 }

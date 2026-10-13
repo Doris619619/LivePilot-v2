@@ -2,6 +2,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import WorkspaceSidebar from "../components/workspace-sidebar";
 import { api } from "../client-request";
 import { RefreshIcon, VideoIcon } from "../components/icons";
 import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
@@ -164,10 +165,10 @@ export default function PublishingConsole() {
     });
     return accepted ? true : failure;
   }
-  /** 单条覆盖保存新修订，仍以服务端分配和冲突检查为准。 */
-  async function update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-update", planId: plan.id, revision: plan.revision, rule, items }); await refresh(); return result; }); }
-  /** 已配置批次改期先生成独立预览，预览不会投递指令或创建上传任务。 */
-  async function reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]) { return perform(async () => post<PublishingPlan>({ action: "plan-reschedule-preview", planId: plan.id, revision: plan.revision, rule, items })); }
+  /** 单条覆盖保存新修订；弹窗调用方接收异常并就地显示，其余入口使用全局提示。 */
+  async function update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError = false) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-update", planId: plan.id, revision: plan.revision, rule, items }); await refresh(); return result; }, localError); }
+  /** 已配置批次改期先生成独立预览；弹窗可接收异常，预览不会投递指令或创建上传任务。 */
+  async function reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError = false) { return perform(async () => post<PublishingPlan>({ action: "plan-reschedule-preview", planId: plan.id, revision: plan.revision, rule, items }), localError); }
   /** 明确确认新排期后更新原任务修订，远端实际时间继续等待设备核对。 */
   async function rescheduleConfirm(plan: PublishingPlan) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-reschedule-confirm", planId: plan.id, revision: plan.revision, previewId: plan.schedulePreviewId }); await refresh(); setNotice("已提交排期，等待设备确认"); return result; }, true); }
   /** 两个主入口保留清晰的返回路径，设置入口不会重置正在准备的向导。 */
@@ -175,12 +176,12 @@ export default function PublishingConsole() {
   /** 从重复素材提示直接进入历史；保留新计划及表单，返回发布视频可以继续调整。 */
   function viewHistory() { navigate("我的发布"); setHistoryEntry(true); }
   const heading = editing ? editing === "new" ? "新建配置" : "编辑配置" : tab;
-  return <div className="workspace-shell publishing-workspace"><aside className="workspace-sidebar publishing-sidebar" aria-label="视频发布导航">
+  return <div className="workspace-shell publishing-workspace"><WorkspaceSidebar className="publishing-sidebar" label="视频发布导航">
     <Link className="sidebar-link" href="/workspace"><VideoIcon /><span>直播工作台</span></Link><div className="sidebar-heading">视频发布</div>
     <nav aria-label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</nav>
     <div className="publishing-settings-navigation"><button className={"sidebar-link " + (tab === "设置" ? "is-active" : "")} aria-current={tab === "设置" ? "page" : undefined} onClick={() => navigate("设置")}>设置</button></div>
     {view?.administrator && <div className="publishing-admin-navigation"><div className="sidebar-heading">管理员</div><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></div>}
-  </aside><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
+  </WorkspaceSidebar><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
     {visibleError && <div className="publishing-error" role="alert"><span>{visibleError}</span><button onClick={reload}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
     {!view || !username ? <p className="publishing-empty" role="status">正在读取…</p> : <>
       {!accepted && <section className="publishing-warning publishing-onboarding"><p>使用前请同意 <Link href="/privacy">隐私政策</Link> 和 <Link href="/terms">服务条款</Link>。</p><button disabled={busy} onClick={() => void perform(async () => { await post({ action: "consent", version: PRIVACY_VERSION }); await refresh(); })}>同意并继续</button></section>}
@@ -190,8 +191,8 @@ export default function PublishingConsole() {
         preview={(id, batchId, rule, items) => perform(async () => { const result = await post<PublishingPlan>({ action: "plan-preview", profileId: id, batchId, rule, items }); await refresh(); return result; })}
         confirm={async (plan, ai, replaceJobIds, republishJobIds) => !!await perform(async () => { await post({ action: "plan-confirm", planId: plan.id, revision: plan.revision, ai, temporaryPrivateTitle: true, ...(replaceJobIds.length ? { replaceJobIds } : {}), ...(republishJobIds.length ? { republishJobIds } : {}) }); await refresh(); setNotice("发布计划已配置"); return true; }, true)} />
       </div>}
-      {!target && tab !== "我的发布" && <div className="publishing-empty"><h2>暂无设备</h2></div>}
-      {!editing && tab === "我的发布" && <MyPublishing initialView={historyEntry ? "历史" : "总览"} plans={view.plans || []} jobs={view.jobs} targets={(view.accounts || []).map(account => ({ agentId: account.agentId, instanceId: account.instanceId, channelId: account.channelId, channel: account.channel, name: targets.find(target => target.agentId === account.agentId && target.instanceId === account.instanceId)?.name || account.name }))} allJobs={view.jobs} removals={view.removals} devices={devices} busy={busy} operate={operate} archive={archive} removeBatch={removeBatch} />}
+      {!target && tab !== "我的发布" && <div className="publishing-empty"><h2>{targets.length ? "请选择直播电脑" : "还没有直播电脑"}</h2>{targets.length ? <p>从上方选择要发布视频的电脑与实例。</p> : <Link href="/workspace">添加直播电脑</Link>}</div>}
+      {!editing && tab === "我的发布" && <MyPublishing initialView={historyEntry ? "历史" : "总览"} create={() => navigate("发布视频")} plans={view.plans || []} jobs={view.jobs} targets={(view.accounts || []).map(account => ({ agentId: account.agentId, instanceId: account.instanceId, channelId: account.channelId, channel: account.channel, name: targets.find(target => target.agentId === account.agentId && target.instanceId === account.instanceId)?.name || account.name }))} allJobs={view.jobs} removals={view.removals} devices={devices} busy={busy} operate={operate} archive={archive} removeBatch={removeBatch} />}
       {!editing && tab === "设置" && <><nav className="publishing-subnav" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} aria-pressed={setting === name} className={setting === name ? "is-active" : "btn-ghost"} onClick={() => setSetting(name)}>{name}</button>)}</nav>
         {setting === "发布配置" ? <section aria-label="发布配置"><div className="publishing-section-heading"><span>{profiles.length} 个配置</span><button disabled={busy || !target || !accepted} onClick={() => void newProfile()}>新建配置</button></div>{profiles.map(profile => <article className="publishing-profile-row" key={profile.id}><div><h2>{profile.name}</h2><p>{visibilityLabel(profile)}</p></div><button onClick={() => setEditing(profile)}>编辑</button></article>)}</section>
           : <><div className="publishing-section-heading"><h2>发布账号</h2></div>{accounts.map(value => <div key={value.id}><ChannelBinding account={value} busy={busy} disabled={!accepted} connect={() => void connectAccount(value.id)} /><details className="publishing-details"><summary>授权与数据 · {value.channel || value.name}</summary><DataSettings accountName={value.channel || value.name} disabled={value.status === "cleanup_pending"} busy={busy} cleanups={view.cleanups.filter(cleanup => cleanup.accountId === value.id)} readAt={readAt} remove={() => removeAccount(value.id)} /></details></div>)}{!accounts.length && <div className="publishing-empty"><h2>还没有发布账号</h2></div>}{view.profiles.some(profile => !profile.accountId && profile.agentId + ":" + profile.instanceId === chosen) && <details className="publishing-details"><summary>旧版任务授权</summary><DataSettings key={chosen} disabled={!target} busy={busy} cleanups={cleanups} readAt={readAt} remove={async () => { await perform(async () => { await post({ action: "cleanup", agentId: target!.agentId, instanceId: target!.instanceId, confirmed: true }); await refresh(); setIndex(undefined); try { localStorage.removeItem("livenest-publishing-draft:" + username + ":" + chosen); } catch { /* 浏览器存储不可用不阻止清理Cloud数据。 */ } setDraftEpoch(value => value + 1); setNotice("删除请求已保存，等待设备确认"); }); }} /></details>}</>}

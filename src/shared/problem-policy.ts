@@ -10,5 +10,5 @@ export function problemPresentation(problem: Problem): ProblemPresentation {
 /** 与开播无关的更新和辅助检查不阻塞直播；结果未知的直播操作仍须核对。 */
 export function blocksStart(problem: Problem) {
   if (problem.code === "CANCELLED" && problem.outcome === "unknown") return true;
-  return problemPresentation(problem) === "action" && problem.domain !== "update";
+  return problemPresentation(problem) === "action" && problem.domain !== "update" && problem.code !== "CHAT_ENVIRONMENT";
 }

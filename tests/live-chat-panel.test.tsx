@@ -76,7 +76,7 @@ it("defaults to enabled, exposes four personas and directs missing environment c
   for (const label of ["友善陪聊", "活泼幽默", "安静温柔", "自定义", "发送间隔（秒）"]) expect(html).toContain(label);
   expect(html).toContain("直播电脑的 DeepSeek 环境配置未就绪，请联系管理员");
   expect(html).not.toContain('type="password"'); expect(html).not.toContain("DeepSeek API Key"); expect(html).not.toContain("保存 Key"); expect(html).not.toContain("检查密钥设置");
-  expect(html).toContain("每日回复条数无上限"); expect(html).toContain("项目共享配额");
+  expect(html).not.toContain("每日回复条数无上限"); expect(html).toContain("项目共享配额");
 });
 
 it("shows an upgrade explanation without implying unsupported Agents can send replies", () => {
@@ -124,7 +124,7 @@ it("refreshes public status using only its Agent and instance", async () => {
 });
 
 it("retains the channel authorization entrance without offering credential configuration", () => {
-  const html = render(fixture({ state: "needs_attention", message: "频道授权失效，请重新连接频道。" }));
+  const html = render(fixture({ state: "needs_attention", recoveryAction: "authorize", message: "频道授权失效，请重新连接频道。" }));
   expect(html).toContain("检查频道授权"); expect(html).not.toContain('type="password"');
   expect(html).not.toContain("检查密钥设置"); expect(html).not.toContain("保存 Key");
 });
@@ -163,4 +163,14 @@ it("refreshes only the dashboard when stale, without issuing a command to an out
   (button.props.onClick as () => void)();
   await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   expect(api).not.toHaveBeenCalled();
+});
+
+
+it("keeps recovery guidance before collapsed settings and never redirects AI failures to OAuth", () => {
+  for (const recoveryAction of ["contact_admin", "check_storage", undefined] as const) {
+    const html = render(fixture({ state: "needs_attention", recoveryAction, message: "合成故障：需要处理" }));
+    expect(html).not.toContain("检查频道授权");
+    expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf("<summary>互动设置"));
+    expect(html).toContain("<summary>活动记录"); expect(html).not.toContain(' open=""');
+  }
 });

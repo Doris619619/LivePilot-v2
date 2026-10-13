@@ -26,7 +26,7 @@ const accounts = [
 const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", accountId: accountOne, channelId: "channel_one", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching", ai: { enabled: false, language: "English", prompt: "Generate accurate copy", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1, 3, 5, 7], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
 const thirdProfile = { ...structuredClone(profile), id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", accountId: accountThree, channelId: "channel_three" };
 const view = { accounts, profiles: [profile, thirdProfile], jobs: [], plans: [], cleanups: [], policy, administrator: false };
-let confirmed; let latestPlan; let createdAccount; let rejectReschedule = false; let failNextRead = false; let releasePreview; let holdPreview = false; const errors = []; const actions = []; const screenshots = []; const archiveRequests = []; const legacyRequests = []; const accountConnectRequests = []; const oauthResultRequests = []; const schedulePreviews = new Map();
+let confirmed; let latestPlan; let createdAccount; let rejectReschedule = false; let rejectPreviewEdit = false; let failNextRead = false; let releasePreview; let holdPreview = false; const errors = []; const actions = []; const screenshots = []; const archiveRequests = []; const legacyRequests = []; const accountConnectRequests = []; const oauthResultRequests = []; const schedulePreviews = new Map();
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
 /** 模拟服务端自动排期；首六个时刻已占用，manual覆盖固定保留。 */
 function allocate(plan) {
@@ -91,7 +91,7 @@ async function mock(route) {
         });
         view.jobs.push(...result);
       }
-      if (body.action === "plan-reschedule-preview") { const plan = view.plans.find(value => value.id === body.planId); assert.ok(plan.confirmedAt); assert.equal(body.revision, plan.revision); result = reschedule(plan, body.rule, body.items); }
+      if (body.action === "plan-reschedule-preview") { if (rejectPreviewEdit) { await route.fulfill({ status: 409, json: { error: "改期预览冲突，请重新选择时间。" } }); return; } const plan = view.plans.find(value => value.id === body.planId); assert.ok(plan.confirmedAt); assert.equal(body.revision, plan.revision); result = reschedule(plan, body.rule, body.items); }
       if (body.action === "plan-reschedule-confirm") {
         const plan = view.plans.find(value => value.id === body.planId); const preview = schedulePreviews.get(body.previewId); assert.ok(preview); assert.equal(preview.id, plan.id); assert.equal(body.revision, plan.revision);
         for (const job of view.jobs.filter(value => value.spec.batchId === plan.id)) {
@@ -118,7 +118,7 @@ async function mock(route) {
   assert.ok(result, "Unexpected mocked request: " + url.pathname); await route.fulfill({ json: result });
 }
 /** 步骤导航按标签定位，排除页面内同名标题和操作按钮。 */
-function stepButton(page, name) { return page.locator(".publishing-steps").getByRole("button", { name: new RegExp(name) }); }
+function stepButton(page, name) { return page.locator(".ui-workflow-steps").getByRole("button", { name: new RegExp(name) }); }
 /** 通过用户可见的搜索和候选项选择时区，不依赖浏览器原生 datalist。 */
 async function selectTimezone(page, timezone) { await page.getByLabel("时区", { exact: true }).click(); await page.getByRole("combobox", { name: "搜索时区" }).fill(timezone); await page.getByRole("option").filter({ hasText: timezone }).click(); }
 /** 当前选项保留完整 IANA 标识，切换步骤和刷新后应保持一致。 */
@@ -126,7 +126,7 @@ async function assertTimezone(page, timezone) { assert.ok((await page.getByLabel
 /** 每次切换都核对当前步骤的辅助技术语义和实际内容区域。 */
 async function expectStep(page, name) {
   await page.getByRole("heading", { name, exact: true }).waitFor();
-  assert.equal(await page.locator('.publishing-steps button[aria-current="step"]').count(), 1);
+  assert.equal(await page.locator('.ui-workflow-steps button[aria-current="step"]').count(), 1);
   assert.equal(await stepButton(page, name).getAttribute("aria-current"), "step");
   assert.equal(await page.locator("#publishing-step-content").count(), 1);
 }
@@ -143,8 +143,8 @@ async function capture(page, name) {
   await page.screenshot({ path: path.join(output, name), fullPage: true }); screenshots.push(name);
   const overflowing = await page.evaluate(() => [...document.querySelectorAll("body *")].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && getComputedStyle(element).position !== "absolute").map(element => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right, width: element.getBoundingClientRect().width })).slice(0, 20));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "Overflow in " + name + ": " + JSON.stringify(overflowing));
-  if (await page.locator(".publishing-steps:visible").count()) {
-    const buttons = page.locator(".publishing-steps:visible button"); assert.equal(await buttons.count(), 4);
+  if (await page.locator(".ui-workflow-steps:visible").count()) {
+    const buttons = page.locator(".ui-workflow-steps:visible button"); assert.equal(await buttons.count(), 4);
     for (const button of await buttons.all()) {
       assert.equal(await button.getAttribute("aria-controls"), "publishing-step-content");
       if (page.viewportSize().width <= 390) {
@@ -227,9 +227,15 @@ try {
   const manualDay = page.locator('[data-date="2030-10-10"]'); assert.equal(await manualDay.getByRole("button", { name: "编辑发布包 001", exact: true }).count(), 1);
   await page.reload(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor(); await page.locator(".publishing-plan-month").getByText("手动", { exact: true }).waitFor();
   await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click(); await page.getByLabel("标题", { exact: true }).fill("未保存的午夜标题");
+  // 模态编辑期间背景步骤不可操作；关闭会放弃未保存内容并归还焦点。
+  const planEditor = page.getByRole("dialog", { name: "编辑发布内容", exact: true });
+  assert.equal(await planEditor.isVisible(), true);
+  await page.keyboard.press("Escape"); await planEditor.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("button", { name: "编辑发布包 001", exact: true }).evaluate(button => button === document.activeElement), true);
   await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); await stepButton(page, "确认计划").click(); await expectStep(page, "确认计划");
-  assert.equal(await page.getByLabel("标题", { exact: true }).inputValue(), "未保存的午夜标题"); assert.equal(await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).inputValue(), "2030-10-10T00:30");
-  assert.equal(latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).title, "东京雨夜 · Tokyo Rainy Night"); await page.locator(".publishing-plan-editor").getByRole("button", { name: "返回", exact: true }).click();
+  await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click();
+  assert.equal(await page.getByLabel("标题", { exact: true }).inputValue(), "东京雨夜 · Tokyo Rainy Night"); assert.equal(await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).inputValue(), "2030-10-10T00:30");
+  assert.equal(latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).title, "东京雨夜 · Tokyo Rainy Night"); await planEditor.getByRole("button", { name: "返回", exact: true }).click();
   assert.equal(actions.filter(action => action === "plan-preview").length, 1);
   await stepButton(page, "设置时间").click(); await expectStep(page, "设置时间"); await page.getByLabel("周三发布时间", { exact: true }).fill("21:00"); await page.getByRole("button", { name: "生成排期", exact: true }).click(); await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   assert.equal(latestPlan.items.find(item => item.packageId === batches[0].packages[0].id).publishAt, manualAt); assert.equal(actions.filter(action => action === "plan-preview").length, 1);
@@ -270,7 +276,14 @@ try {
   await page.getByRole("button", { name: "预览新排期", exact: true }).click(); await expectStep(page, "确认计划");
   assert.equal(await page.getByRole("button", { name: "编辑发布包 006", exact: true }).isDisabled(), true); await page.getByRole("button", { name: "编辑发布包 004", exact: true }).click();
   assert.equal(await page.getByLabel("标题", { exact: true }).count(), 0); assert.equal(await page.getByLabel("说明", { exact: true }).count(), 0); assert.equal(await page.getByRole("checkbox", { name: "暂不发布", exact: true }).count(), 0); await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).waitFor();
-  await page.locator(".publishing-plan-editor").getByRole("button", { name: "返回", exact: true }).click(); await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行");
+  rejectPreviewEdit = true;
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.getByRole("dialog", { name: "编辑发布内容", exact: true }).getByRole("alert").filter({ hasText: "改期预览冲突，请重新选择时间。" }).waitFor();
+  assert.equal(await page.locator(".publishing-error:visible").count(), 0);
+  rejectPreviewEdit = false;
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await page.getByRole("dialog", { name: "编辑发布内容", exact: true }).waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行");
   assert.deepEqual(latestPlan.rule, beforeReschedule.rule); assert.deepEqual(uploadFacts(firstJobs), immutableUploads);
   await stepButton(page, "设置时间").click(); await page.getByRole("button", { name: "预览新排期", exact: true }).click(); await expectStep(page, "确认计划"); await page.getByRole("button", { name: "确认改期", exact: true }).click(); await expectStep(page, "自动执行");
   assert.equal(latestPlan.revision, beforeReschedule.revision + 1); assert.equal(latestPlan.confirmedAt, beforeReschedule.confirmedAt); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "22:00");
@@ -282,7 +295,7 @@ try {
   const firstRow = page.locator(".publishing-job").first(); await firstRow.getByText("操作与详情", { exact: true }).click(); await firstRow.getByRole("button", { name: "改期", exact: true }).click();
   const revisedDate = firstRow.getByLabel("新发布时间 · Asia/Shanghai", { exact: true }); assert.ok(await revisedDate.inputValue()); await revisedDate.fill("2031-01-09T09:30"); rejectReschedule = true;
   await firstRow.getByRole("button", { name: "提交改期", exact: true }).click(); await page.getByText("该时间已占用，请重新选择。", { exact: true }).waitFor(); assert.equal(await revisedDate.inputValue(), "2031-01-09T09:30");
-  failNextRead = true; await firstRow.getByRole("button", { name: "提交改期", exact: true }).click(); await revisedDate.waitFor({ state: "hidden" }); assert.equal(firstJobs[0].spec.originalPublishAt, "2031-01-09T01:30:00.000Z"); assert.match(await firstRow.locator(".publishing-job-time").innerText(), /2031\/1\/9/);
+  failNextRead = true; await firstRow.getByRole("button", { name: "提交改期", exact: true }).click(); await revisedDate.waitFor({ state: "hidden" }); assert.equal(firstJobs[0].spec.originalPublishAt, "2031-01-09T01:30:00.000Z"); assert.match(await firstRow.locator(".publishing-job-time").innerText(), /2031\/0?1\/0?9/);
   await firstRow.getByRole("button", { name: "暂停处理", exact: true }).click(); await firstRow.getByText("暂停待设备确认", { exact: true }).first().waitFor();
   assert.equal(await page.locator(".publishing-job").first().getByRole("button", { name: "核对状态", exact: true }).count(), 0);
   const knownPauseRevision = firstJobs[2].spec.revision;

@@ -1,5 +1,6 @@
 /** 四步发布向导：本地批次检查、独立时间设置、持久计划确认和自动执行。 */
 "use client";
+import WorkflowSteps from "../components/ui/workflow-steps";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { planRuleSchema, publishingTerminal, type PackageBatch, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type VideoJob } from "@/shared/publishing";
 import type { BatchRemovalOperation } from "./batch-removal";
@@ -21,8 +22,8 @@ type Props = {
   plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; busy: boolean; accepted: boolean; scan(): Promise<void>; newProfile(): void;
   removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; removeBatch?: BatchRemovalOperation;
   preview(profileId: string, batchId: string, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
-  update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
-  reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
+  update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError?: boolean): Promise<PublishingPlan | undefined>;
+  reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError?: boolean): Promise<PublishingPlan | undefined>;
   rescheduleConfirm(plan: PublishingPlan): Promise<PublishingPlan | undefined>;
   confirm(plan: PublishingPlan, ai: boolean, replaceJobIds: string[], republishJobIds: string[]): Promise<boolean>; operate: JobOperation; archive(id: string): Promise<void>; viewOverview(): void; viewHistory(): void;
 };
@@ -105,7 +106,7 @@ export default function PublishingWizard(props: Props) {
     if (next && current()) { if (confirmed) setSchedulePreview(next); else setPlan(next); setRule(next.rule); setBatchId(next.batch.id); setUnlockedStep(confirmed ? 4 : 3); setStep(3); }
   }
   return <div className="publishing-wizard">
-    <ol className="publishing-steps" aria-label="发布步骤">{steps.map((name, index) => <li className={viewStep === index + 1 ? "is-current" : unlockedStep > index + 1 ? "is-done" : ""} key={name}><button type="button" className="publishing-step-button" aria-label={name} aria-current={viewStep === index + 1 ? "step" : undefined} aria-controls="publishing-step-content" disabled={!canNavigate(index + 1)} onClick={() => navigate(index + 1)}><span aria-hidden="true">{index + 1}</span><span>{name}</span></button></li>)}</ol>
+    <WorkflowSteps labels={steps} current={viewStep} reached={unlockedStep} canNavigate={canNavigate} navigate={navigate} label="发布步骤" controls="publishing-step-content" />
     <div id="publishing-step-content">
     <div className="publishing-step-heading"><h2 ref={heading} tabIndex={-1}>{steps[viewStep - 1]}</h2><span>{viewStep} / 4</span></div>
     {viewStep === 1 && <>
@@ -122,7 +123,7 @@ export default function PublishingWizard(props: Props) {
       {confirmed && profile?.scheduled && <p className="publishing-hint">只调整未完成视频，手动时间保持不变。</p>}
       <div className="publishing-actions">{(!confirmed || profile?.scheduled) && <button className="btn-primary" type="submit" disabled={busy || !profile || !!uploadReview.blockers.length || profile.scheduled && !validRule}>{busy ? "生成中…" : confirmed ? "预览新排期" : "生成排期"}</button>}<button type="button" disabled={busy} onClick={() => setStep(1)}>返回素材</button>{confirmed && <button type="button" disabled={busy} onClick={() => setStep(4)}>返回执行</button>}</div>
     </form>}
-    {currentPlan && <div hidden={viewStep !== 3}><PlanConfirm key={currentPlan.id} plan={currentPlan} channel={target.channel} busy={busy} scheduleOnly={confirmed} lockedPackageIds={lockedPackageIds} disabled={!confirmationReady} blocked={removal ? "这个批次已请求删除。" : currentPlan.archivedAt ? "这个批次已归档。" : !planMatchesInputs ? "设置已变化，请重新生成排期。" : undefined} uploadBlockers={uploadReview.blockers} uploadRepeats={uploadReview.repeats} replacements={uploadReview.replacements} back={() => setStep(2)} changeMaterials={() => setStep(1)} viewHistory={props.viewHistory} viewExecution={() => setStep(4)} update={async items => { if (busy || !confirmationReady) return; const current = responseCurrent(); const next = confirmed && committedPlan ? await props.reschedulePreview(committedPlan, rule, items) : await props.update(currentPlan, rule, items); if (!next || !current()) return; if (confirmed) setSchedulePreview(next); else { setPlan(next); setExcluded(next.items.filter(item => item.excluded).map(item => item.packageId)); } return next; }} confirm={async (ai, replaceJobIds, republishJobIds) => {
+    {currentPlan && <div hidden={viewStep !== 3}><PlanConfirm key={currentPlan.id} plan={currentPlan} channel={target.channel} busy={busy} scheduleOnly={confirmed} lockedPackageIds={lockedPackageIds} disabled={!confirmationReady} blocked={removal ? "这个批次已请求删除。" : currentPlan.archivedAt ? "这个批次已归档。" : !planMatchesInputs ? "设置已变化，请重新生成排期。" : undefined} uploadBlockers={uploadReview.blockers} uploadRepeats={uploadReview.repeats} replacements={uploadReview.replacements} back={() => setStep(2)} changeMaterials={() => setStep(1)} viewHistory={props.viewHistory} viewExecution={() => setStep(4)} update={async items => { /* 弹窗拥有保存异常，避免全局错误被遮罩挡住。 */ if (busy || !confirmationReady) return; const current = responseCurrent(); const next = confirmed && committedPlan ? await props.reschedulePreview(committedPlan, rule, items, true) : await props.update(currentPlan, rule, items, true); if (!next || !current()) return; if (confirmed) setSchedulePreview(next); else { setPlan(next); setExcluded(next.items.filter(item => item.excluded).map(item => item.packageId)); } return next; }} confirm={async (ai, replaceJobIds, republishJobIds) => {
       if (busy || !confirmationReady || uploadReview.blockers.length) return; const current = responseCurrent();
       if (confirmed) { const next = await props.rescheduleConfirm(currentPlan); if (next && current()) { setPlan(next); setSchedulePreview(undefined); setRule(next.rule); setStep(4); } }
       else if (await props.confirm(currentPlan, ai, replaceJobIds, republishJobIds) && current()) { setPlan({ ...currentPlan, confirmedAt: Date.now(), ...(republishJobIds.length ? { republishJobIds } : {}) }); setUnlockedStep(4); setStep(4); }

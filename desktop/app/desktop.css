@@ -321,3 +321,17 @@ body { background: var(--bg-app); font-size: 16px; }
   .obs-connection-step .computer-connection.is-connected .connection-heading { position: static; padding-right: 108px !important; }
   .obs-connection-step .connection-heading > .setup-state { position: static; grid-column: auto; margin-top: 3px; transform: none; }
 }
+
+/* 更新是登录的次要任务，统一提示、进度和操作的层级。 */
+.update-notice { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 16px; background: var(--bg-subtle, #f5f7fb); border: 1px solid var(--border-subtle); border-radius: 10px; }
+.update-notice-heading { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+.update-notice-heading > svg { width: 18px; height: 18px; flex-shrink: 0; color: var(--text-secondary); }
+.update-notice-heading > div { flex: 1; min-width: 0; }
+.update-notice-heading strong { font-size: 14px; }
+.update-notice p { margin: 0; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; color: var(--text-secondary); }
+.update-notice [role=alert] { color: var(--error-rose, #b42342); }
+.update-notice .ui-progress { width: 100%; }
+.update-notice > button { min-height: 36px; padding: 7px 12px; font-size: 13px; }
+.update-entry-popover { padding: 0; width: min(340px, calc(100vw - 24px)); }
+.update-entry-popover .update-notice { border: 0; background: var(--surface-base); }
+.login-update { margin-top: 20px; padding-top: 20px; }

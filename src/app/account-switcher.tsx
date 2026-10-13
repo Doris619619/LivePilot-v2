@@ -1,8 +1,8 @@
 /** 网页成员切换：已有会话直接选择，新成员首次验证密码；切换整页载入，隔离旧账号草稿和请求。 */
 "use client";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
+import { Popover, PopoverTrigger, PopoverContent } from "./components/ui/primitives";
 import { api } from "./client-request";
-import { UserIcon } from "./components/icons";
 import "./account-switcher.css";
 type User = { username: string; role: "admin" | "customer" };
 type Remembered = User & { current: boolean };
@@ -23,13 +23,9 @@ export function listenAccountChanges() {
 function destination(user: User) { return window.location.pathname === "/publishing" ? "/publishing" : user.role === "admin" ? "/admin" : "/workspace"; }
 /** 点击成员名称读取有效会话，错误保留当前工作台；密码只随首次登录请求发送。 */
 export default function AccountSwitcher({ user }: { user?: User }) {
-  const details = useRef<HTMLDetailsElement>(null);
+  const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<Remembered[]>([]); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
-  useEffect(() => {
-    /** 点击工作台其他区域即收起账号菜单，不挡住下一步操作。 */
-    const outside = (event: PointerEvent) => { if (details.current?.open && event.target instanceof Node && !details.current.contains(event.target)) details.current.open = false; };
-    document.addEventListener("pointerdown", outside); return () => document.removeEventListener("pointerdown", outside);
-  }, []);
+
   /** 只在打开时读取，过期或重置过密码的成员不会冒充有效登录。 */
   async function read() {
     try { const result = await api<{ accounts: Remembered[] }>("/api/session/accounts"); setAccounts(result.accounts); setError(""); } catch (e) { setError((e as Error).message); }
@@ -52,8 +48,9 @@ export default function AccountSwitcher({ user }: { user?: User }) {
     try { await api("/api/session", { method: "DELETE", headers: { "x-livepilot": "1", "x-livepilot-user": user?.username || "" } }); notifyAccountChange(); window.location.reload(); }
     catch (e) { setError((e as Error).message); setBusy(false); }
   }
-  return <details ref={details} className="account-switcher" onToggle={event => { if (event.currentTarget.open) void read(); else { setAdding(false); setError(""); } }} onKeyDown={event => { if (event.key === "Escape" && details.current) { details.current.open = false; details.current.querySelector("summary")?.focus(); } }}>
-    <summary aria-label="切换登录账号"><UserIcon /><span>{user?.username || "选择已登录账号"}</span><span aria-hidden="true">⌄</span></summary>
+  return <Popover open={open} onOpenChange={value => { setOpen(value); if (value) void read(); else { setAdding(false); setError(""); } }}>
+    <PopoverTrigger asChild><button type="button" className="account-menu-trigger" aria-label="切换登录账号"><span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span><span>{user?.username || "选择已登录账号"}</span><span aria-hidden="true">⌄</span></button></PopoverTrigger>
+    <PopoverContent aria-label="登录账号">
     <div className="account-switcher-panel">
       <span className="account-switcher-caption">登录账号</span>
       <div className="account-switcher-list">{accounts.map(account => <button key={account.username} type="button" disabled={busy || account.current} onClick={() => void choose(account.username)}><span><strong>{account.username}</strong><small>{account.role === "admin" ? "管理员" : "客户"}</small></span><span>{account.current ? "当前" : "切换"}</span></button>)}</div>
@@ -61,5 +58,6 @@ export default function AccountSwitcher({ user }: { user?: User }) {
       {error && <p role="alert" className="account-switcher-error">{error}</p>}
       {user && !adding && <button type="button" className="account-switcher-exit" disabled={busy} onClick={() => void exit()}>退出当前账号</button>}
     </div>
-  </details>;
+    </PopoverContent>
+  </Popover>;
 }

@@ -12,7 +12,7 @@ import { AppError, safeError, sleep } from "@/core/errors";
 import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared/remote";
 import { Transport, controllerOrigin } from "./transport";
 import { Executor } from "./executor";
-import { syncLiveChatEnvironment } from "./live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
 import { Worker } from "./worker";
 /** 在启动阶段读取专用配置；不覆盖已存在环境，不在日志输出配置值。 */
 function loadEnvironment() { const file = process.env.LIVEPILOT_ENV_FILE || ".env.agent"; if (existsSync(file)) process.loadEnvFile(file); }
@@ -42,12 +42,17 @@ async function main() {
   const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task), identity.agentId);
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
+  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values()), failed => {
+    if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
+    else health.delete("chat-environment");
+  });
   const bootId = randomUUID(); const snapshots = new Map<string, AgentSnapshot>(); let stopped = false; let connected = false;
   process.once("SIGINT", () => { stopped = true; }); process.once("SIGTERM", () => { stopped = true; });
   /** 每实例独立采样，慢 OBS 不影响其他实例和心跳。 */
   const readers = instanceDescriptors().map(async instance => { while (!stopped) { try { snapshots.set(instance.id, await executor.snapshot(instance.id)); health.delete(instance.id); } catch { health.set(instance.id, makeProblem("SNAPSHOT_READ", "此实例状态读取失败，保留最后一次成功快照供核对。", {source:"agent",target:{instanceId:instance.id},stage:"读取实例状态"})); } await sleep(HEARTBEAT_MS); } });
   /** 结果与心跳独立于长轮询；网络错误不会取消正在执行的任务。 */
   const heartbeat = (async () => { while (!stopped) {
+    if (connected) void chatEnvironment.refresh();
     if (connected) try {
       const result = await transport.post<{ acknowledged: string[] }>("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
       await acknowledgeFeedback(worker, result.acknowledged, health);
@@ -60,7 +65,8 @@ async function main() {
       if (!connected) {
         const session = await transport.post<{ session: string; protocol: number; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"] });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
-        if (session.capabilities?.includes("live-chat-v1")) await syncLiveChatEnvironment(transport, executor.services.values()).catch(() => { /* 聊天环境故障不阻断既有广播控制；缺配置由聊天状态提示。 */ });
+        chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
+        void chatEnvironment.refresh();
         executor.startChat();
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
         await transport.post("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
@@ -72,6 +78,6 @@ async function main() {
       connected = false; console.error(safeError(error)); await sleep(delay); delay = Math.min(30_000, delay * 2);
     }
   }
-  await executor.stopChat(); await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
+  await chatEnvironment.stop(); await executor.stopChat(); await worker.drain(); await executor.stopPublishing(); await Promise.all([...readers, heartbeat]);
 }
 void main().catch(error => { console.error(safeError(error)); process.exitCode = 1; });

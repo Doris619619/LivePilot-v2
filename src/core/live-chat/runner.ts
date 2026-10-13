@@ -24,7 +24,7 @@ export class LiveChatRunner {
   private configured = false;
   private target?: LiveChatTarget;
   private failures = 0;
-  private view: Pick<LiveChatStatus, "state" | "message" | "nextRetryAt" | "updatedAt"> = { state: "connecting", message: "正在读取聊天配置。", updatedAt: 0 };
+  private view: Pick<LiveChatStatus, "state" | "message" | "nextRetryAt" | "updatedAt" | "recoveryAction"> = { state: "connecting", message: "正在读取聊天配置。", updatedAt: 0 };
   /** 注入只含聊天能力的端口；构造不会联网，也不会启动直播。 */
   constructor(private store: Store, private ports: LiveChatPorts) {}
   /** 使用注入时钟驱动消息年龄、限频和配额恢复，便于确定性故障验证。 */
@@ -122,13 +122,15 @@ export class LiveChatRunner {
     if (this.requested && this.stopped) this.start();
   }
   /** 存储失败停止所有网络工作；已初始化的公开状态仍可读取，显式配置成功后才恢复。 */
-  private storageFailure() { this.stopped = true; this.lifetime?.abort(); this.cancel(); this.setView("needs_attention", errorMessages.CHAT_STORAGE); }
+  private storageFailure() { this.stopped = true; this.lifetime?.abort(); this.cancel(); this.setView("needs_attention", errorMessages.CHAT_STORAGE, undefined, "check_storage"); }
   /** 取消旧工作并增加代数，忽略不遵守 AbortSignal 的迟到生成结果。 */
   private cancel() { this.epoch++; this.streamAbort?.abort(); this.actionAbort?.abort(); }
   /** 统一有界公开文案；观察状态与直播控制状态各自独立。 */
-  private setView(state: LiveChatStatus["state"], message?: string, nextRetryAt?: number) {
+  private setView(state: LiveChatStatus["state"], message?: string, nextRetryAt?: number, recoveryAction?: LiveChatStatus["recoveryAction"]) {
     const messages: Record<LiveChatStatus["state"], string> = { disabled: "AI 互动已关闭。", needs_key: "AI互动等待直播电脑的DeepSeek环境配置，请联系管理员", waiting_live: "AI 互动已开启，等待直播。", connecting: "正在连接当前直播聊天。", running: "正在与观众互动。", reconnecting: "聊天连接暂时中断，正在等待重连。", needs_attention: "AI 互动需要处理。", unavailable: errorMessages.CHAT_UNAVAILABLE, quota_wait: errorMessages.CHAT_QUOTA };
-    this.view = { state, message: message || messages[state], ...(nextRetryAt ? { nextRetryAt } : {}), updatedAt: this.now() };
+    const code = this.checkpoint?.block?.code;
+    const recovery = recoveryAction || (state === "needs_key" ? "contact_admin" : state === "needs_attention" ? code === "YOUTUBE_AUTH" ? "authorize" : code === "CHAT_STORAGE" ? "check_storage" : "contact_admin" : undefined);
+    this.view = { state, message: message || messages[state], ...(nextRetryAt ? { nextRetryAt } : {}), ...(recovery ? { recoveryAction: recovery } : {}), updatedAt: this.now() };
   }
   /** 更新最近 30 条真实结果；同一消息的 queued 到 sent 不重复占用历史条目。 */
   private record(message: LiveChatMessage, status: LiveChatEntry["status"], reason?: string, reply?: string) {

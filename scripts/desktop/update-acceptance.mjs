@@ -61,14 +61,14 @@ try {
   assert.equal(await page.getByText('下载完成，可以重启更新', { exact: true }).count(), 0);
   await capture(page, 'login-update-failure');
   await page.getByRole('button', { name: '重试重启更新' }).click(); await page.evaluate(() => window.updateFixture.fail());
-  await page.waitForFunction(() => !document.querySelector('.login-update button')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('.login-update .update-notice > button')?.disabled);
   assert.deepEqual(await page.evaluate(() => window.updateFixture.calls), ['update-apply', 'update-install']);
   await page.getByLabel('账号', { exact: true }).fill('模拟客户'); await page.getByLabel('密码', { exact: true }).fill('fixture-only'); await page.getByRole('button', { name: '登录', exact: true }).click();
   await page.getByRole('button', { name: '设置', exact: true }).click(); await page.getByRole('button', { name: '重试重启更新' }).waitFor();
   assert.equal(await page.getByText('旧配置快照不应覆盖更新错误', { exact: true }).count(), 0);
   await capture(page, 'paired-expired-update-failure');
-  await page.getByRole('button', { name: '软件更新：更新需要处理' }).click(); await page.getByRole('region', { name: '软件更新详情' }).waitFor();
-  await page.keyboard.press('Escape'); assert.equal(await page.getByRole('region', { name: '软件更新详情' }).count(), 0);
+  await page.getByRole('button', { name: '软件更新：更新需要处理' }).click(); await page.getByRole('dialog', { name: '软件更新详情' }).waitFor();
+  await page.keyboard.press('Escape'); assert.equal(await page.getByRole('dialog', { name: '软件更新详情' }).count(), 0);
   assert.equal(await page.getByRole('button', { name: '软件更新：更新需要处理' }).evaluate(button => button === document.activeElement), true);
   await page.evaluate(() => { window.updateFixture.state.update = { status: 'available', version: '0.1.4', message: '发现新版本 0.1.4' }; });
   await page.locator('header').getByRole('button', { name: '更新并重启', exact: true }).click();

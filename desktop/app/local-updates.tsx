@@ -2,7 +2,7 @@
 "use client";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { DesktopAction, LocalUpdateState, UpdateCommand } from "../../src/shared/desktop";
-import UpdateAction from "./update-action";
+import UpdateNotice from "./update-notice";
 type Updates = { state?: LocalUpdateState; pending: boolean; error: string; act(action: DesktopAction): Promise<boolean> };
 const Context = createContext<Updates>({ pending: false, error: "", act: async () => false });
 /** 轮询与操作有独立序号，旧响应不得覆盖点击后的结果；重复点击只发送一次。 */
@@ -39,5 +39,5 @@ export function useLocalUpdates() { return useContext(Context); }
 /** 登录过期、配对撤销或云端离线时仍能检查、下载和安全安装。 */
 export function LoginUpdate() {
   const local = useLocalUpdates();
-  return <section aria-label="软件更新" className="login-update"><h2>软件更新</h2><p>点击更新后自动下载、安装并重新打开，无需登录或重新配对。</p><p role={local.state?.update.status === "error" ? "alert" : "status"}>{local.state ? "LiveNest " + local.state.version + " · " + (local.state.update.message || "尚未检查更新") : "正在读取本机更新状态…"}</p>{local.error && <p role="alert">{local.error}</p>}<UpdateAction update={local.state?.update || { status: "idle" }} busy={local.pending || !!local.state?.busy} act={local.act} /></section>;
+  return <div className="login-update"><UpdateNotice version={local.state?.version} error={local.error} update={local.state?.update || { status: "idle" }} busy={local.pending || !local.state || !!local.state.busy} act={local.act} /></div>;
 }

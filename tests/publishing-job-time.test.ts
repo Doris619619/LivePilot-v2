@@ -63,7 +63,7 @@ it("uses the plan timezone for both display and conversion instead of the profil
   expect(jobTimezone(value)).toBe("America/New_York");
   expect(localInputTime(requested, jobTimezone(value))).toBe("2030-10-07T16:00");
   expect(inputUtc("2030-10-07T16:00", jobTimezone(value))).toBe(requested);
-  expect(jobTime(value)).toContain("2030/10/7 16:00:00");
+  expect(jobTime(value)).toContain("2030/10/07 16:00");
   expect(jobTime(value)).toContain("America/New_York");
   delete value.spec.plan;
   expect(jobTimezone(value)).toBe("Asia/Shanghai");

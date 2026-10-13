@@ -20,3 +20,13 @@ export function startBlocker(data: Dashboard | undefined, selection: Selection, 
   if (selection.broadcast) { const checked = broadcastSchema.safeParse(selection.broadcast); if (!checked.success) return checked.error.issues[0]?.message || "请检查直播详情"; }
   return "";
 }
+
+/** 空闲实例不发送结束命令；部分开播、异常恢复和 OBS 正在推流仍保留停止入口。 */
+export function canStopBroadcast(data?: Dashboard): boolean {
+  return !!data && (data.obs.streaming === true || !!data.state.broadcastIntent || (!!data.state.broadcastTitle && data.state.phase !== "stopped") || !["idle", "stopped"].includes(data.state.phase));
+}
+/** 对观众可理解的场次状态；未知平台枚举不直接泄漏到界面。 */
+export function youtubeLifecycleLabel(value?: string): string {
+  const labels: Record<string, string> = { created: "待开播", ready: "准备就绪", testing: "测试中", testStarting: "正在开始测试", liveStarting: "正在开播", live: "直播中", complete: "已结束", revoked: "已撤销", missing: "未找到场次" };
+  return value ? labels[value] || "状态待确认" : "—";
+}

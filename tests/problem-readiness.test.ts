@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import { makeProblem } from "@/shared/problems";
 import { blocksStart, problemPresentation } from "@/shared/problem-policy";
-import { startBlocker } from "@/shared/readiness";
+import { startBlocker, canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import { obsReadiness } from "@/shared/obs-readiness";
 import type { Dashboard } from "@/shared/types";
 const dashboard: Dashboard = { busy: false, state: { phase: "idle", stage: "等待", updatedAt: "" }, obs: { ready: true, running: true, streaming: false }, youtube: { connected: true }, media: { videos: ["video.mp4"], music: ["music.mp3"] }, configuration: { missing: [], privacy: "private", madeForKids: false } };
@@ -25,4 +25,18 @@ it("separates preparation and stale status by instance", () => {
   expect(obsReadiness({ ...item, id: "second" }, undefined, { ...snapshot, dashboard: { ...dashboard, youtube: { connected: false } } }, now).channel).toBe(false);
   expect(obsReadiness(item, undefined, snapshot, now + 21_000)).toMatchObject({ ready: false, label: "待检查" });
   expect(blocksStart(makeProblem("CANCELLED", "停止等待，任务结果未确认", { outcome: "unknown" }))).toBe(true);
+});
+
+it("keeps chat environment recovery visible without blocking broadcasts", () => {
+  const problem = makeProblem("CHAT_ENVIRONMENT", "正在重试"); expect(blocksStart(problem)).toBe(false); expect(problem.actions).toContain("support");
+  expect(startBlocker({ ...dashboard, problems: [problem] }, selection, false, false, false)).toBe("");
+});
+it("disables idle stopping but permits partial starts, error recovery and active OBS", () => {
+  expect(canStopBroadcast()).toBe(false); expect(canStopBroadcast(dashboard)).toBe(false);
+  expect(canStopBroadcast({ ...dashboard, state: { ...dashboard.state, phase: "stopped", broadcastTitle: "old" } })).toBe(false);
+  for (const phase of ["starting", "live", "stopping", "error"] as const) expect(canStopBroadcast({ ...dashboard, state: { ...dashboard.state, phase } })).toBe(true);
+  expect(canStopBroadcast({ ...dashboard, obs: { ...dashboard.obs, streaming: true } })).toBe(true);
+  expect(canStopBroadcast({ ...dashboard, state: { ...dashboard.state, broadcastIntent: true } })).toBe(true);
+  expect(canStopBroadcast({ ...dashboard, state: { ...dashboard.state, broadcastTitle: "pending" } })).toBe(true);
+  expect(youtubeLifecycleLabel("complete")).toBe("已结束"); expect(youtubeLifecycleLabel("unknown" )).toBe("状态待确认");
 });
