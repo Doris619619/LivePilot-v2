@@ -1,11 +1,12 @@
 /** 我的发布的纯汇总：按频道组织批次，只用当前修订的真实报告证明公开或完成。 */
 import type { PublishingBatchRemoval, PublishingPlan, VideoJob } from "@/shared/publishing";
 import { jobDisplayPublishAt, jobTimezone } from "./publishing-time";
+import { publishingRemovalFeedback, type PublishingDevice, type RemovalFeedback } from "./publishing-removal-feedback";
 
 export type OverviewTarget = { agentId: string; instanceId: string; name: string; channelId?: string; channel?: string };
 export type PublicationBucket = "published" | "completed" | "pending" | "attention" | "cancelled";
 export type PublicationCounts = Record<PublicationBucket, number> & { total: number; scheduled: number; paused: number; pausePending: number; cancelPending: number; excluded: number; budgetWaiting: number };
-export type PublishingOverviewBatch = { key: string; name: string; plan?: PublishingPlan; removal?: PublishingBatchRemoval; jobs: VideoJob[]; counts: PublicationCounts; next?: { instant: string; timezone: string }; state: string; tone: "normal" | "success" | "warning" | "error" };
+export type PublishingOverviewBatch = { key: string; name: string; plan?: PublishingPlan; removal?: PublishingBatchRemoval; removalFeedback?: RemovalFeedback; jobs: VideoJob[]; counts: PublicationCounts; next?: { instant: string; timezone: string }; state: string; tone: "normal" | "success" | "warning" | "error" };
 export type PublishingOverviewChannel = { id: string; name: string; device?: string; batches: PublishingOverviewBatch[] };
 
 /** 自动预算等候使用结构化标记；旧记录只兼容唯一固定文案，不能把其他阻塞误判为可自动恢复。 */
@@ -67,7 +68,7 @@ function batchState(counts: PublicationCounts, plan: PublishingPlan | undefined,
 }
 
 /** 权限已由 Cloud 过滤；此处跨设备按不可变目标频道汇总，旧扁平批次也保留入口。 */
-export function publishingOverview(plans: PublishingPlan[], jobs: VideoJob[], targets: OverviewTarget[], now: number, removals: PublishingBatchRemoval[] = []): PublishingOverviewChannel[] {
+export function publishingOverview(plans: PublishingPlan[], jobs: VideoJob[], targets: OverviewTarget[], now: number, removals: PublishingBatchRemoval[] = [], devices?: PublishingDevice[]): PublishingOverviewChannel[] {
   const groups = new Map<string, PublishingOverviewChannel>();
   const planIds = new Set(plans.map(plan => plan.id));
   const jobsByBatch = new Map<string, VideoJob[]>();
@@ -81,7 +82,8 @@ export function publishingOverview(plans: PublishingPlan[], jobs: VideoJob[], ta
     let group = groups.get(profile.channelId);
     if (!group) { group = { id: profile.channelId, name: target?.channel || profile.channelId, device: exact?.name, batches: [] }; groups.set(profile.channelId, group); }
     const counts = publicationCounts(batchJobs, plan); const next = nextPublication(batchJobs);
-    group.batches.push({ key, name, plan, removal, jobs: batchJobs, counts, next, ...(removal ? { state: counts.attention ? "删除需处理" : "删除待确认", tone: counts.attention ? "error" as const : "warning" as const } : batchState(counts, plan, next, now)) });
+    const removalFeedback = publishingRemovalFeedback(removal, batchJobs, devices, profile.agentId);
+    group.batches.push({ key, name, plan, removal, removalFeedback, jobs: batchJobs, counts, next, ...(removalFeedback ? { state: removalFeedback.state, tone: removalFeedback.tone } : batchState(counts, plan, next, now)) });
   }
   for (const plan of [...plans].filter(plan => plan.confirmedAt).sort((a, b) => b.createdAt - a.createdAt)) add(plan.profile, plan.id, plan.batch.name, jobsByBatch.get(plan.id) || [], plan);
   for (const [id, batchJobs] of jobsByBatch) if (!planIds.has(id)) add(batchJobs[0].spec.profile, "legacy:" + id, "视频任务 · " + batchJobs[0].spec.profile.name, batchJobs);
