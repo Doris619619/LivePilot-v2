@@ -57,8 +57,7 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     catch (error) { setSubmissionError({ revision: plan.revision, message: (error as Error).message }); }
   }
   return <section aria-label="确认发布计划">
-    <PlanMediaPreview key={plan.id} plan={plan} channel={channel} />
-    <div className="publishing-plan-overview"><strong>{active.length} 条视频</strong><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
+    <div className="publishing-plan-overview"><div className="publishing-plan-content-actions"><strong>{active.length} 条视频</strong><PlanMediaPreview key={plan.id} plan={plan} channel={channel} /></div><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
     <UploadReview blockers={uploadBlockers} repeats={uploadRepeats} busy={busy} history={viewHistory} change={changeMaterials} />
     {plan.profile.scheduled ? <PlanCalendar plan={plan} editingId={editing?.packageId} busy={busy || !!plan.archivedAt} lockedPackageIds={lockedPackageIds} edit={begin} /> : <>
       <div className="publishing-plan-list">{plan.items.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(item => {
