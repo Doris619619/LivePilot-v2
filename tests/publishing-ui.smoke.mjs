@@ -141,11 +141,11 @@ async function executionValue(page, label, expected) {
   await value.filter({ hasText: new RegExp("^" + expected + "$") }).waitFor();
   return Number(await value.innerText());
 }
-/** 截图前清除焦点，检查无横向溢出，以及小屏步骤导航可触摸且关联内容。 */
+/** 截图前清除焦点并完成入场动画，检查无横向溢出及小屏步骤触摸目标。 */
 async function capture(page, name) {
   await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); window.scrollTo({ top: 0, left: 0, behavior: "instant" }); });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  await page.screenshot({ path: path.join(output, name), fullPage: true }); screenshots.push(name);
+  await page.screenshot({ path: path.join(output, name), fullPage: true, animations: "disabled" }); screenshots.push(name);
   const overflowing = await page.evaluate(() => [...document.querySelectorAll("body *")].filter(element => element.getBoundingClientRect().right > innerWidth + 1 && getComputedStyle(element).position !== "absolute").map(element => ({ tag: element.tagName, className: element.className, right: element.getBoundingClientRect().right, width: element.getBoundingClientRect().width })).slice(0, 20));
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "Overflow in " + name + ": " + JSON.stringify(overflowing));
   if (await page.locator(".ui-workflow-steps:visible").count()) {
