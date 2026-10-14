@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import WorkspaceSidebar from "../components/workspace-sidebar";
+import { ApiSettingsButton } from "../components/api-settings";
 import { api } from "../client-request";
 import { RefreshIcon, VideoIcon } from "../components/icons";
 import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
@@ -179,7 +180,8 @@ export default function PublishingConsole() {
   return <div className="workspace-shell publishing-workspace"><WorkspaceSidebar className="publishing-sidebar" label="视频发布导航">
     <Link className="sidebar-link" href="/workspace"><VideoIcon /><span>直播工作台</span></Link><div className="sidebar-heading">视频发布</div>
     <nav aria-label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</nav>
-    <nav className="publishing-settings-navigation" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} className={"sidebar-link " + (tab === "设置" && setting === name ? "is-active" : "")} aria-current={tab === "设置" && setting === name ? "page" : undefined} onClick={() => { setSetting(name); navigate("设置"); }}>{name}</button>)}</nav>
+    <div className="sidebar-heading">设置</div><nav className="publishing-settings-navigation" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} className={"sidebar-link " + (tab === "设置" && setting === name ? "is-active" : "")} aria-current={tab === "设置" && setting === name ? "page" : undefined} onClick={() => { setSetting(name); navigate("设置"); }}>{name}</button>)}</nav>
+    <ApiSettingsButton className="sidebar-link" instance={host ? { id: host.instanceId, agentId: host.agentId, name: host.name } as InstanceDescriptor : undefined}>AI 服务与 API Key</ApiSettingsButton>
     {view?.administrator && <div className="publishing-admin-navigation"><div className="sidebar-heading">管理员</div><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></div>}
   </WorkspaceSidebar><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
     {visibleError && <div className="publishing-error" role="alert"><span>{visibleError}</span><button onClick={reload}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}

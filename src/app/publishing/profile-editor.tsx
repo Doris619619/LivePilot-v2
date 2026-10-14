@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import type { PublishingProfile } from "@/shared/publishing";
 import { api } from "../client-request";
 import type { Playlist } from "@/shared/broadcast";
+import { ApiSettingsButton } from "../components/api-settings";
 export type PublishingTarget = { agentId: string; instanceId: string; name: string; accountId?: string; channelId?: string; channel?: string };
 type Props = { initial?: PublishingProfile; target: PublishingTarget; thumbnails: string[]; save(profile: PublishingProfile): Promise<void>; cancel(): void; busy: boolean };
 /** 默认值可编辑；儿童内容仍须在表单中明确选择。 */
@@ -42,7 +43,7 @@ export default function ProfileEditor({ initial, target, thumbnails, save, cance
       <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{packageName}} 发布包 · {{batchName}} 批次 · {{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期"}</p></details>
       <label className="publishing-check"><input type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
       {value.ai.enabled && <div className="publishing-ai-fields">
-        <p className="publishing-hint">使用设备上的 DeepSeek。批次确认时单独授权。</p>
+        <p className="publishing-hint">使用当前实例的 DeepSeek 文案服务。批次确认时单独授权。</p><ApiSettingsButton instance={{ id: target.instanceId, agentId: target.agentId, name: target.name }} disabled={busy}>API 设置</ApiSettingsButton>
         <div className="publishing-fields"><label>生成语言<input required value={value.ai.language} onChange={e => setValue({ ...value, ai: { ...value.ai, language: e.target.value } })} /></label><label>失败兜底标题<input required value={value.ai.fallbackTitle} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackTitle: e.target.value } })} /></label></div>
         <label>生成要求<textarea required rows={3} value={value.ai.prompt} onChange={e => setValue({ ...value, ai: { ...value.ai, prompt: e.target.value } })} /></label>
         <label>失败兜底说明<textarea rows={3} value={value.ai.fallbackDescription} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackDescription: e.target.value } })} /></label>

@@ -7,6 +7,7 @@ import { api } from "../client-request";
 import GroupedList from "./grouped-list";
 import Assignment from "./assignment";
 import Accounts from "./accounts";
+import DisplaySettings from "./display-settings";
 import { groupOverview, searchOverview, scopes, validTimeZone, type Overview, type Scope } from "./view-model";
 import "./admin.css";
 const zoneKey = "livenest-admin-timezone";
@@ -57,7 +58,7 @@ export default function Admin() {
     { scope: "error", label: "异常实例", value: data?.totals.errors }, { scope: "unknown", label: "状态未知", value: data?.totals.unknown },
   ];
   return <main className="main-wrapper admin-page" id="workspace">
-    <div className="workspace-heading admin-heading"><h1>管理员总览</h1><div className="admin-heading-actions"><label className="admin-timezone">显示时区<select value={timeZone} onChange={e => chooseZone(e.target.value)}>{zones.map(zone => <option key={zone} value={zone}>{zoneLabels[zone] ? zoneLabels[zone] + " · " : ""}{zone}</option>)}</select></label><Link href="/workspace">进入直播工作台 ↗</Link></div></div>
+    <div className="workspace-heading admin-heading"><h1>管理员总览</h1><div className="admin-heading-actions"><DisplaySettings timeZone={timeZone} zones={zones} labels={zoneLabels} onChange={chooseZone} /><Link href="/workspace">进入直播工作台 ↗</Link></div></div>
     <Tabs value={tab} onValueChange={value => setTab(value as "devices" | "accounts")}><TabsList aria-label="管理员功能"><TabsTrigger value="devices">设备总览</TabsTrigger><TabsTrigger value="accounts">客户账号</TabsTrigger></TabsList><TabsContent value="accounts"><Accounts /></TabsContent><TabsContent value="devices">
     {error && <div className="banner error" role="alert">{error} · 以下为上次获取的数据，不能视为实时状态。</div>}
     {!data ? <p role="status">正在读取设备状态…</p> : <>

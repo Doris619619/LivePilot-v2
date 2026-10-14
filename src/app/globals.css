@@ -311,9 +311,6 @@ progress { accent-color: var(--accent-primary); }
 .ai-heading span { font-size: 12px; color: var(--text-secondary); }
 .ai-compose { display: flex; gap: 10px; margin-top: 10px; }
 .ai-compose input { flex: 1; min-width: 0; }
-.ai-connection { margin-top: 12px; font-size: 13px; }
-.ai-connection summary { cursor: pointer; padding-block: 8px; min-height: 44px; }
-.ai-connection label { display: block; margin-top: 10px; }
 .broadcast-ai > [role] { margin-top: 10px; }
 @media (max-width: 600px) { .ai-compose { flex-direction: column; } .ai-compose input { flex: auto; } }
 

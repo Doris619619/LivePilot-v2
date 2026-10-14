@@ -70,16 +70,13 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       <div className="broadcast-edit-column">
       <TabsList aria-label="开播配置">{tabs.map((item, index) => <TabsTrigger key={item.id} value={item.id} id={`studio-tab-${id}-${item.id}`}><span className="step-number" aria-hidden="true">{index + 1}</span><span>{item.label}</span></TabsTrigger>)}</TabsList>
       <TabsContent className="studio-panel" value="content" aria-labelledby={`studio-tab-${id}-content`}>
-
+      <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
       <fieldset disabled={locked} className="broadcast-fields">
         <legend className="visually-hidden">直播详情配置</legend>
         <div className="field-group"><label htmlFor={`broadcast-title-${id}`}>标题 <span className="field-required">必填</span></label><input id={`broadcast-title-${id}`} value={details.title} placeholder="例如：东京雨夜 · Lofi 陪你学习与放松" onChange={e => onChange({ ...details, title: e.target.value })} aria-describedby={`title-hint-${id}`} /><span className="field-hint" id={`title-hint-${id}`}>{titleCharacters(details.title)}/100 · 显示在 YouTube 直播页面</span></div>
         <div className="field-group"><label htmlFor={`broadcast-description-${id}`}>说明</label><textarea id={`broadcast-description-${id}`} rows={5} value={details.description} placeholder="介绍这场直播，也可以添加频道介绍和相关链接。" onChange={e => onChange({ ...details, description: e.target.value })} /><span className="field-hint">{descriptionBytes(details.description)}/5000 字节</span></div>
 
       </fieldset>
-      <details className="studio-options broadcast-ai-disclosure"><summary>帮我生成文案</summary>
-      <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
-      </details>
       </TabsContent>
       <TabsContent className="studio-panel" value="media" aria-labelledby={`studio-tab-${id}-media`}>{media}</TabsContent>
       <TabsContent className="studio-panel" value="publish" aria-labelledby={`studio-tab-${id}-publish`}>

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { api, setRequestMember } from "./client-request";
 import AccountSwitcher, { listenAccountChanges, notifyAccountChange } from "./account-switcher";
+import { ApiSettingsProvider, ApiSettingsButton } from "./components/api-settings";
 import { LiveNestLogo, UserIcon, LockIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
 type User = { username: string; role: "admin" | "customer" };
@@ -176,7 +177,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <>
+    <ApiSettingsProvider key={user.username}>
       <a className="skip-link" href="#workspace">跳转到工作台</a>
       <header className="app-header">
         <div className="header-container">
@@ -187,7 +188,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           </div>
 
           <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
-            <AccountSwitcher user={user} />
+            <ApiSettingsButton /><AccountSwitcher user={user} />
           </div>
         </div>
       </header>
@@ -202,6 +203,6 @@ export default function AccessGate({ children }: { children: ReactNode }) {
       )}
 
       {children}
-    </>
+    </ApiSettingsProvider>
   );
 }

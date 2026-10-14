@@ -1,0 +1,24 @@
+/* 设置窗口以配置对象、服务状态、密钥编辑分层；常用生成操作仍在业务页面。 */
+.ui-dialog-center:has(.api-settings) { width: min(680px, calc(100vw - 32px)); }
+.api-settings { display: grid; gap: 14px; min-width: 0; }
+.api-settings-section { padding-bottom: 16px; border-bottom: 1px solid var(--border-subtle); }
+.api-settings-section h2 { margin: 0 0 6px; font-size: 18px; }
+.api-settings-section p, .api-service-heading p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.api-settings > label, .api-key-form > label { font-size: 13px; font-weight: 600; }
+.api-settings select, .api-key-form input { width: 100%; min-width: 0; }
+.api-settings-scope, .api-settings-hint, .api-settings-footnote { color: var(--text-secondary); font-size: 13px; line-height: 1.7; margin: 0; overflow-wrap: anywhere; }
+.api-service-card { display: grid; gap: 16px; border: 1px solid var(--border-subtle); border-radius: 12px; padding: 20px; }
+.api-service-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.api-service-heading h3 { font-size: 16px; margin: 0 0 4px; }
+.api-config-state { font-size: 12px; white-space: nowrap; padding: 5px 10px; border-radius: 6px; background: var(--surface-hover); }
+.api-key-form { display: grid; gap: 10px; }
+.api-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.api-settings-actions button { min-height: 40px; }
+.api-settings-success { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
+.api-settings-footnote { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+.workspace-sidebar-content > button.sidebar-link { width: 100%; justify-content: flex-start; border: 0; background: transparent; font-weight: 400; }
+.workspace-sidebar-content > button.sidebar-link:hover { background: var(--surface-active); }
+.broadcast-ai .ai-heading { margin-bottom: 12px; }
+.broadcast-ai .ai-heading button { min-height: 36px; padding: 6px 10px; }
+.broadcast-ai .ai-compose { margin-bottom: 10px; }
+@media (max-width: 600px) { .api-service-card { padding: 14px; } .api-settings-actions button { min-height: 44px; } }
