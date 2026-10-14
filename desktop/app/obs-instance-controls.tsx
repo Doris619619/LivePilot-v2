@@ -18,11 +18,11 @@ export default function ObsInstanceControls({ instance, check, snapshot, activit
   const current = activity?.action === "launch-obs" && activity.instanceId === instance.id ? activity : undefined;
   const starting = current?.status === "running";
   return <div className="obs-instance-controls" data-instance-id={instance.id}>
-    <div className="obs-control-row"><span>{obsControlLabel(check, snapshot)}</span><div className="desktop-actions">
+    <div className="obs-control-row"><span>{starting ? "正在启动并连接…" : current?.status === "failed" ? "本次控制连接未确认" : obsControlLabel(check, snapshot)}</span><div className="desktop-actions">
       <button className="btn-primary" disabled={disabled} aria-label={"启动并检查 " + instance.name} aria-busy={starting} onClick={() => void act("launch-obs", { id: instance.id })}>{starting ? "正在启动…" : "启动并检查"}</button>
       <button disabled={disabled} aria-label={"重新检查 " + instance.name} onClick={() => void act("diagnose-obs", { id: instance.id })}>重新检查</button>
     </div></div>
-    {current && current.status !== "cancelled" && <p role="status">{current.stage}</p>}
+    {current && current.status !== "cancelled" && <p role="status">{current.status === "failed" ? "启动检查未完成，请查看下方原因。" : current.stage}</p>}
     {current?.status === "failed" && current.problem && <ProblemCard problem={current.problem} objectName={instance.name} disabled={disabled} onRefresh={() => void act("diagnose-obs", { id: instance.id })} onHelp={help} onSettings={help} />}
   </div>;
 }
