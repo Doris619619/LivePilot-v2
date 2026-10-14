@@ -15,7 +15,7 @@ import { publishingInputKey, publishingPlanMatchesInputs } from "./publishing-wi
 import { hasNewPublishingDraft, parsePublishingDraft, restorePublishingPlan } from "./publishing-wizard-draft";
 import { publishingUploadReview } from "./publishing-upload-review";
 import UploadReview from "./upload-review";
-const steps = ["准备素材", "设置时间", "确认计划", "自动执行"];
+const steps = ["准备素材", "配置与排期", "确认计划", "自动执行"];
 type Props = {
   username: string; target: PublishingTarget; root: string; batches: PackageBatch[]; profiles: PublishingProfile[]; profileId: string; selectProfile(id: string): void;
   directoryMessage?: string; directoryReading?: boolean; retryDirectory?(): void; scanned?: boolean;
