@@ -10,13 +10,16 @@
 .player video { width: 100%; height: calc(100% - 65px); object-fit: contain; display: block; }
 .player:fullscreen { border-radius: 0; aspect-ratio: auto; }
 .sourceLabel { position: absolute; left: 14px; top: 14px; background: #121b29b8; border-radius: 4px; padding: 4px 8px; font-size: 11px; pointer-events: none; }
-.playOverlay { position: absolute; top: calc(50% - 32px); left: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 56px; height: 56px; border: 1px solid #ffffff70; border-radius: 50%; background: #17252ea6; color: white; backdrop-filter: blur(8px); }
+.player .pictureToggle { position: absolute; inset: 0 0 65px; width: 100%; border: 0; border-radius: 0; padding: 0; background: transparent; color: white; display: grid; place-items: center; }
+.player .pictureToggle:hover:not(:disabled), .player .pictureToggle:active:not(:disabled) { background: transparent; }
+.player .pictureToggle:focus-visible { outline: 2px solid white; outline-offset: -5px; }
+.playMark { display: grid; place-items: center; width: 56px; height: 56px; border: 1px solid #ffffff70; border-radius: 50%; background: #17252ea6; backdrop-filter: blur(8px); }
 .playerControls { position: absolute; bottom: 0; width: 100%; padding: 0 12px 6px; background: #111923; }
 .player .playerControls input[type=range] { height: 16px; min-height: 16px; padding: 0; border: 0; box-shadow: none; accent-color: #7fa6ff; background: transparent; cursor: pointer; }
 .playerControls > input { width: 100%; }
 .playerControls > div { display: flex; gap: 10px; align-items: center; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .playerControls button { background: none; color: #fff; border: 0; min-height: 36px; padding: 4px; font-size: 12px; }
-.playerControls button:hover:not(:disabled), .playOverlay:hover:not(:disabled) { background: #2b3b50; color: white; }
+.playerControls button:hover:not(:disabled) { background: #2b3b50; color: white; }
 .playerControls > div > span { margin-right: auto; }
 .player .playerControls > div > input[type=range] { width: 65px; flex-shrink: 1; }
 .fileLine { display: flex; align-items: center; gap: 8px; margin: 12px 0 20px; font-size: 12px; }
@@ -52,21 +55,6 @@
 .empty svg { color: #93a2b8; }
 .empty strong { font-size: 14px; }
 .empty p { color: #718097; font-size: 12px; margin: 0; }
-.cardStage { padding: 26px 16px; background: #f2f4f7; min-height: 330px; display: grid; place-items: center; border-radius: 10px; }
-.youtubeCard { width: 100%; max-width: 310px; background: white; overflow: hidden; border-radius: 10px; transition: max-width 180ms ease; }
-.desktop .youtubeCard { max-width: 440px; }
-.cover { position: relative; aspect-ratio: 16 / 9; background: #1c2531; }
-.cover img { height: 100%; width: 100%; object-fit: contain; display: block; }
-.coverEmpty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; color: #c5d0e0; font-size: 13px; }
-.coverEmpty small { color: #97a8bf; }
-.timeTag, .liveTag { position: absolute; bottom: 8px; right: 8px; background: #111b; color: white; font-size: 11px; font-weight: 600; border-radius: 3px; padding: 3px 5px; }
-.liveTag { background: #c53030; }
-.cardInfo { display: flex; align-items: flex-start; gap: 10px; padding: 14px 12px 18px; }
-.cardInfo > div { flex: 1; min-width: 0; }
-.cardInfo h4 { font-size: 14px; line-height: 1.6; font-weight: 600; margin: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.cardInfo p { font-size: 11px; color: #6c747e; margin: 5px 0 0; }
-.cardInfo small { font-size: 11px; color: #6c747e; }
-.avatar { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; background: #e8edee; color: #4d656a; border-radius: 50%; font-size: 12px; }
 .coverPicker { display: inline-block; }
 :global(.ui-dialog):has(.dialogContent) { width: min(620px, 100vw); }
 .dialogContent { padding-top: 12px; }
@@ -78,4 +66,3 @@
   .player .playerControls > div > input[type=range] { width: 44px; }
   .player { aspect-ratio: 16 / 11; }
 }
-@media (prefers-reduced-motion: reduce) { .youtubeCard { transition: none; } }

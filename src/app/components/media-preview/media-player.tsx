@@ -60,7 +60,7 @@ export default function MediaPlayer({ video, music, effect, originalAudio, loop,
         onWaiting={() => musicRef.current?.pause()} onPlaying={() => { if (effect && music && !request.current.disposed && !videoRef.current?.paused) { if (!loop) align(); const current = request.current.generation; void musicRef.current?.play().catch(() => { if (!request.current.disposed && current === request.current.generation) { pause(); setError("背景音乐无法播放，请检查所选文件。"); } }); } }}
         onEnded={pause} onError={() => { pause(); setError("视频无法在浏览器中播放。请检查文件，或尝试 MP4（H.264）格式；尚未判定文件损坏。"); }} />
       {music && <audio ref={musicRef} src={music} loop preload="metadata" onLoadedMetadata={event => musicMetadata(event.currentTarget.duration)} onError={() => { if (effect) { pause(); setError("背景音乐无法读取或格式不受支持，请更换音乐。"); } }} />}
-      {!playing && <button type="button" className={styles.playOverlay} aria-label="播放预览" onClick={() => void play()}><PlayIcon width={26} height={26} /></button>}
+      <button type="button" className={styles.pictureToggle} aria-label={playing ? "点击画面暂停" : "点击画面播放"} onClick={() => playing ? pause() : void play()}>{!playing && <span className={styles.playMark}><PlayIcon width={26} height={26} /></span>}</button>
       <span className={styles.sourceLabel}>{effect ? "发布效果试听" : "原视频"}</span>
       <div className={styles.playerControls}>
         <input aria-label="播放进度" type="range" min={0} max={Number.isFinite(duration) ? duration : 0} step={0.1} value={position} disabled={!duration} onChange={event => { const time = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = time; setPosition(time); align(); }} />

@@ -4,6 +4,7 @@ import { useId, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger, SurfaceDialog } from "../ui/primitives";
 import { VideoIcon, YouTubeIcon } from "../icons";
 import MediaPlayer from "./media-player";
+import YouTubeFeed from "./youtube-feed";
 import { useLocalMedia, mediaTime } from "./local-media";
 import styles from "./preview.module.css";
 
@@ -44,11 +45,8 @@ export default function MediaPreview({ title, channel, mode = "video", videoName
       <TabsContent value="cover">
         <div className={styles.previewHeading}><span>展示效果示意</span><YouTubeIcon /></div>
         <div className={styles.segment} aria-label="展示设备"><button type="button" aria-pressed={device === "mobile"} onClick={() => setDevice("mobile")}>手机端</button><button type="button" aria-pressed={device === "desktop"} onClick={() => setDevice("desktop")}>桌面端</button></div>
-        <div className={`${styles.cardStage} ${device === "desktop" ? styles.desktop : ""}`}><article className={styles.youtubeCard}>
-          <div className={styles.cover}>{poster ? <img /* eslint-disable-line @next/next/no-img-element -- 用户本地 Blob 或已上传封面的浏览器预览。 */ src={poster} alt="当前封面展示示意" /> : <div className={styles.coverEmpty}><YouTubeIcon /><span>{coverName ? "已选择封面" : "YouTube 自动选择"}</span><small>{coverName ? "设备图片读取待接入" : "实际封面待定"}</small></div>}<span className={live ? styles.liveTag : styles.timeTag}>{live ? "直播中" : mode === "live" ? "待开播" : mediaTime(current?.duration)}</span></div>
-          <div className={styles.cardInfo}><span className={styles.avatar}>{(channel || "L").slice(0, 1)}</span><div><h4 title={title}>{title.trim() || "你的标题将显示在这里"}</h4><p>{channel || "当前频道"}</p>{scheduledAt && <small>预约 · {scheduledAt}</small>}</div><span aria-hidden="true">⋮</span></div>
-        </article></div>
-        <p className={styles.hint}>检查标题截断、封面可读性与比例。实际展示以 YouTube 为准。</p>
+        <YouTubeFeed title={title} channel={channel} poster={poster} coverName={coverName} live={live} scheduledAt={scheduledAt} duration={mode === "video" ? current?.duration : undefined} device={device} />
+        <p className={styles.hint}>检查首页中的封面比例与标题截断。相邻内容为占位，实际展示以 YouTube 为准。</p>
         <label htmlFor={id + "-cover"} className={styles.coverPicker}>选择本地封面<input id={id + "-cover"} type="file" accept="image/jpeg,image/png,image/webp" onChange={event => setCoverFile(event.target.files?.[0])} /></label>
         <details className={styles.fullTitle}><summary>查看完整标题</summary><p>{title || "尚未填写标题"}</p></details>
       </TabsContent>
