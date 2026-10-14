@@ -68,8 +68,8 @@ export function MediaPreviewButton(props: MediaPreviewProps) {
   return <SurfaceDialog open={open} onOpenChange={setOpen} title="发布前预览" description={props.videoName || props.title} side="right" trigger={<button type="button" className="btn-ghost">预览</button>}>{open && <div className={styles.dialogContent}><MediaPreview {...props} /></div>}</SurfaceDialog>;
 }
 
-/** 编辑弹层内展开预览，收起时卸载播放器，避免隐藏后继续发声。 */
+/** 编辑弹层默认展示预览但不自动播放；收起时卸载播放器，避免隐藏后继续发声。 */
 export function InlineMediaPreview(props: MediaPreviewProps) {
-  const [open, setOpen] = useState(false); const id = useId();
+  const [open, setOpen] = useState(true); const id = useId();
   return <div className={styles.inlineToggle}><button type="button" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>{open ? "收起预览" : "预览内容与封面"}</button><div id={id}>{open && <MediaPreview {...props} />}</div></div>;
 }
