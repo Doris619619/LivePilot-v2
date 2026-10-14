@@ -7,7 +7,7 @@ import { seal, unseal, Store } from "../storage";
 import { AppError, safeError, sleep } from "../errors";
 import type { Service } from "../service";
 import { VideoApi, VideoApiError, type VideoPort, type VideoResource } from "../youtube/video-api";
-import { type JobSpec, type PublishingReport, type MediaAsset, type PackageBatch, jobSpecSchema, publishingTerminal } from "@/shared/publishing";
+import { type JobSpec, type PublishingReport, type MediaAsset, type PackageBatch, type ContentPackage, jobSpecSchema, publishingTerminal } from "@/shared/publishing";
 import { PublishingStore } from "./storage";
 import { validateAsset, resolvePublishingThumbnail } from "./assets";
 import { publishingMetadata } from "./metadata";
@@ -49,6 +49,22 @@ function legacyPrecisionScheduleMatches(entry: Entry, video: VideoResource) {
   return legacyPrecisionEvidence(entry, video) && video.status?.privacyStatus === "private" && typeof remote === "string" && Date.parse(remote) % 1000 === 0 && sameMoment(remote, entry.report.effectivePublishAt);
 }
 export class PublishingRunner {
+  private previewAbort?: AbortController;
+  /** 检查与提前合成共享设备空闲窗口；直播开始立即中止，禁止与上传并发争用文件。 */
+  async previewWork<T>(signal: AbortSignal, action: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.stopped || this.busy || this.options.live?.()) throw new AppError("PREVIEW_BUSY", "设备正在直播或发布，请空闲后再检查。", 409);
+    const controller = new AbortController(); this.previewAbort = controller;
+    const timer = setInterval(() => { if (this.options.live?.()) this.cancelPreview(); }, 500);
+    try { return await action(AbortSignal.any([signal, controller.signal])); }
+    finally { clearInterval(timer); if (this.previewAbort === controller) this.previewAbort = undefined; }
+  }
+  /** 预览准备复用正式发布缓存和校验；不创建任务、不构造 YouTube API。 */
+  async preparePreview(pkg: ContentPackage, signal: AbortSignal) {
+    const upload = await preparePackageUpload(publishingRoot(), pkg, { signal, live: this.options.live });
+    return { ...await validatePreparedUpload(publishingRoot(), upload, pkg, signal), upload };
+  }
+  /** 开播优先于可重试的预览检查，仅取消当前预览所持有的子进程。 */
+  cancelPreview() { this.previewAbort?.abort(new AppError("PREVIEW_BUSY", "检查已停止，优先保障直播。", 409)); }
   private entries = new Map<string, Entry>(); private loaded = false; private writes: Promise<unknown> = Promise.resolve(); private active = new Map<string, Promise<void>>(); private aborters = new Map<string, AbortController>(); private stopped = false;
   private archives = new Map<string, Promise<unknown>>();
   private purging = new Set<string>();
@@ -152,9 +168,10 @@ export class PublishingRunner {
   private authorizationKey(spec: JobSpec) { return spec.profile.accountId ? "account:" + spec.profile.accountId : "legacy:" + spec.profile.instanceId; }
   /** 后台一次 tick 只启动允许的上传数量；processing/scheduled 查询统一按频道批量执行。 */
   async tick() {
-    await this.load(); if (this.stopped) return;
+    await this.load(); if (this.stopped || this.previewAbort) return;
     for (const e of this.entries.values()) if (!this.active.has(e.spec.id) && !e.expiredData && e.report.remoteCheckedAt && e.report.remoteCheckedAt < this.now() - 30 * 86400_000) { const terminal = publishingTerminal(e.report.state); e.expiredData = true; e.session = undefined; e.playlistsDone = []; e.resumeState = undefined; await this.update(e, { state: terminal ? e.report.state : "needs_attention", videoId: undefined, metadata: undefined, processingStatus: undefined, observedPrivacy: undefined, nextAttemptAt: undefined, message: terminal ? "过期 YouTube 观察数据已清除，执行结果保留。" : "过期 YouTube 数据已清除；请在 Studio 核对，本任务禁止重新上传。" }); }
     const entries = [...this.entries.values()].sort((a, b) => (a.spec.originalPublishAt || "").localeCompare(b.spec.originalPublishAt || "") || a.spec.index - b.spec.index);
+    if (this.stopped || this.previewAbort) return;
     for (const entry of entries) {
       if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || this.reconciling.has(entry.spec.id) || entry.reconciliation?.revision === entry.spec.revision || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && (entry.report.state === "paused" || publishingTerminal(entry.report.state)) || entry.spec.desired === "cancel" && ["cancelled", "published"].includes(entry.report.state) || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
       if (entry.report.nextAttemptAt && entry.report.nextAttemptAt > this.now()) continue;
@@ -417,9 +434,9 @@ export class PublishingRunner {
     try { return await promise; } finally { this.archives.delete(batch.name); }
   }
   /** 维护仅阻止当前执行，不让未来排期永久阻塞升级。 */
-  get busy() { return this.active.size > 0 || this.archives.size > 0 || this.reconciling.size > 0; }
+  get busy() { return !!this.previewAbort || this.active.size > 0 || this.archives.size > 0 || this.reconciling.size > 0; }
   /** 停止时中断当前 HTTP 并保存检查点，不等待数小时视频传完。 */
-  async stop() { this.stopped = true; for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values(), ...this.reconciling.values()]); await this.writes; }
+  async stop() { this.stopped = true; this.cancelPreview(); for (const abort of this.aborters.values()) abort.abort(); await Promise.allSettled([...this.active.values(), ...this.archives.values(), ...this.reconciling.values()]); await this.writes; }
   /** 撤销或删除授权前停止该实例任务并清除本地 API 数据；源素材保留。 */
   async purge(instanceId: string, accountId?: string) { const key = accountId ? "account:" + accountId : "legacy:" + instanceId; this.purging.add(key); try { await this.accepting; await this.load(); const active: Promise<void>[] = []; for (const e of this.entries.values()) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) { e.spec.desired = "pause"; this.aborters.get(e.spec.id)?.abort(); const task = this.active.get(e.spec.id); if (task) active.push(task); } await Promise.allSettled(active); for (const [id, e] of this.entries) if (e.spec.profile.instanceId === instanceId && e.spec.profile.accountId === accountId) this.entries.delete(id); await this.save(); } finally { this.purging.delete(key); } }
 }

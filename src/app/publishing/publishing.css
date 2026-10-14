@@ -153,7 +153,7 @@
 .publishing-batch-choice strong { color: var(--text-primary); font-weight: 500; }
 .publishing-batch-choice small { color: var(--text-muted); font-size: 14px; font-weight: 400; }
 .publishing-package-list, .publishing-plan-list { border-top: 1px solid var(--border-subtle); }
-.publishing-package-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 20px; border-bottom: 1px solid var(--border-subtle); padding: 12px 0; }
+.publishing-package-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; align-items: center; gap: 20px; border-bottom: 1px solid var(--border-subtle); padding: 12px 0; }
 .publishing-package-row.is-invalid { border-left: 2px solid var(--error-rose); padding-left: 12px; }
 .publishing-package-name { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
 .publishing-package-name strong { font-size: 15px; font-weight: 500; }

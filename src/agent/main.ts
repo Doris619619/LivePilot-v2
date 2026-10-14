@@ -11,6 +11,7 @@ import { claimHost } from "@/core/ownership";
 import { AppError, safeError, sleep } from "@/core/errors";
 import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared/remote";
 import { Transport, controllerOrigin } from "./transport";
+import { connectSession } from "./session";
 import { Executor } from "./executor";
 import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
 import { Worker } from "./worker";
@@ -63,11 +64,12 @@ async function main() {
   while (!stopped) {
     try {
       if (!connected) {
-        const session = await transport.post<{ session: string; protocol: number; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"] });
+        const session = await connectSession(transport, { bootId, instances: instanceDescriptors() });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
         void chatEnvironment.refresh();
         executor.startChat();
+        executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
         await transport.post("/api/agent/heartbeat", await heartbeatFeedback(worker, [...snapshots.values()], health, transport.structuredProblems));
       }

@@ -7,10 +7,11 @@ import { Store } from "@/core/storage";
 import { config, dataRoot, instanceDescriptors } from "@/core/config";
 import { claimHost } from "@/core/ownership";
 import { AppError, safeError, sleep } from "@/core/errors";
-import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared/remote";
+import { HEARTBEAT_MS, taskSchema, type AgentSnapshot } from "@/shared/remote";
 import { Executor } from "./executor";
 import { Worker } from "./worker";
 import { Transport } from "./transport";
+import { connectSession } from "./session";
 import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
 export type Identity = { agentId: string; origin: string; token: string };
 export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; problems?(value: Problem[]): void; error?(message: string, code?: string): void };
@@ -38,12 +39,13 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
   while (!hooks.stopped()) {
     try {
       if (!connected) {
-        const session = await transport.post<{ session: string; capabilities?: string[] }>("/api/agent/session", { protocol: PROTOCOL, bootId, instances: instanceDescriptors(), capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1"], ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
+        const session = await connectSession(transport, { bootId, instances: instanceDescriptors(), ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
         delete process.env.LIVENEST_MAINTENANCE;
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
         void chatEnvironment.refresh();
         executor.startChat();
+        executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
       }
       const result = await (await transport.request("/api/agent/poll")).json() as { tasks: unknown[] };

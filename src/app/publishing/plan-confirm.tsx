@@ -2,6 +2,9 @@
 "use client";
 import { useState } from "react";
 import { SurfaceDialog } from "../components/ui/primitives";
+import { InlineMediaPreview } from "../components/media-preview/media-preview";
+import { packagePreviewSelection } from "../components/media-preview/selection";
+import PlanMediaPreview from "./plan-media-preview";
 import { UPLOAD_NOTICE, type PublishingPlan, type PublishingPlanItem } from "@/shared/publishing";
 import { videoCopySchema } from "@/shared/video-metadata";
 import { descriptionBytes, inputUtc, localInputTime, planTime, titleCharacters, visibilityLabel } from "./display";
@@ -54,7 +57,7 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     catch (error) { setSubmissionError({ revision: plan.revision, message: (error as Error).message }); }
   }
   return <section aria-label="确认发布计划">
-    <div className="publishing-plan-overview"><strong>{active.length} 条视频</strong><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
+    <div className="publishing-plan-overview"><div className="publishing-plan-content-actions"><strong>{active.length} 条视频</strong><PlanMediaPreview key={plan.id} plan={plan} channel={channel} /></div><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
     <UploadReview blockers={uploadBlockers} repeats={uploadRepeats} busy={busy} history={viewHistory} change={changeMaterials} />
     {plan.profile.scheduled ? <PlanCalendar plan={plan} editingId={editing?.packageId} busy={busy || !!plan.archivedAt} lockedPackageIds={lockedPackageIds} edit={begin} /> : <>
       <div className="publishing-plan-list">{plan.items.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(item => {
@@ -73,6 +76,7 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
         {!valid && <p className="publishing-validation" role="alert">标题最多100个字符，说明最多5000字节。</p>}</>}
       </>}
       {error && <p className="publishing-validation" role="alert">{error}</p>}
+      <InlineMediaPreview selection={packages.get(editing.packageId) ? packagePreviewSelection(plan.profile, packages.get(editing.packageId)!, plan.profile) : undefined} key={plan.profile.channelId + editing.packageId + packages.get(editing.packageId)?.version} title={title || packages.get(editing.packageId)?.name || ""} channel={channel || plan.profile.channelId} videoName={packages.get(editing.packageId)?.sourceVideo?.filename} musicName={packages.get(editing.packageId)?.sourceMusic?.filename} coverName={plan.profile.thumbnailMode === "fixed" ? plan.profile.thumbnailFilename : plan.profile.thumbnailMode === "matching" ? packages.get(editing.packageId)?.cover?.filename : undefined} />
       <div className="publishing-actions"><button className="btn-primary" disabled={busy || !editing.excluded && !valid} onClick={() => void save()}>{busy ? "保存中…" : "保存修改"}</button><button disabled={busy} onClick={() => setEditing(undefined)}>返回</button>{editing.scheduleSource === "manual" && <button className="btn-ghost" disabled={busy} onClick={() => void restoreAutomatic()}>恢复自动排期</button>}</div>
     </div>}</SurfaceDialog>
     <details className="publishing-details publishing-plan-details"><summary>计划详情</summary><dl className="publishing-summary">

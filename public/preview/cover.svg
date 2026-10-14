@@ -1,0 +1,13 @@
+<!-- 本仓库原创的合成测试封面；无第三方素材或真实客户信息。 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+ <defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#bccfd0"/><stop offset="1" stop-color="#f4e8d3"/></linearGradient><linearGradient id="mist" x2="0" y2="1"><stop stop-color="#edf0dc" stop-opacity="0"/><stop offset="1" stop-color="#dce2d7" stop-opacity=".9"/></linearGradient></defs>
+ <path fill="url(#sky)" d="M0 0h1280v720H0z"/><circle cx="1010" cy="155" r="50" fill="#fff2d2" opacity=".8"/>
+ <path fill="#8aa7a8" d="M0 430L130 280l100 100 190-260 200 300 140-170 140 130 160-140 220 220v260H0z"/>
+ <path fill="#668a8e" d="M0 510l200-160 210 130 140-175 180 130 140-60 180 210 230-200v335H0z"/>
+ <path fill="url(#mist)" d="M0 250h1280v470H0z"/>
+ <path fill="#365c65" d="M0 610l120-90 160 45 140-80 190 120 110-25 200 70 160-80 200 25v125H0z"/>
+ <path fill="#203f4b" d="M0 660l180-40 240 100H0zm780 60 250-100 250 40v60z"/>
+ <text x="70" y="124" font-family="sans-serif" font-size="14" fill="#38565e" letter-spacing="7">MOUNTAIN RADIO</text>
+ <text x="66" y="205" font-family="sans-serif" font-weight="300" font-size="58" fill="#254853" letter-spacing="4">A quiet morning.</text>
+ <text x="70" y="247" font-family="sans-serif" font-size="16" fill="#506d74" letter-spacing="2">BREATHE. LISTEN. SLOW DOWN.</text>
+</svg>

@@ -19,7 +19,10 @@ import type { RemoteTask, AgentSnapshot } from "@/shared/remote";
 import type { Transport } from "./transport";
 import type { PublishingAccount } from "@/shared/publishing";
 import { audit } from "@/core/audit";
+import { AgentPreviewSessions } from "@/core/preview/session";
+import { MediaPreviewConnection } from "./media-preview";
 export class Executor {
+  readonly mediaPreview: MediaPreviewConnection;
   readonly services = new Map<string, Service>();
   readonly publishing: PublishingRunner;
   readonly publishingAccounts: PublishingAccounts;
@@ -41,6 +44,12 @@ export class Executor {
       live: () => [...this.observed.values()].some(s => s.observedAt > Date.now() - 20_000 && (s.dashboard.obs.streaming === true || s.dashboard.youtube.lifecycle === "live" || s.dashboard.obs.reconnecting === true)),
       charge: async (job, units, upload) => { await this.transport.post("/api/agent/publishing/quota", { id: job.id, receipt: randomUUID(), units, upload }); },
     });
+    this.mediaPreview = new MediaPreviewConnection(transport, new AgentPreviewSessions(this.publishing, async target => {
+      const app = this.services.get(target.instanceId);
+      if (target.agentId !== transport.agentId || !app) throw new AppError("TARGET", "预览设备或实例不匹配。", 403);
+      if (target.accountId) await this.publishingAccounts.assertAvailable(target.accountId, target.instanceId);
+      if (target.channelId) { const tokens = await (target.accountId ? this.publishingAccounts.auth(target.accountId) : app.auth).tokens(); if (tokens?.channelId !== target.channelId) throw new AppError("CHANNEL", "频道已改变，请重新打开预览。", 409); }
+    }));
   }
   /** 独立于心跳和旧 Worker 启动后台循环；旧 Cloud 不声明能力时不调用新路由。 */
   connectPublishing(enabled: boolean, accountsEnabled = false) {
@@ -78,7 +87,7 @@ export class Executor {
   /** 仅停止并撤销指定发布账号；同意撤销先落盘，Cloud 接收确认后保存不可复用的删除事实。 */
   private async cleanPublishingAccount(accountId: string, instanceId: string, createdAt: number, requestId?: string) { await this.publishingAccounts.startCleanup(accountId, instanceId, createdAt); await this.publishing.purge(instanceId, accountId); await this.purgeYouTubeTasks?.(instanceId, accountId); await this.publishingAccounts.revoke(accountId); if (requestId) await this.transport.post("/api/agent/publishing/cleanup", { id: requestId }); await this.publishingAccounts.completeCleanup(accountId); }
   /** 退出时安全中断长上传；保留加密检查点供下次恢复。 */
-  async stopPublishing() { this.publishingStopped = true; await this.publishing.stop(); await this.publishingLoop; await this.publishingAccounts.drain(); }
+  async stopPublishing() { this.publishingStopped = true; await this.mediaPreview.stop(); await this.publishing.stop(); await this.publishingLoop; await this.publishingAccounts.drain(); }
   /** 频道归属完成登记后启动一次；连接中断不取消已经启用的本机聊天。 */
   startChat() { for (const app of this.services.values()) app.chat.start(); }
   /** 退出时先取消流和生成；聊天落盘失败由聊天状态报告，仍排空控制与发布任务。 */
@@ -129,6 +138,7 @@ export class Executor {
     if (p.kind === "broadcast-playlists") return { playlists: await app.youtube.playlists() };
     if (p.kind === "broadcast-thumbnail") return saveThumbnail(new Store(config(id).dataDir), p.input);
     if (p.kind === "control") {
+      if (p.input.action === "start") this.publishing.cancelPreview();
       const result = await app.commands.accept({ requestId: task.id, instanceId: id, ...p.input }, actor);
       if (result.fresh) await app.commands.run(task.id);
       const operation = await app.commands.get(task.id);

@@ -1,6 +1,8 @@
 /* 文件用途：草稿排期的简洁月历、移动端日期清单和共享编辑区；沿用工作台变量。 */
 .publishing-plan-overview { display: flex; align-items: baseline; justify-content: space-between; gap: 16px 24px; flex-wrap: wrap; margin-bottom: 28px; }
-.publishing-plan-overview > strong { font-size: 20px; font-weight: 600; }
+.publishing-plan-content-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+.publishing-plan-content-actions > strong { font-size: 20px; font-weight: 600; }
+.publishing-shell .publishing-plan-preview { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; padding: 8px 10px; font-size: 14px; font-weight: 500; white-space: nowrap; }
 .publishing-plan-destination { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; color: var(--text-secondary); font-size: 15px; min-width: 0; }
 .publishing-plan-destination > span:first-child { overflow-wrap: anywhere; }
 .publishing-plan-visibility { color: var(--accent-primary); white-space: nowrap; }
