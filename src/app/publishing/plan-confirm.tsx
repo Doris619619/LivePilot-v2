@@ -94,6 +94,6 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     <div className="publishing-actions">{scheduleOnly ? <>
       {plan.schedulePreviewId && <button className="btn-primary" disabled={busy || disabled || !!blocked || !!plan.archivedAt || !!editing} onClick={() => void submit()}>{busy ? "提交中…" : "确认改期"}</button>}
       <button className={plan.schedulePreviewId ? "" : "btn-primary"} disabled={busy} onClick={viewExecution}>返回执行</button>
-    </> : <button className="btn-primary" disabled={busy || disabled || !!blocked || !!uploadBlockers.length || !!plan.archivedAt || !accepted || !repeatAccepted || !!editing || !active.length || plan.profile.ai.enabled && !ai || replacements.length > 0 && !replace} onClick={() => void submit()}>{busy ? "提交中…" : "确认上传并按计划发布"}</button>}<button disabled={busy} onClick={back}>返回设置</button></div>
+    </> : <button className="btn-primary" disabled={busy || disabled || !!blocked || !!uploadBlockers.length || !!plan.archivedAt || !accepted || !repeatAccepted || !!editing || !active.length || plan.profile.ai.enabled && !ai || replacements.length > 0 && !replace} onClick={() => void submit()}>{busy ? "提交中…" : "确认上传并按计划发布"}</button>}<button disabled={busy} onClick={back}>返回配置与排期</button></div>
   </section>;
 }
