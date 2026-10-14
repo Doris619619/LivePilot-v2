@@ -9,6 +9,7 @@ import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, revo
 import { createPublishingAccount, claimPublishingAccount, beginPublishingAccountCleanup } from "@/cloud/publishing-accounts";
 import { openPreview, updatePreview, readPreview } from "@/server/media-preview";
 import type { PreviewCommand, PreviewSelection } from "@/shared/media-preview";
+import { requestPreview } from "@/cloud/preview-relay";
 const relay = vi.hoisted(() => ({ calls: [] as PreviewCommand[] }));
 vi.mock("@/cloud/preview-relay", () => ({ requestPreview: vi.fn(async (command: PreviewCommand) => { relay.calls.push(command); return command.action === "bytes" ? { bytes: new Uint8Array(command.count!).map((_, i) => command.offset! + i), json: false } : { json: true, bytes: Buffer.from(JSON.stringify({ data: { expires: command.expires, busy: false, files: { video: { name: "video.mp4", size: 10, mime: "video/mp4", version: "a".repeat(64) } } } })) }; }) }));
 let root: string; let selection: PreviewSelection; let accountId: string; let token: string;
@@ -32,6 +33,17 @@ it("returns exact Range bytes and rejects invalid ranges or closed sessions", as
   expect(response.status).toBe(206); expect(response.headers.get("content-range")).toBe("bytes 3-6/10"); expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([3, 4, 5, 6]);
   expect((await readPreview(request("bytes=20-"), session.id, "video")).status).toBe(416);
   await updatePreview(request(), session.id, "close"); await expect(readPreview(request(), session.id, "video")).rejects.toMatchObject({ code: "PREVIEW_EXPIRED" });
+});
+it("revokes a session when the browser closes before its open reply arrives", async () => {
+  const abort = new AbortController(); const original = vi.mocked(requestPreview).getMockImplementation()!;
+  vi.mocked(requestPreview).mockImplementationOnce(async (command, signal) => {
+    expect(signal).toBeUndefined();
+    const reply = await original(command); abort.abort(); return reply;
+  });
+  await expect(openPreview(new Request(request(), { signal: abort.signal }), selection)).rejects.toMatchObject({ name: "AbortError" });
+  expect(relay.calls.map(call => call.action)).toEqual(["open", "close"]);
+  expect(relay.calls[1].session).toBe(relay.calls[0].session);
+  await expect(readPreview(request(), relay.calls[0].session, "video")).rejects.toMatchObject({ code: "PREVIEW_EXPIRED" });
 });
 it("rejects device/instance/account/channel substitutions before sending any Agent command", async () => {
   for (const change of [{ agentId: "device_b" }, { instanceId: "other" }, { accountId: randomUUID() }, { channelId: "different" }]) await expect(openPreview(request(), { ...selection, ...change })).rejects.toThrow();

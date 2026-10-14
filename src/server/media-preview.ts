@@ -44,7 +44,9 @@ async function command(request: Request, session: Session, action: PreviewComman
   try { await authorize(request, session.selection); } catch (error) { revoke(session); throw error; }
   if (session.expires <= Date.now()) throw new AppError("PREVIEW_EXPIRED", "预览已过期，请重新打开。", 410);
   const { source, ...target } = session.selection;
-  return requestPreview({ session: session.id, expires: session.expires, target, action, ...(action === "open" ? { source } : {}), ...extra }, request.signal);
+  request.signal.throwIfAborted();
+  // open 等待有界设备回执后再撤销，避免浏览器关闭时丢掉 ID，留下无人能取消的检查。
+  return requestPreview({ session: session.id, expires: session.expires, target, action, ...(action === "open" ? { source } : {}), ...extra }, action === "open" ? undefined : request.signal);
 }
 /** 过期记录直接丢弃；浏览器会话摘要绑定可阻止退出再登录后复用旧 URL。 */
 async function sessionFor(request: Request, id: string) {
@@ -60,8 +62,8 @@ export async function openPreview(request: Request, selection: PreviewSelection)
   const login = digest(cookieValue(request, SESSION_COOKIE));
   if (sessions.size >= 128 || [...sessions.values()].filter(s => s.login === login).length >= 6) throw new AppError("PREVIEW_BUSY", "请先关闭其他预览后重试。", 429);
   const session: Session = { id: randomUUID(), login, selection, expires: Date.now() + PREVIEW_TTL }; sessions.set(session.id, session);
-  try { const reply = await command(request, session, "open"); if (!reply.json) throw new AppError("PREVIEW_RESPONSE", "设备响应无效。", 502); session.state = decode(reply.bytes); await audit(user.username, "media-preview-open", selection.instanceId, "succeeded", session.id); return { id: session.id, ...session.state }; }
-  catch (error) { sessions.delete(session.id); throw error; }
+  try { const reply = await command(request, session, "open"); request.signal.throwIfAborted(); await authorize(request, selection); if (!reply.json) throw new AppError("PREVIEW_RESPONSE", "设备响应无效。", 502); session.state = decode(reply.bytes); await audit(user.username, "media-preview-open", selection.instanceId, "succeeded", session.id); return { id: session.id, ...session.state }; }
+  catch (error) { revoke(session); throw error; }
 }
 /** 检查是显式动作；关闭立即撤销 URL，设备端在 TTL 到期后也会取消残留检查。 */
 export async function updatePreview(request: Request, id: string, action: "status" | "check" | "prepare" | "cancel" | "close") {

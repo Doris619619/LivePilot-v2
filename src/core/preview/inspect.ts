@@ -25,8 +25,8 @@ export async function inspectMetadata(file: string, target: PreviewFile, tools: 
   try { parsed = JSON.parse(output); } catch { throw new AppError("MEDIA_PROBE", "无法读取媒体元信息。"); }
   const video = parsed.streams?.find(s => s.codec_type === "video" && !s.disposition?.attached_pic);
   const audio = parsed.streams?.some(s => s.codec_type === "audio") || false;
-  const duration = Number(video?.duration || parsed.format?.duration);
-  Object.assign(target, { video: !!video, audio, ...(video ? { width: video.width, height: video.height, codec: video.codec_name } : {}), ...(Number.isFinite(duration) && duration > 0 ? { duration } : {}) });
+  const duration = [video?.duration, parsed.format?.duration].map(Number).find(value => Number.isFinite(value) && value > 0);
+  Object.assign(target, { video: !!video, audio, ...(video ? { width: video.width, height: video.height, codec: video.codec_name } : {}), ...(duration !== undefined ? { duration } : {}) });
 }
 /** 开头、中间、末尾各最多三秒；相邻区间合并，报告实际检查覆盖范围。 */
 export function sampleRanges(duration: number) {

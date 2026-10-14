@@ -9,13 +9,15 @@ export class MediaPreviewConnection {
   constructor(private transport: Transport, private sessions: AgentPreviewSessions) {}
   /** 最多四个短请求并行；全片检查独立在 Runner 管理，轮询不等待解码结束。 */
   connect(enabled: boolean) {
-    this.enabled = enabled; if (this.loop || !enabled) return;
+    this.enabled = enabled; if (this.stopped || this.loop || !enabled) return;
     this.loop = (async () => { while (!this.stopped) {
       this.sessions.sweep();
       if (this.enabled) try {
         const response = await this.transport.request("/api/agent/media-preview/poll", {}, 25_000);
         const { requests } = await response.json() as { requests: unknown[] };
+        if (this.stopped) break;
         await Promise.all(requests.map(async value => {
+          if (this.stopped) return;
           const command = previewCommandSchema.parse(value); if (command.target.agentId !== this.transport.agentId) return;
           let body: Uint8Array | PreviewEnvelope;
           try { const result = await this.sessions.execute(command); body = result instanceof Uint8Array ? result : { data: result }; }

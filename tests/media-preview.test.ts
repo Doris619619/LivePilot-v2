@@ -42,8 +42,19 @@ it("reads actual bytes, reports unavailable tools, and invalidates replaced or c
 it("rejects changed account targets and expires sessions", async () => {
   const first = command("open"); await sessions.execute({ ...first, source: { kind: "live", video: "sample.mp4" } });
   await expect(sessions.execute({ ...first, target: { ...target, accountId: randomUUID() }, action: "status" })).rejects.toMatchObject({ code: "PREVIEW_EXPIRED" });
-  await sessions.stop(); await sessions.execute({ ...command("open", first.session), expires: Date.now() - 1, source: { kind: "live", video: "sample.mp4" } });
-  await expect(sessions.execute({ ...first, action: "status" })).rejects.toMatchObject({ code: "PREVIEW_EXPIRED" });
+  const expired = command("open"); await sessions.execute({ ...expired, expires: Date.now() - 1, source: { kind: "live", video: "sample.mp4" } });
+  await expect(sessions.execute({ ...expired, action: "status" })).rejects.toMatchObject({ code: "PREVIEW_EXPIRED" });
+});
+it("does not start work when shutdown overtakes an in-flight authorization", async () => {
+  let release!: () => void;
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  const late = new AgentPreviewSessions(runner, () => waiting);
+  const work = vi.spyOn(runner, "previewWork");
+  const pending = late.execute({ ...command("open"), source: { kind: "live", video: "sample.mp4" } });
+  const rejected = expect(pending).rejects.toMatchObject({ code: "PREVIEW_STOPPED" });
+  await late.stop(); release(); await rejected;
+  expect(work).not.toHaveBeenCalled();
+  await expect(late.execute(command("status"))).rejects.toMatchObject({ code: "PREVIEW_STOPPED" });
 });
 it("package preparation stays inside PublishingRunner and reuses the exact original file without upload", async () => {
   const folder = path.join(root, "Publishing", "Inbox", "batch", "item"); await mkdir(folder, { recursive: true }); await writeFile(path.join(folder, "video.mp4"), "original-upload-bytes");

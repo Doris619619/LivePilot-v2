@@ -20,12 +20,15 @@ const mime: Record<string, string> = { ".mp4": "video/mp4", ".m4v": "video/mp4",
 async function assetFor(file: string): Promise<Asset> { const info = await stat(file); if (!info.isFile() || !info.size) throw new AppError("MEDIA_READ", "文件为空或不可读取。"); return { file, info: { name: path.basename(file), size: info.size, version: packageDigest([file, info.size, info.mtimeMs, info.ctimeMs, info.ino]), mime: mime[path.extname(file).toLowerCase()] || "application/octet-stream" } }; }
 export class AgentPreviewSessions {
   private sessions = new Map<string, Session>();
+  private stopped = false;
   /** authorize 每次核对实例、账号和频道；不允许旧会话借用其他授权上下文。 */
   constructor(private runner: PublishingRunner, private authorize: (target: PreviewTarget) => Promise<void>) {}
   /** 过期清理连带取消所有检查；无需持久化媒体会话。 */
   sweep() { for (const [id, session] of this.sessions) if (session.state.expires <= Date.now()) { session.abort?.abort(); this.sessions.delete(id); } }
   /** 停止时等待 FFmpeg 释放，防止后台进程遗留。 */
-  async stop() { const values = [...this.sessions.values()]; for (const item of values) item.abort?.abort(); this.sessions.clear(); await Promise.allSettled(values.map(s => s.work)); }
+  async stop() { this.stopped = true; const values = [...this.sessions.values()]; for (const item of values) item.abort?.abort(); this.sessions.clear(); await Promise.allSettled(values.map(s => s.work)); }
+  /** 异步授权和磁盘解析结束后重验退出状态，禁止迟到请求重新创建检查。 */
+  private requireRunning() { if (this.stopped) throw new AppError("PREVIEW_STOPPED", "设备正在退出，请重新连接后预览。", 410); }
   /** 包在 Agent 扫描并以标识和版本定位；浏览器永远不能传实际路径。 */
   private async resolve(source: PreviewSource, target: PreviewTarget, known?: ContentPackage) {
     const assets: Session["assets"] = {}; let pkg: ContentPackage | undefined;
@@ -81,13 +84,16 @@ export class AgentPreviewSessions {
   }
   /** 所有分片先重验版本，再打开并核对句柄；每次只分配请求上限内的缓冲区。 */
   async execute(command: PreviewCommand): Promise<PreviewState | Uint8Array> {
+    this.requireRunning();
     this.sweep();
     const existing = this.sessions.get(command.session);
     if (command.action === "close" && existing && JSON.stringify(existing.target) === JSON.stringify(command.target)) { existing.abort?.abort(); this.sessions.delete(command.session); return existing.state; }
     await this.authorize(command.target);
+    this.requireRunning();
     if (command.action === "open") {
       if (!command.source || this.sessions.has(command.session) || this.sessions.size >= 24) throw new AppError("PREVIEW_BUSY", "预览会话已存在或过多。", 409);
       const resolved = await this.resolve(command.source, command.target);
+      this.requireRunning();
       const session: Session = { ...resolved, source: command.source, target: command.target, state: { expires: Math.min(command.expires, Date.now() + PREVIEW_TTL), busy: false, files: Object.fromEntries(Object.entries(resolved.assets).map(([part, asset]) => [part, asset!.info])) } };
       this.sessions.set(command.session, session); this.start(session, "quick"); return session.state;
     }
@@ -96,6 +102,7 @@ export class AgentPreviewSessions {
     if (command.action === "close") { session.abort?.abort(); this.sessions.delete(command.session); return session.state; }
     if (command.action === "cancel") { session.abort?.abort(); return session.state; }
     try { await this.validate(session); } catch (error) { session.abort?.abort(); this.sessions.delete(command.session); throw error; }
+    this.requireRunning();
     if (command.action === "check" || command.action === "prepare") { this.start(session, command.action); return session.state; }
     if (command.action !== "bytes") return session.state;
     const asset = command.part && session.assets[command.part]; if (!asset || command.offset === undefined || !command.count || command.offset + command.count > asset.info.size) throw new AppError("RANGE", "预览读取范围无效。", 416);
