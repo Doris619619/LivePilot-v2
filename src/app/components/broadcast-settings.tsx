@@ -1,6 +1,6 @@
 /** 直播前填写可同步到 YouTube 的详情，并预览观众看到的标题、封面和公开范围。 */
 "use client";
-import { useState, type ReactNode } from "react";
+import { useState, useSyncExternalStore, type ReactNode } from "react";
 import BroadcastAi from "./broadcast-ai";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/primitives";
 import FileDropzone from "./ui/file-dropzone";
@@ -11,14 +11,22 @@ import { ExternalLinkIcon } from "./icons";
 import MediaPreview, { MediaPreviewButton } from "./media-preview/media-preview";
 import { titleCharacters, descriptionBytes } from "@/shared/video-metadata";
 
+/** 与 CSS 使用同一断点；隐藏桌面面板时卸载媒体及设备会话。 */
+function subscribeViewport(change: () => void) { const query = window.matchMedia("(min-width: 601px)"); query.addEventListener("change", change); return () => query.removeEventListener("change", change); }
+/** 服务端先不挂载媒体，客户端按实际视口选择唯一预览入口。 */
+function desktopViewport() { return window.matchMedia("(min-width: 601px)").matches; }
+/** 服务端不推测客户端屏幕尺寸。 */
+function serverViewport() { return false; }
+
 /** 配置只作用于当前实例；上传中锁定表单，防止异步完成覆盖新草稿。 */
-export default function BroadcastSettings({ id, instance, value, disabled, channel, broadcastId, videoName, musicName, videoAudio, live, onChange, onBusyChange, media, controls }: {
+export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onBusyChange, media, controls }: {
   videoName?: string; musicName?: string; videoAudio?: boolean; live?: boolean;
   media: ReactNode; controls: ReactNode;
-  id: string; instance: InstanceDescriptor; value?: BroadcastDetails; disabled: boolean; channel: string; broadcastId?: string;
+  id: string; instance: InstanceDescriptor; value?: BroadcastDetails; disabled: boolean; channel: string; channelId?: string; broadcastId?: string;
   onChange: (value: BroadcastDetails) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const [tab, setTab] = useState("content");
+  const desktop = useSyncExternalStore(subscribeViewport, desktopViewport, serverViewport);
   const tabs = [{ id: "content", label: "直播内容" }, { id: "media", label: "音视频" }, { id: "publish", label: "发布设置" }, { id: "start", label: "开始直播" }];
   const details = value || defaultBroadcast();
   const [working, setWorking] = useState("");
@@ -88,8 +96,8 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       <div className="studio-step-footer"><span>第 {tabs.findIndex(item => item.id === tab) + 1} 步 / 共 4 步</span>{tab !== "start" && <button type="button" className="btn-secondary" onClick={() => { const next = tabs[tabs.findIndex(item => item.id === tab) + 1].id; setTab(next); document.getElementById(`studio-tab-${id}-${next}`)?.focus(); }}>下一步：{tabs[tabs.findIndex(item => item.id === tab) + 1].label} →</button>}</div>
       </div>
       <div className="studio-rail"><aside className="broadcast-preview" aria-label="直播信息预览">
-        <div className="broadcast-media-desktop"><MediaPreview key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} mode="live" title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} /></div>
-        <div className="broadcast-media-mobile"><MediaPreviewButton key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} mode="live" title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} /></div>
+        <div className="broadcast-media-desktop">{desktop && <MediaPreview key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} selection={instance.agentId && videoName ? { agentId: instance.agentId, instanceId: instance.id, ...(channelId ? { channelId } : {}), source: { kind: "live", video: videoName, ...(musicName ? { music: musicName } : {}), ...(details.thumbnail?.id ? { coverId: details.thumbnail.id } : {}) } } : undefined} mode="live" receiver={{ id: broadcastId, privacy: details.privacy }} title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} />}</div>
+        <div className="broadcast-media-mobile">{!desktop && <MediaPreviewButton key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} selection={instance.agentId && videoName ? { agentId: instance.agentId, instanceId: instance.id, ...(channelId ? { channelId } : {}), source: { kind: "live", video: videoName, ...(musicName ? { music: musicName } : {}), ...(details.thumbnail?.id ? { coverId: details.thumbnail.id } : {}) } } : undefined} mode="live" receiver={{ id: broadcastId, privacy: details.privacy }} title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} />}</div>
         <div className="preview-privacy">{privacy} · {details.madeForKids ? "面向儿童" : "非儿童内容"}</div><fieldset disabled={locked} className="broadcast-fields"><div className="field-group"><div className="field-label-row"><label htmlFor={`broadcast-thumbnail-${id}`}>封面 / 缩略图</label>{details.thumbnail && <button type="button" className="btn-ghost" onClick={() => { onChange({ ...details, thumbnail: undefined }); setPreview(undefined); }}>移除封面</button>}</div><FileDropzone id={`broadcast-thumbnail-${id}`} label={details.thumbnail ? "更换封面" : "选择封面"} name={details.thumbnail?.name} hint={working === "thumbnail" ? "正在上传到直播电脑…" : "JPG / PNG · 最大 2 MB · 建议 16:9"} accept={{ "image/jpeg": [".jpg", ".jpeg"], "image/png": [".png"] }} maxSize={2 * 1024 ** 2} disabled={locked} onFile={file => void upload(file)} /></div>
 </fieldset></aside></div>
     </div>

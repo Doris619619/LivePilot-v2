@@ -47,7 +47,9 @@ try {
   assert.equal(await page.locator("video:visible").evaluate(v => v.muted && v.loop), true);
   await page.getByLabel("保留视频原声").check(); await ready();
   assert.equal(await page.locator("video:visible").evaluate(v => v.paused && !v.muted), true);
-  checks.push("source playback, mute feedback, live original-audio toggle, source switch stops old media");
+  await page.getByRole("slider", { name: "播放进度" }).fill("7");
+  await page.waitForFunction(() => Math.abs(document.querySelector("video").currentTime - 7) < .2 && Math.abs(document.querySelector("audio").currentTime - 3) < .3);
+  checks.push("source playback, mute feedback, live original-audio toggle, live seek alignment, source switch stops old media");
   checks.push("picture click, Space and Enter toggle playback; music pauses together; mute controls do not toggle playback");
 
   await page.getByRole("button", { name: "视频发布", exact: true }).click(); await ready();
@@ -73,6 +75,10 @@ try {
   await page.getByLabel("选择本地视频").setInputFiles(path.resolve("public/preview/normal.mp4")); await ready();
   assert.equal(await page.getByText("音轨尚未检测，请播放确认声音", { exact: true }).isVisible(), true);
   const localUrl = await page.locator("video:visible").getAttribute("src"); assert.match(localUrl, /^blob:/);
+  await page.getByRole("button", { name: "直播配置", exact: true }).click();
+  await page.getByLabel("选择本地视频").setInputFiles(path.resolve("public/preview/normal.mp4")); await ready();
+  await page.getByLabel("保留视频原声").uncheck(); await page.getByRole("button", { name: "发布效果", exact: true }).click(); await ready();
+  assert.equal(await page.locator("audio").count(), 0); assert.equal(await page.locator("video:visible").evaluate(v => v.muted), true);
   await page.getByLabel("测试素材").selectOption("normal"); await ready();
   assert.equal(await page.evaluate(url => window.previewRevoked.includes(url), localUrl), true);
   checks.push("absent/silent sample labels, decode failure, local real metadata, object URL revoked");

@@ -46,7 +46,7 @@ async function command(executable: string, args: string[], signal?: AbortSignal,
 }
 
 /** 同一文件夹里的工具成对使用；本机 tools 优先，其次 PATH，不通过命令 shell 寻址。 */
-async function toolsFor(root: string): Promise<Tools> {
+export async function toolsFor(root: string): Promise<Tools> {
   const local = path.join(path.dirname(root), "tools");
   const candidates = [{ folder: local, suffix: ".exe", local: true }, ...String(process.env.PATH || "").split(path.delimiter).filter(Boolean).map(folder => ({ folder: folder.replace(/^"|"$/g, ""), suffix: process.platform === "win32" ? ".exe" : "", local: false }))];
   for (const candidate of candidates) {

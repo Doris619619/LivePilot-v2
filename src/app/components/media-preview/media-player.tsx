@@ -5,13 +5,19 @@ import { PlayIcon } from "../icons";
 import { mediaTime } from "./local-media";
 import styles from "./preview.module.css";
 
-type Props = { video: string; music?: string; effect: boolean; originalAudio: boolean; loop: boolean; poster?: string; metadata(duration: number, width: number, height: number): void; musicMetadata(duration: number): void };
+type Props = { video: string; music?: string; effect: boolean; originalAudio: boolean; loop: boolean; poster?: string; sourceLabel?: string; metadata(duration: number, width: number, height: number): void; musicMetadata(duration: number): void };
 /** 每组素材独立挂载；合成试听不是成片，缓冲或音乐失败时一起暂停，避免误听为无声。 */
-export default function MediaPlayer({ video, music, effect, originalAudio, loop, poster, metadata, musicMetadata }: Props) {
+export default function MediaPlayer({ video, music, effect, originalAudio, loop, poster, sourceLabel, metadata, musicMetadata }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null); const musicRef = useRef<HTMLAudioElement>(null); const frame = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false); const [position, setPosition] = useState(0); const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.65); const [muted, setMuted] = useState(false); const [error, setError] = useState("");
   const request = useRef({ generation: 0, disposed: false });
+  /** 浏览器错误与设备探测结果分开，网络中断不能当成文件损坏。 */
+  function mediaFailure(media: HTMLMediaElement, label: string) {
+    pause();
+    const code = media.error?.code;
+    setError(code === 2 ? `${label}读取中断，请检查网络和设备连接后重新打开预览。` : code === 3 ? `${label}解码失败，请重试并查看设备检查结果，或更换编码格式。` : code === 4 ? `${label}无法在浏览器中播放，可尝试 MP4（H.264）或兼容的音频编码；尚未判定文件损坏。` : `${label}播放已中断，请重新打开预览后重试。`);
+  }
   /** 暂停会失效尚未完成的 play promise，防止快速切换后背景继续发声。 */
   function pause() { request.current.generation++; videoRef.current?.pause(); musicRef.current?.pause(); setPlaying(false); }
   /** 用视频时间定位独立循环的音乐；短音乐从头续播，长音乐随视频结束停止。 */
@@ -32,7 +38,7 @@ export default function MediaPlayer({ video, music, effect, originalAudio, loop,
   }
   useEffect(() => {
     const v = videoRef.current; const a = musicRef.current;
-    if (v) { v.volume = volume; v.muted = muted || effect && !!music && !originalAudio; }
+    if (v) { v.volume = volume; v.muted = muted || effect && !originalAudio; }
     if (a) { a.volume = volume; a.muted = muted; }
   }, [volume, muted, effect, music, originalAudio]);
   useEffect(() => {
@@ -56,18 +62,19 @@ export default function MediaPlayer({ video, music, effect, originalAudio, loop,
     <div ref={frame} className={styles.player}>
       <video ref={videoRef} src={video} poster={poster} playsInline preload="metadata" loop={loop} aria-label="素材预览视频"
         onLoadedMetadata={event => { const v = event.currentTarget; setDuration(v.duration); metadata(v.duration, v.videoWidth, v.videoHeight); }}
-        onTimeUpdate={event => { setPosition(event.currentTarget.currentTime); if (!loop) align(); }} onSeeked={() => { if (!loop) align(); }}
+        onTimeUpdate={event => { setPosition(event.currentTarget.currentTime); if (!loop) align(); }} onSeeked={() => { align(); }}
         onWaiting={() => musicRef.current?.pause()} onPlaying={() => { if (effect && music && !request.current.disposed && !videoRef.current?.paused) { if (!loop) align(); const current = request.current.generation; void musicRef.current?.play().catch(() => { if (!request.current.disposed && current === request.current.generation) { pause(); setError("背景音乐无法播放，请检查所选文件。"); } }); } }}
-        onEnded={pause} onError={() => { pause(); setError("视频无法在浏览器中播放。请检查文件，或尝试 MP4（H.264）格式；尚未判定文件损坏。"); }} />
-      {music && <audio ref={musicRef} src={music} loop preload="metadata" onLoadedMetadata={event => musicMetadata(event.currentTarget.duration)} onError={() => { if (effect) { pause(); setError("背景音乐无法读取或格式不受支持，请更换音乐。"); } }} />}
+        onEnded={pause} onError={event => mediaFailure(event.currentTarget, "视频")} />
+      {music && <audio ref={musicRef} src={music} loop preload="metadata" onLoadedMetadata={event => musicMetadata(event.currentTarget.duration)} onError={event => { if (effect) mediaFailure(event.currentTarget, "背景音乐"); }} />}
       <button type="button" className={styles.pictureToggle} aria-label={playing ? "点击画面暂停" : "点击画面播放"} onClick={() => playing ? pause() : void play()}>{!playing && <span className={styles.playMark}><PlayIcon width={26} height={26} /></span>}</button>
-      <span className={styles.sourceLabel}>{effect ? "发布效果试听" : "原视频"}</span>
+      <span className={styles.sourceLabel}>{sourceLabel || (effect ? "发布效果试听" : "原视频")}</span>
       <div className={styles.playerControls}>
         <input aria-label="播放进度" type="range" min={0} max={Number.isFinite(duration) ? duration : 0} step={0.1} value={position} disabled={!duration} onChange={event => { const time = Number(event.target.value); if (videoRef.current) videoRef.current.currentTime = time; setPosition(time); align(); }} />
         <div><button type="button" aria-label={playing ? "暂停预览" : "播放预览"} onClick={() => playing ? pause() : void play()}>{playing ? "暂停" : "播放"}</button><span>{mediaTime(position)} / {mediaTime(duration || undefined)}</span><button type="button" aria-label={muted ? "开启声音" : "静音"} onClick={() => setMuted(!muted)}>{muted ? "已静音" : "声音"}</button><input aria-label="预览音量" type="range" min={0} max={1} step={0.05} value={volume} onChange={event => setVolume(Number(event.target.value))} /><button type="button" onClick={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void frame.current?.requestFullscreen().catch(() => setError("当前浏览器无法进入全屏。")); }}>全屏</button></div>
       </div>
     </div>
     {(muted || volume === 0) && <p className={styles.hint}>播放器已静音，不能据此判断素材没有声音。</p>}
+    {!muted && volume > 0 && effect && !originalAudio && !music && <p className={styles.hint}>已按配置关闭视频原声，当前没有背景音乐。</p>}
     {error && <p className={styles.error} role="alert">{error}</p>}
   </>;
 }

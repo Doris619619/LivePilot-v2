@@ -18,6 +18,7 @@ import { pollTasks, reportTasks } from "@/cloud/tasks";
 import { claimChannel } from "@/cloud/bindings";
 import { downloadSlot } from "@/cloud/relay";
 import { beginMaintenance, changeMaintenance } from "@/cloud/maintenance";
+import { pollPreview, acceptPreview } from "@/cloud/preview-relay";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -31,6 +32,11 @@ function guardAgent(request: Request) {
 export async function GET(request: Request, context: Context) {
   try {
     guardAgent(request); const agent = await authenticateAgent(request); const route = (await context.params).path;
+    if (route.join("/") === "media-preview/poll") {
+      const deadline = Date.now() + 15_000;
+      do { await authenticateAgent(request); const requests = pollPreview(agent.id); if (requests.length) return Response.json({ requests }, { headers: { "Cache-Control": "no-store" } }); if (request.signal.aborted) break; await sleep(200); } while (Date.now() < deadline);
+      return Response.json({ requests: [] }, { headers: { "Cache-Control": "no-store" } });
+    }
     if (route.length === 2 && route[0] === "chunks") return downloadSlot(agent.id, uuidSchema.parse(route[1]));
     if (route.join("/") !== "poll") throw new AppError("ROUTE", "设备接口不存在。", 404);
     const deadline = Date.now() + 20_000;
@@ -45,7 +51,9 @@ export async function GET(request: Request, context: Context) {
 /** 配对、建立会话、心跳和频道归属均有独立输入白名单。 */
 export async function POST(request: Request, context: Context) {
   try {
-    guardAgent(request); const route = (await context.params).path.join("/"); const raw = await readJson(request, 2 * 1024 * 1024);
+    guardAgent(request); const route = (await context.params).path.join("/");
+    if (route.startsWith("media-preview/")) { const agent = await authenticateAgent(request); await acceptPreview(agent.id, uuidSchema.parse(route.slice("media-preview/".length)), request); return Response.json({ ok: true }); }
+    const raw = await readJson(request, 2 * 1024 * 1024);
     if (route === "pair") {
       const value = z.object({ protocol: z.literal(PROTOCOL), agentId: idSchema, code: z.string().length(64), token: z.string().length(64), currentAgentId: idSchema.optional() }).strict().parse(raw);
       const customer = await authenticate(request, true);
@@ -77,12 +85,12 @@ export async function POST(request: Request, context: Context) {
       return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret }, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1"])).max(3).optional() }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1"])).max(4).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       const session = await openSession(agent.id, value.bootId, value.instances); await agentStore(agent.id).write("capabilities.json", value.capabilities || []);
-      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1"] });
+      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1"] });
     }
     if (route === "heartbeat") {
       const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);

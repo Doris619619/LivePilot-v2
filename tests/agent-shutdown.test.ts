@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ stopped: false, capabilities: [] as string[], receive: vi.fn(), drain: vi.fn(), poll: vi.fn(), startChat: vi.fn(), stopChat: vi.fn(), syncEnvironment: vi.fn() }));
 vi.mock("@/core/config", () => ({ config: () => ({ origin: "https://example.invalid" }), dataRoot: () => "fixture", instanceDescriptors: () => [] }));
 vi.mock("@/core/ownership", () => ({ claimHost: vi.fn() }));
-vi.mock("@/agent/executor", () => ({ Executor: class { services = new Map(); registerChannels = vi.fn(); connectPublishing = vi.fn(); stopPublishing = vi.fn(); startChat = state.startChat; stopChat = state.stopChat; } }));
+vi.mock("@/agent/executor", () => ({ Executor: class { services = new Map(); mediaPreview = { connect: vi.fn() }; registerChannels = vi.fn(); connectPublishing = vi.fn(); stopPublishing = vi.fn(); startChat = state.startChat; stopChat = state.stopChat; } }));
 vi.mock("@/agent/worker", () => ({ Worker: class { problems = new Map(); receive = state.receive; drain = state.drain; reports = vi.fn().mockResolvedValue([]); acknowledge = vi.fn(); } }));
 vi.mock("@/agent/transport", () => ({ Transport: class { post = vi.fn().mockImplementation(async () => ({ session: "fixture", capabilities: state.capabilities })); request = state.poll; } }));
 vi.mock("@/agent/live-chat-environment", async original => ({ ...await original<object>(), syncLiveChatEnvironment: state.syncEnvironment }));

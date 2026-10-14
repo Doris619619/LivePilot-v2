@@ -39,6 +39,9 @@
 .checks { margin-top: 18px; }
 .checks > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .checks h4 { margin: 0; font-size: 13px; }
+.fileCheck { margin: 12px 0; font-size: 12px; }
+.checkActions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.checkActions button { font-size: 12px; padding: 8px 10px; }
 .checks > div:first-child > span { color: #8a6b31; font-size: 10px; background: #fbf5e9; padding: 3px 6px; border-radius: 3px; }
 .hint, .warning, .error, .result { font-size: 12px; line-height: 1.8; margin: 10px 0; }
 .result { color: #40516a; }
