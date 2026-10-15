@@ -1,10 +1,12 @@
 /** 发布工作台只保留发布视频和我的发布；配置、授权与管理员策略分层呈现。 */
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import WorkspaceSidebar from "../components/workspace-sidebar";
+import { useWorkbenchActive } from "../components/workbench-context";
+import WorkbenchNavigation from "../components/workbench-navigation";
+import { WorkspaceUserContext } from "../components/workspace-account";
 import { api } from "../client-request";
-import { RefreshIcon, VideoIcon } from "../components/icons";
+import { RefreshIcon } from "../components/icons";
 import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { PublishingDevice } from "./publishing-removal-feedback";
@@ -26,6 +28,7 @@ type Inventory = { instances: InstanceDescriptor[]; agents?: PublishingDevice[] 
 async function post<T>(value: unknown) { return api<T>("/api/publishing", { method: "POST", timeoutMs: 60000, headers: { "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify(value) }); }
 /** Cloud状态轮询独立于表单和持久计划，不覆盖用户正在编辑的输入。 */
 export default function PublishingConsole() {
+  const active = useWorkbenchActive(); const member = useContext(WorkspaceUserContext)?.username;
   const [view, setView] = useState<View>(); const [username, setUsername] = useState(""); const [targets, setTargets] = useState<PublishingTarget[]>([]); const [chosen, setChosen] = useState("");
   const [devices, setDevices] = useState<PublishingDevice[]>();
   const [tab, setTab] = useState("发布视频"); const [setting, setSetting] = useState("发布配置"); const [index, setIndex] = useState<PackageIndex>(); const [profileId, setProfileId] = useState("");
@@ -68,7 +71,7 @@ export default function PublishingConsole() {
     /** 账号与设备清单用于隔离本地草稿，不读取Token或本机任意路径。 */
     async function load() {
       try {
-        const [next, inventory, session] = await Promise.all([api<View>("/api/publishing"), api<Inventory>("/api/instances"), api<{ user: { username: string } }>("/api/session")]);
+        const [next, inventory, session] = await Promise.all([api<View>("/api/publishing"), api<Inventory>("/api/instances"), member ? Promise.resolve({ user: { username: member } }) : api<{ user: { username: string } }>("/api/session")]);
         if (cancelled) return;
         const values = inventory.instances.filter(instance => instance.agentId).map(instance => ({ agentId: instance.agentId!, instanceId: instance.id, name: (instance.agentName || instance.agentId) + " · " + instance.name }));
         const reference = new URLSearchParams(window.location.search).get("oauthResult");
@@ -92,8 +95,14 @@ export default function PublishingConsole() {
         initialized.current = true;
       } catch (e) { if (!cancelled) setError((e as Error).message); }
     }
-    void load(); const timer = setInterval(() => { if (initialized.current) void refresh(); }, 10_000); return () => { cancelled = true; clearInterval(timer); invalidateDeviceRead(); };
-  }, [refresh, loadAttempt, invalidateDeviceRead]);
+    void load(); return () => { cancelled = true; invalidateDeviceRead(); };
+  }, [refresh, loadAttempt, invalidateDeviceRead, member]);
+  /** 隐藏时降低状态刷新频率；返回只更新数据，不重新初始化账号、向导和编辑器。 */
+  useEffect(() => {
+    if (active && initialized.current) void refresh();
+    const timer = setInterval(() => { if (initialized.current) void refresh(); }, active ? 10_000 : 30_000);
+    return () => clearInterval(timer);
+  }, [active, refresh]);
   /** 首次读取失败重试完整账号和设备上下文；已进入工作台时只刷新状态，保留当前编辑。 */
   function reload() { if (username) void refresh(true); else { initialized.current = false; setError(""); setLoadAttempt(value => value + 1); } }
   /** 操作错误绑定页面及账号；确认计划可由就地表单接管，不把新草稿错误带入历史。 */
@@ -176,12 +185,12 @@ export default function PublishingConsole() {
   /** 从重复素材提示直接进入历史；保留新计划及表单，返回发布视频可以继续调整。 */
   function viewHistory() { navigate("我的发布"); setHistoryEntry(true); }
   const heading = editing ? editing === "new" ? "新建配置" : "编辑配置" : tab === "设置" ? setting : tab;
-  return <div className="workspace-shell publishing-workspace"><WorkspaceSidebar className="publishing-sidebar" label="视频发布导航">
-    <Link className="sidebar-link" href="/workspace"><VideoIcon /><span>直播工作台</span></Link><div className="sidebar-heading">视频发布</div>
+  return <div className="workspace-shell publishing-workspace"><WorkbenchNavigation className="publishing-sidebar" label="视频发布导航">
+    <div className="sidebar-heading">视频发布</div>
     <nav aria-label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</nav>
     <div className="sidebar-heading">发布管理</div><nav className="publishing-settings-navigation" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} className={"sidebar-link " + (tab === "设置" && setting === name ? "is-active" : "")} aria-current={tab === "设置" && setting === name ? "page" : undefined} onClick={() => { setSetting(name); navigate("设置"); }}>{name}</button>)}</nav>
     {view?.administrator && <div className="publishing-admin-navigation"><div className="sidebar-heading">管理员</div><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></div>}
-  </WorkspaceSidebar><main id="workspace" tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
+  </WorkbenchNavigation><main id={active ? "workspace" : undefined} tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
     {visibleError && <div className="publishing-error" role="alert"><span>{visibleError}</span><button onClick={reload}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
     {!view || !username ? <p className="publishing-empty" role="status">正在读取…</p> : <>
       {!accepted && <section className="publishing-warning publishing-onboarding"><p>使用前请同意 <Link href="/privacy">隐私政策</Link> 和 <Link href="/terms">服务条款</Link>。</p><button disabled={busy} onClick={() => void perform(async () => { await post({ action: "consent", version: PRIVACY_VERSION }); await refresh(); })}>同意并继续</button></section>}

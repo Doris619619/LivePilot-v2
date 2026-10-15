@@ -8,6 +8,7 @@ import { api, requestProblem } from "./client-request";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
+import { useWorkbenchActive } from "./components/workbench-context";
 
 /** 保存实例媒体与公开直播详情，不保存路径、图片原始数据或授权信息。 */
 function readDraft(id: string): Selection | undefined {
@@ -19,6 +20,7 @@ function readDraft(id: string): Selection | undefined {
 
 /** 每个调用绑定一个稳定实例 ID；请求和草稿永远携带该 ID。 */
 export function useInstance(instance: InstanceDescriptor) {
+  const active = useWorkbenchActive();
   const id = targetKey(instance); const instanceId = instance.id; const agentId = instance.agentId;
   const [data, setData] = useState<Dashboard>();
   const { durationMs, synchronize, clear: clearClock } = useStreamClock();
@@ -68,12 +70,12 @@ export function useInstance(instance: InstanceDescriptor) {
   useEffect(() => {
     const first = setTimeout(() => void refresh(), 0);
     const clock=setInterval(()=>setNow(Date.now()),1000);
-    const interval = setInterval(() => void refresh(), 5000);
+    const interval = setInterval(() => void refresh(), active ? 5000 : 15000);
     /** 素材发布后刷新列表，不自动选择或替换当前直播内容。 */
     const mediaUpdated = () => { void refresh(); };
     window.addEventListener("livepilot-media-updated", mediaUpdated);
     return () => { clearTimeout(first); clearInterval(interval); clearInterval(clock); window.removeEventListener("livepilot-media-updated", mediaUpdated); };
-  }, [refresh]);
+  }, [refresh, active]);
 
   /** 修改当前实例草稿，在 OAuth 页面往返后仍可恢复选择。 */
   function select(next: Partial<Selection>) {

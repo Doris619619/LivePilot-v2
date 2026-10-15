@@ -1,0 +1,19 @@
+/* 常驻外壳只提供一层网格；休眠视图不参与布局、焦点或读屏顺序。 */
+.workbench-content { min-width: 0; grid-column: 2; }
+.workbench-shell { overflow-anchor: none; grid-template-columns: 224px minmax(0, 1fr); }
+.workbench-shell > .workspace-sidebar { position: fixed; left: 0; top: 64px; width: 224px; height: calc(100dvh - 64px); }
+.workbench-shell > .workspace-sidebar > .workspace-sidebar-content { flex: 1; height: auto; min-height: 0; }
+body:has(.workbench-shell) > footer { margin-left: 224px; }
+.workbench-view { min-height: calc(100dvh - 64px); background: var(--surface-base); }
+.workbench-view[hidden] { display: none !important; }
+.workbench-view > .workspace-shell { display: block; min-height: 0; }
+.workbench-primary { padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+.workbench-transfer { margin-top: 24px; align-items: flex-start; }
+.workbench-transfer > span { display: grid; gap: 4px; min-width: 0; }
+.workbench-transfer strong { font-size: 13px; font-weight: 500; }
+.workbench-transfer small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: 12px; }
+@media (max-width: 760px) {
+  body:has(.workbench-shell) > footer { margin-left: 0; }
+  .workbench-shell > .workspace-mobile-navigation { position: sticky; top: 60px; z-index: 40; }
+  .workbench-view { min-height: calc(100dvh - 116px); }
+}

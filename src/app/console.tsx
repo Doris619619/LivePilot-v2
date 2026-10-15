@@ -10,12 +10,13 @@ import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
 import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
-import WorkspaceSidebar from "./components/workspace-sidebar";
-import Link from "next/link";
-import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
+import { useWorkbenchActive } from "./components/workbench-context";
+import WorkbenchNavigation from "./components/workbench-navigation";
+import { AlertCircleIcon, DeviceIcon, RefreshIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
 export default function Console() {
+  const active = useWorkbenchActive();
   const [channels, setChannels] = useState<Record<string, string>>({});
   const [uploadRequest, setUploadRequest] = useState<UploadRequest>();
   /** 从空素材入口带入目标 OBS 和素材类型，不替换上传面板已有任务。 */
@@ -66,19 +67,16 @@ export default function Console() {
       } finally { reading = false; }
     }
     void load();
-    const timer = setInterval(() => void load(), 10_000);
+    const timer = setInterval(() => void load(), active ? 10_000 : 30_000);
     return () => { clearInterval(timer); abort.abort(); };
-  }, [refreshKey]);
+  }, [refreshKey, active]);
 
   // 未完成的邀请留在配对入口，不冒充另一台已接入的电脑。
   const devices = agents?.filter(a => !a.revoked && a.paired !== false);
 
   return (
     <OAuthFeedbackProvider><div className="workspace-shell">
-      <WorkspaceSidebar label="工作台导航">
-        <div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div>
-        <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
-        <Link className="sidebar-link" href="/publishing"><VideoIcon /><span>视频发布</span></Link>
+      <WorkbenchNavigation label="工作台导航">
         <div className="sidebar-heading device-heading">直播设备</div>
         <nav aria-label="设备定位">
           {devices ? devices.map(agent => (
@@ -90,10 +88,10 @@ export default function Console() {
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
         </nav>
         {agents && <div className="device-pairing"><button type="button" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button></div>}
-      </WorkspaceSidebar>
+      </WorkbenchNavigation>
       {agents && <DevicePairing model={pairing} />}
 
-      <main className="main-wrapper" id="workspace" tabIndex={-1}>
+      <main className="main-wrapper" id={active ? "workspace" : undefined} tabIndex={-1}>
         {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<><h1>直播工作台</h1><p className="workspace-subtitle">{devices ? `${devices.length} 台直播电脑 · ` : ""}{instances.length} 个直播实例</p></>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
