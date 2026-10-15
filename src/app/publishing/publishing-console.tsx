@@ -4,6 +4,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useWorkbenchActive } from "../components/workbench-context";
 import WorkbenchNavigation from "../components/workbench-navigation";
+import SidebarGroup from "../components/sidebar-group";
 import { WorkspaceUserContext } from "../components/workspace-account";
 import { api } from "../client-request";
 import { RefreshIcon } from "../components/icons";
@@ -186,10 +187,9 @@ export default function PublishingConsole() {
   function viewHistory() { navigate("我的发布"); setHistoryEntry(true); }
   const heading = editing ? editing === "new" ? "新建配置" : "编辑配置" : tab === "设置" ? setting : tab;
   return <div className="workspace-shell publishing-workspace"><WorkbenchNavigation className="publishing-sidebar" label="视频发布导航">
-    <div className="sidebar-heading">发布任务</div>
-    <nav className="sidebar-group-items" aria-label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</nav>
-    <div className="sidebar-heading">配置与账号</div><nav className="sidebar-group-items publishing-settings-navigation" aria-label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} className={"sidebar-link " + (tab === "设置" && setting === name ? "is-active" : "")} aria-current={tab === "设置" && setting === name ? "page" : undefined} onClick={() => { setSetting(name); navigate("设置"); }}>{name}</button>)}</nav>
-    {view?.administrator && <div className="publishing-admin-navigation"><div className="sidebar-heading">管理员</div><nav className="sidebar-group-items" aria-label="发布管理"><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></nav></div>}
+    <SidebarGroup name="publishing-tasks" title="发布任务" label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</SidebarGroup>
+    <SidebarGroup name="publishing-settings" title="配置与账号" label="发布设置">{["发布配置", "发布账号"].map(name => <button key={name} className={"sidebar-link " + (tab === "设置" && setting === name ? "is-active" : "")} aria-current={tab === "设置" && setting === name ? "page" : undefined} onClick={() => { setSetting(name); navigate("设置"); }}>{name}</button>)}</SidebarGroup>
+    {view?.administrator && <SidebarGroup name="publishing-admin" title="管理员" label="发布管理"><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></SidebarGroup>}
   </WorkbenchNavigation><main id={active ? "workspace" : undefined} tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
     {visibleError && <div className="publishing-error" role="alert"><span>{visibleError}</span><button onClick={reload}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
     {!view || !username ? <p className="publishing-empty" role="status">正在读取…</p> : <>

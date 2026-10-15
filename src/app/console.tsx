@@ -12,6 +12,7 @@ import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
 import { useWorkbenchActive } from "./components/workbench-context";
 import WorkbenchNavigation from "./components/workbench-navigation";
+import SidebarGroup from "./components/sidebar-group";
 import { AlertCircleIcon, DeviceIcon, RefreshIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
@@ -77,8 +78,7 @@ export default function Console() {
   return (
     <OAuthFeedbackProvider><div className="workspace-shell">
       <WorkbenchNavigation label="工作台导航">
-        <div className="sidebar-heading device-heading">直播设备</div>
-        <nav className="sidebar-group-items" aria-label="设备定位">
+        <SidebarGroup name="live-devices" title="直播设备" label="设备定位">
           {devices ? devices.map(agent => (
             <a key={agent.id} className="sidebar-link" href={"#device-" + agent.id}>
               <DeviceIcon /><span>{agent.name}</span><span className={"device-dot " + (agent.online ? "online" : "")} aria-label={agent.online ? "在线" : "离线"} />
@@ -86,7 +86,7 @@ export default function Console() {
           )) : loaded && <a className="sidebar-link" href="#device-local"><DeviceIcon /><span>本机设备</span></a>}
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
-        </nav>
+        </SidebarGroup>
         {agents && <div className="device-pairing"><button type="button" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button></div>}
       </WorkbenchNavigation>
       {agents && <DevicePairing model={pairing} />}

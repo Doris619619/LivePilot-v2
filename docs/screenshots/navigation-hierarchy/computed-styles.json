@@ -4,6 +4,7 @@
     "headings": [
       {
         "text": "发布任务",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -16,6 +17,7 @@
       },
       {
         "text": "配置与账号",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -33,11 +35,12 @@
     "headings": [
       {
         "text": "发布任务",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
         "background": "rgb(232, 237, 244)",
-        "height": 36,
+        "height": 44,
         "indent": "20px",
         "top": "24px",
         "bottom": "8px",
@@ -45,11 +48,12 @@
       },
       {
         "text": "配置与账号",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
         "background": "rgb(232, 237, 244)",
-        "height": 36,
+        "height": 44,
         "indent": "20px",
         "top": "24px",
         "bottom": "8px",
@@ -62,6 +66,7 @@
     "headings": [
       {
         "text": "直播设备",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -79,6 +84,7 @@
     "headings": [
       {
         "text": "工作空间",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -96,6 +102,7 @@
     "headings": [
       {
         "text": "发布任务",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -108,6 +115,7 @@
       },
       {
         "text": "配置与账号",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
@@ -120,6 +128,7 @@
       },
       {
         "text": "管理员",
+        "expanded": "true",
         "size": "15px",
         "weight": "650",
         "color": "rgb(32, 43, 61)",
