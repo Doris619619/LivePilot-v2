@@ -1,0 +1,76 @@
+[
+  {
+    "surface": "publishing-desktop",
+    "headings": [
+      {
+        "text": "发布任务",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      },
+      {
+        "text": "管理",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      }
+    ]
+  },
+  {
+    "surface": "publishing-390",
+    "headings": [
+      {
+        "text": "发布任务",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      },
+      {
+        "text": "管理",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      }
+    ]
+  },
+  {
+    "surface": "live-desktop",
+    "headings": [
+      {
+        "text": "直播设备",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      }
+    ]
+  },
+  {
+    "surface": "admin",
+    "headings": [
+      {
+        "text": "工作空间",
+        "size": "13px",
+        "weight": "600",
+        "color": "rgb(83, 98, 120)",
+        "top": "0px",
+        "bottom": "8px",
+        "tracking": "normal"
+      }
+    ]
+  }
+]

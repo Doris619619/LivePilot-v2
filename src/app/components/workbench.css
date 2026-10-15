@@ -8,6 +8,10 @@ body:has(.workbench-shell) > footer { margin-left: 224px; }
 .workbench-view[hidden] { display: none !important; }
 .workbench-view > .workspace-shell { display: block; min-height: 0; }
 .workbench-primary { padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+/* 模块用字重和图标定位；蓝色底只属于当前具体页面。 */
+.workbench-primary .sidebar-link.is-active { background: transparent; color: var(--text-primary); font-weight: 600; }
+.workbench-primary .sidebar-link.is-active > svg { color: var(--accent-primary); }
+.workbench-primary .sidebar-link.is-active:hover { background: var(--surface-active); }
 .workbench-transfer { margin-top: 24px; align-items: flex-start; }
 .workbench-transfer > span { display: grid; gap: 4px; min-width: 0; }
 .workbench-transfer strong { font-size: 13px; font-weight: 500; }

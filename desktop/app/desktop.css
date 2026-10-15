@@ -182,7 +182,6 @@ body { background: var(--bg-app); font-size: 16px; }
 .sidebar-link { min-height: 50px; padding: 11px 16px; border-radius: 9px; font-size: 16px; gap: 13px; }
 .sidebar-link > svg { width: 19px; height: 19px; }
 .sidebar-link.is-active { box-shadow: inset 3px 0 0 var(--accent-primary); }
-.sidebar-heading { margin: 38px 0 12px; font-size: 14px; letter-spacing: .01em; }
 .desktop-status { padding: 28px 16px 0; font-size: 14px; }
 .main-wrapper { padding: 42px clamp(28px, 4vw, 72px) 64px; background: var(--bg-app); }
 .main-wrapper > * { width: min(100%, 1480px); margin-left: auto; margin-right: auto; }
