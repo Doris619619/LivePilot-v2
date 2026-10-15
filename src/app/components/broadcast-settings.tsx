@@ -6,7 +6,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/primitives";
 import FileDropzone from "./ui/file-dropzone";
 import { api } from "../client-request";
 import { defaultBroadcast, type BroadcastDetails, type Playlist } from "@/shared/broadcast";
-import type { InstanceDescriptor } from "@/shared/types";
+import type { InstanceDescriptor, Selection } from "@/shared/types";
+import BroadcastProfiles from "./broadcast-profiles";
 import { ExternalLinkIcon } from "./icons";
 import MediaPreview, { MediaPreviewButton } from "./media-preview/media-preview";
 import { titleCharacters, descriptionBytes } from "@/shared/video-metadata";
@@ -20,21 +21,22 @@ function desktopViewport() { return window.matchMedia("(min-width: 601px)").matc
 function serverViewport() { return false; }
 
 /** 配置只作用于当前实例；上传中锁定表单，防止异步完成覆盖新草稿。 */
-export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onBusyChange, media, controls }: {
+export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onSelectionChange, onBusyChange, media, controls }: {
   videoName?: string; musicName?: string; videoAudio?: boolean; live?: boolean;
   media: ReactNode; controls: ReactNode;
   id: string; instance: InstanceDescriptor; value?: BroadcastDetails; disabled: boolean; channel: string; channelId?: string; broadcastId?: string;
-  onChange: (value: BroadcastDetails) => void; onBusyChange: (busy: boolean) => void;
+  onChange: (value: BroadcastDetails) => void; onSelectionChange: (value: Selection) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const [tab, setTab] = useState("content");
   const desktop = useSyncExternalStore(subscribeViewport, desktopViewport, serverViewport);
-  const tabs = [{ id: "content", label: "直播内容" }, { id: "media", label: "音视频" }, { id: "publish", label: "发布设置" }, { id: "start", label: "开始直播" }];
+  const tabs = [{ id: "content", label: "直播内容" }, { id: "media", label: "音视频" }, { id: "publish", label: "直播选项" }, { id: "start", label: "开始直播" }];
   const details = value || defaultBroadcast();
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
   const [playlists, setPlaylists] = useState<Playlist[]>();
   const [preview, setPreview] = useState<{ id: string; url: string }>();
-  const locked = disabled || !!working;
+  const [profilesBusy, setProfilesBusy] = useState(false);
+  const locked = disabled || !!working || profilesBusy;
   const studio = broadcastId ? `https://studio.youtube.com/video/${encodeURIComponent(broadcastId)}/edit` : "https://studio.youtube.com";
   const privacy = { public: "公开", unlisted: "不公开列出", private: "私密" }[details.privacy];
   /** 每个请求携带设备及实例，失败保留原来已完成的设置。 */
@@ -67,6 +69,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
   }
   return <Tabs value={tab} onValueChange={setTab} asChild><section className="broadcast-settings" aria-labelledby={`broadcast-heading-${id}`}>
     <h3 className="visually-hidden" id={`broadcast-heading-${id}`}>直播设置</h3>
+    {channelId && <BroadcastProfiles key={`${id}:${channelId}`} target={{ ...(instance.agentId ? { agentId: instance.agentId } : {}), instanceId: instance.id, channelId }} value={{ video: videoName || "", music: musicName || "", videoAudio: !!videoAudio, broadcast: details }} disabled={disabled || !!working} onApply={onSelectionChange} onBusyChange={busy => { setProfilesBusy(busy); onBusyChange(busy); }} />}
     <div className="broadcast-editor-grid">
       <div className="broadcast-edit-column">
       <TabsList aria-label="开播配置">{tabs.map((item, index) => <TabsTrigger key={item.id} value={item.id} id={`studio-tab-${id}-${item.id}`}><span className="step-number" aria-hidden="true">{index + 1}</span><span>{item.label}</span></TabsTrigger>)}</TabsList>
@@ -81,7 +84,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       </TabsContent>
       <TabsContent className="studio-panel" value="media" aria-labelledby={`studio-tab-${id}-media`}>{media}</TabsContent>
       <TabsContent className="studio-panel" value="publish" aria-labelledby={`studio-tab-${id}-publish`}>
-        <fieldset disabled={locked} className="broadcast-fields"><legend className="visually-hidden">发布设置</legend>        <div className="broadcast-pair">
+        <fieldset disabled={locked} className="broadcast-fields"><legend className="visually-hidden">直播选项</legend>        <div className="broadcast-pair">
           <div className="field-group"><label htmlFor={`broadcast-privacy-${id}`}>公开范围</label><select id={`broadcast-privacy-${id}`} value={details.privacy} onChange={e => onChange({ ...details, privacy: e.target.value as BroadcastDetails["privacy"] })}><option value="public">公开（默认）</option><option value="unlisted">不公开列出</option><option value="private">私密</option></select><span className="field-hint">{details.privacy === "public" ? "任何人都可以观看和搜索到这场直播。" : details.privacy === "unlisted" ? "有链接的人可以观看，不公开列出。" : "仅你和获准的用户可以观看。"}</span></div>
           <div className="field-group"><label htmlFor={`broadcast-audience-${id}`}>观众</label><select id={`broadcast-audience-${id}`} value={String(details.madeForKids)} onChange={e => onChange({ ...details, madeForKids: e.target.value === "true" })}><option value="false">不，内容不是面向儿童的</option><option value="true">是，内容是面向儿童的</option></select>{details.madeForKids && <span className="field-hint">面向儿童的内容会限制实时聊天等功能。</span>}</div>
         </div>

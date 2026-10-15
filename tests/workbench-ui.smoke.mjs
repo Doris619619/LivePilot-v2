@@ -87,7 +87,7 @@ try {
   await expect(publishingSettings).toHaveAttribute("aria-expanded", "true");
   await publishingSettings.press("Enter");
   await expect(publishingSettings).toBeFocused();
-  await expect(page.getByRole("navigation", { name: "发布设置", includeHidden: true })).toBeHidden();
+  await expect(page.getByRole("navigation", { name: "视频发布设置", includeHidden: true })).toBeHidden();
   await expect(page.getByRole("navigation", { name: "发布功能" })).toBeVisible();
   await expect(publish.getByRole("button", { name: "检测素材", exact: true })).toBeEnabled();
   assert.equal(await titleNode.evaluate(node => node.isConnected), true);
@@ -118,11 +118,11 @@ try {
   await expect(publishingSettings).toHaveAttribute("aria-expanded", "false");
   await publishingSettings.press("Space");
   await expect(publishingSettings).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("button", { name: "发布配置", exact: true }).click();
+  await page.getByRole("button", { name: "视频发布配置", exact: true }).click();
   await publish.getByRole("button", { name: "编辑", exact: true }).click();
-  await publish.getByLabel("配置名称", { exact: true }).fill("尚未保存的发布配置");
+  await publish.getByLabel("配置名称", { exact: true }).fill("尚未保存的视频发布配置");
   await switchTo("直播工作台"); await switchTo("视频发布");
-  await expect(publish.getByLabel("配置名称", { exact: true })).toHaveValue("尚未保存的发布配置");
+  await expect(publish.getByLabel("配置名称", { exact: true })).toHaveValue("尚未保存的视频发布配置");
   await publish.getByRole("button", { name: "返回", exact: true }).click();
   await page.getByRole("button", { name: "我的发布", exact: true }).click();
   await switchTo("直播工作台"); await switchTo("视频发布");

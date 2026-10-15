@@ -1,4 +1,4 @@
-/* 文件用途：按内容、素材、发布设置与控制区组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
+/* 文件用途：按内容、素材、直播选项与控制区组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
 
 "use client";
 
@@ -169,7 +169,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>
 
           </div></details>
-          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
+          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onSelectionChange={select} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
             <h3 className="visually-hidden" id={`step-2-${id}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">

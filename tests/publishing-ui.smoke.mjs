@@ -200,8 +200,8 @@ try {
   assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true);
   await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor();
   // 侧栏直接进入配置/账号，返回发布流程保留原步骤与所选设备，不重复走设置子菜单。
-  await page.getByRole("button", { name: "发布配置", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "发布配置", exact: true }).getAttribute("aria-current"), "page");
+  await page.getByRole("button", { name: "视频发布配置", exact: true }).click(); await page.getByRole("heading", { name: "视频发布配置", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "视频发布配置", exact: true }).getAttribute("aria-current"), "page");
   await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
   await page.getByRole("button", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
@@ -216,7 +216,7 @@ try {
   assert.equal(await page.getByLabel("标题模板").isDisabled(), true); assert.equal(await page.getByLabel("说明模板").isDisabled(), true);
   assert.equal(await page.getByLabel("是否专为儿童制作").isDisabled(), true); assert.equal(await page.getByRole("button", { name: "返回", exact: true }).isDisabled(), true);
   releaseSettings(); settingsSave = undefined;
-  await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); assert.equal(await page.getByLabel("发布配置", { exact: true }).inputValue(), view.profiles.at(-1).id); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
+  await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); assert.equal(await page.getByLabel("视频发布配置", { exact: true }).inputValue(), view.profiles.at(-1).id); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
   await page.getByLabel("周一发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("20:00"); await page.getByLabel("周五发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周日发布时间", { exact: true }).fill("12:00");
   await page.getByRole("button", { name: "周一添加时间", exact: true }).click(); assert.equal(await page.getByLabel("周一发布时间 2", { exact: true }).count(), 1); await page.getByRole("button", { name: "删除周一时间 2", exact: true }).click();
   await stepButton(page, "准备素材").focus(); await page.keyboard.press("Enter"); await expectStep(page, "准备素材");
@@ -241,7 +241,7 @@ try {
   await page.getByLabel("发布账号", { exact: true }).selectOption(accountOne); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00"); await assertTimezone(page, "Asia/Shanghai");
   await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true); await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期");
   holdPreview = true; const pendingPreview = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/publishing" && request.postDataJSON().action === "plan-preview");
-  await page.getByRole("button", { name: "生成排期", exact: true }).click(); await pendingPreview; assert.equal(await page.getByLabel("发布配置", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("开始日期", { exact: true }).isDisabled(), true); assert.equal(await page.getByRole("button", { name: /^时区/ }).isDisabled(), true); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).isDisabled(), true); holdPreview = false; releasePreview();
+  await page.getByRole("button", { name: "生成排期", exact: true }).click(); await pendingPreview; assert.equal(await page.getByLabel("视频发布配置", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("开始日期", { exact: true }).isDisabled(), true); assert.equal(await page.getByRole("button", { name: /^时区/ }).isDisabled(), true); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).isDisabled(), true); holdPreview = false; releasePreview();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   assert.equal(latestPlan.profile.accountId, accountOne); assert.equal(latestPlan.items.filter(item => !item.excluded).length, 98); assert.equal(latestPlan.skippedOccupied, 6); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "20:00");
   assert.equal(await page.getByRole("button", { name: "日历", exact: true }).getAttribute("aria-pressed"), "true"); await page.locator('[aria-label="发布排期日历"]').waitFor();
@@ -297,7 +297,7 @@ try {
   await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行"); await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材");
   for (const checkbox of await page.getByRole("checkbox", { name: /暂不发布/ }).all()) assert.equal(await checkbox.isDisabled(), true);
   assert.equal(await page.getByRole("radio").count(), 0); assert.equal(await page.getByRole("button", { name: "检测素材", exact: true }).count(), 0);
-  await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("发布配置", { exact: true }).getAttribute("readonly"), ""); assert.equal(await page.getByRole("button", { name: "新建配置", exact: true }).count(), 0);
+  await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("视频发布配置", { exact: true }).getAttribute("readonly"), ""); assert.equal(await page.getByRole("button", { name: "新建配置", exact: true }).count(), 0);
   assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "21:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("22:00"); await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行");
   assert.deepEqual(latestPlan.rule, beforeReschedule.rule); assert.equal(actions.filter(action => action === "plan-reschedule-preview").length, 0);
   await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "22:00");
