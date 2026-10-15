@@ -200,7 +200,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {pathname === "/admin" ? <div className="workspace-shell"><WorkspaceSidebar label="管理员导航"><div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div><Link className="sidebar-link is-active" href="/admin" aria-current="page">管理员总览</Link><Link className="sidebar-link" href="/workspace">直播工作台</Link><Link className="sidebar-link" href="/publishing">视频发布</Link></WorkspaceSidebar>{children}</div> : children}
+      {pathname === "/admin" ? <div className="workspace-shell"><WorkspaceSidebar label="管理员导航"><div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div><nav className="sidebar-group-items" aria-label="工作空间"><Link className="sidebar-link is-active" href="/admin" aria-current="page">管理员总览</Link><Link className="sidebar-link" href="/workspace">直播工作台</Link><Link className="sidebar-link" href="/publishing">视频发布</Link></nav></WorkspaceSidebar>{children}</div> : children}
     </WorkspaceUserContext.Provider></ApiSettingsProvider>
   );
 }

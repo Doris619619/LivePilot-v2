@@ -4,18 +4,24 @@
     "headings": [
       {
         "text": "发布任务",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
       },
       {
-        "text": "管理",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "text": "配置与账号",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
@@ -27,18 +33,24 @@
     "headings": [
       {
         "text": "发布任务",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
       },
       {
-        "text": "管理",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "text": "配置与账号",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
@@ -50,9 +62,12 @@
     "headings": [
       {
         "text": "直播设备",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
@@ -64,10 +79,54 @@
     "headings": [
       {
         "text": "工作空间",
-        "size": "13px",
-        "weight": "600",
-        "color": "rgb(83, 98, 120)",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
         "top": "0px",
+        "bottom": "8px",
+        "tracking": "normal"
+      }
+    ]
+  },
+  {
+    "surface": "publishing-admin",
+    "headings": [
+      {
+        "text": "发布任务",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      },
+      {
+        "text": "配置与账号",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
+        "top": "24px",
+        "bottom": "8px",
+        "tracking": "normal"
+      },
+      {
+        "text": "管理员",
+        "size": "15px",
+        "weight": "650",
+        "color": "rgb(32, 43, 61)",
+        "background": "rgb(232, 237, 244)",
+        "height": 36,
+        "indent": "20px",
+        "top": "24px",
         "bottom": "8px",
         "tracking": "normal"
       }

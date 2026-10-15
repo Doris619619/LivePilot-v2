@@ -78,7 +78,7 @@ export default function Console() {
     <OAuthFeedbackProvider><div className="workspace-shell">
       <WorkbenchNavigation label="工作台导航">
         <div className="sidebar-heading device-heading">直播设备</div>
-        <nav aria-label="设备定位">
+        <nav className="sidebar-group-items" aria-label="设备定位">
           {devices ? devices.map(agent => (
             <a key={agent.id} className="sidebar-link" href={"#device-" + agent.id}>
               <DeviceIcon /><span>{agent.name}</span><span className={"device-dot " + (agent.online ? "online" : "")} aria-label={agent.online ? "在线" : "离线"} />

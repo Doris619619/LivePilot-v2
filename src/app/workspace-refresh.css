@@ -25,6 +25,9 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .workspace-account .account-menu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .sidebar-link { min-height: 44px; padding: 10px 12px; font-size: 15px; color: var(--text-primary); gap: 10px; margin-bottom: 4px; position: relative; }
 .sidebar-link.is-active { box-shadow: none; }
+/* 分组标题保持静态；子项整体缩进，包含选中底色与焦点轮廓。 */
+.workspace-sidebar-navigation .sidebar-group-items { display: grid; gap: 4px; padding-inline-start: 20px; }
+.sidebar-group-items > .sidebar-link { margin-bottom: 0; }
 .nav-count { font-size: 12px; padding: 1px 6px; border-radius: 5px; background: var(--surface-base); }
 .sidebar-footnote { display: flex; align-items: center; gap: 8px; padding: 12px 12px 0; font-size: 12px; color: var(--text-muted); }
 .sidebar-footnote-mark { width: 7px; height: 7px; border: 1px solid var(--text-muted); border-radius: 50%; }

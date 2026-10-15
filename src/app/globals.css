@@ -18,6 +18,7 @@
   --accent-primary-hover: #204fbd;
   --accent-subtle: #edf2fe;
   --nav-active: #e8edf7;
+  --nav-group-header: #e8edf4;
   --accent-border: #ccdafa;
   --live-red: #bd3450;
   --live-red-subtle: #fff2f4;
@@ -86,7 +87,7 @@ input.input-with-action { padding-right: 48px !important; }
 .user-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-shell { display: grid; grid-template-columns: 240px minmax(0,1fr); min-height: calc(100dvh - 68px); }
 .workspace-sidebar { position: sticky; top: 68px; align-self: start; height: calc(100dvh - 68px); display: flex; flex-direction: column; padding: 28px 16px; border-right: 1px solid var(--border-subtle); overflow-y: auto; }
-.sidebar-heading { padding: 0 12px; margin: 24px 0 8px; color: var(--text-secondary); font-size: 13px; line-height: 20px; font-weight: 600; letter-spacing: normal; }
+.sidebar-heading { padding: 8px 12px; min-height: 36px; margin: 24px 0 8px; background: var(--nav-group-header); color: var(--text-primary); font-size: 15px; line-height: 20px; font-weight: 650; letter-spacing: normal; cursor: default; }
 .sidebar-link { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 10px 16px; border-radius: var(--radius-sm); color: var(--text-secondary); text-decoration: none; transition: background .16s; }
 .sidebar-link > span:first-of-type { min-width: 0; overflow-wrap: anywhere; }
 .sidebar-link > svg { width: 18px; height: 18px; }
