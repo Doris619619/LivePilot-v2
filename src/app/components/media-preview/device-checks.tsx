@@ -9,7 +9,7 @@ function FileCheck({ label, file }: { label: string; file: PreviewFile }) {
   const sound = file.audio === false ? "没有音轨" : check?.sound === "suspected-silent" ? "检测范围内疑似静音，请试听确认" : file.audio ? "含音轨" : "音轨尚未检测";
   return <div className={styles.fileCheck}><strong>{label} · {sound}</strong>
     {file.video === false && label !== "音乐" && <p className={styles.warning}>未找到视频轨</p>}
-    {check?.state === "complete" && <p className={styles.hint}>{check.coverage === "full" ? "已完成第一路视频及音频的全程解码检查" : "已抽样检查画面与声音"}{check.ranges?.length ? "：" + check.ranges.map(r => `${mediaTime(r.start)}–${mediaTime(r.start + r.duration)}`).join("、") : ""}{check.coverage === "sample" && "；未检查其余部分"}</p>}
+    {check?.state === "complete" && <details className={styles.coverage}><summary>{check.coverage === "full" ? "完整检查完成" : "抽样检查完成"}</summary><p className={styles.hint}>{check.coverage === "full" ? "已完成第一路视频及音频的全程解码检查" : "已抽样检查画面与声音"}{check.ranges?.length ? "：" + check.ranges.map(r => `${mediaTime(r.start)}–${mediaTime(r.start + r.duration)}`).join("、") : ""}{check.coverage === "sample" && "；未检查其余部分"}</p></details>}
     {check?.state === "running" && <p role="status">{check.coverage === "full" ? "完整检查" : "快速检查"} {check.progress ?? 0}%</p>}
     {check && ["failed", "unavailable", "cancelled"].includes(check.state) && <p className={styles.warning}>{check.message}</p>}
   </div>;

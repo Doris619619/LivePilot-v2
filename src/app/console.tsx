@@ -89,8 +89,9 @@ export default function Console() {
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
         </nav>
-        {agents && <DevicePairing model={pairing} />}
+        {agents && <div className="device-pairing"><button type="button" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button></div>}
       </WorkspaceSidebar>
+      {agents && <DevicePairing model={pairing} />}
 
       <main className="main-wrapper" id="workspace" tabIndex={-1}>
         {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<><h1>直播工作台</h1><p className="workspace-subtitle">{devices ? `${devices.length} 台直播电脑 · ` : ""}{instances.length} 个直播实例</p></>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
@@ -99,7 +100,7 @@ export default function Console() {
         <OAuthFeedback available={loaded?instances:undefined} />
         {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
         {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
-        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接直播电脑</h2><p>点击“添加直播电脑”，复制配对码到 LiveNest。<br />连接后，直播实例会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
+        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><h2>连接直播电脑</h2><p>配对后，这台电脑的 OBS 会出现在这里。</p>{agents && <button type="button" className="btn-primary" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button>}<button type="button" className="btn-ghost" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
         {devices ? devices.map(agent => {
           const agentInstances = instances.filter(i => i.agentId === agent.id);
           return (

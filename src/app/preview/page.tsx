@@ -17,7 +17,7 @@ export default function PreviewPage() {
   const [channel, setChannel] = useState("山间电台 Mountain Radio"); const [original, setOriginal] = useState(false);
   const previewProps = { title, channel, mode, videoAudio: original, sample: samples[sample], videoName: sample === "normal" ? "山间晨雾.mp4" : sample === "noaudio" ? "山间晨雾_无音轨.mp4" : sample === "silent" ? "山间晨雾_静音.mp4" : "播放失败示例.mp4" };
   return <div className={styles.page}>
-    <header className={styles.header}><a href="/workspace" className={styles.brand}><span>▸</span> LivePilot</a><span className={styles.local}>体验版 · 不会发布或开播</span></header>
+    <header className={styles.header}><a href="/workspace" className={styles.brand}><span>▸</span> LiveNest</a><span className={styles.local}>体验版 · 不会发布或开播</span></header>
     <main className={styles.main}>
       <div className={styles.heading}><h1>发布前预览</h1></div>
       <div className={styles.workspace}>

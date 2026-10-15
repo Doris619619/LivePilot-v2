@@ -116,12 +116,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
   const stoppable = canStopBroadcast(data);
   const broadcastControls = <>
-          <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+          {!live && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
-          </button>
-          <button type="button" className="btn-danger" disabled={busy || stale || !stoppable} onClick={() => void act("stop")}>
+          </button>}
+          {stoppable && <button type="button" className="btn-danger" disabled={busy || stale} onClick={() => void act("stop")}>
             <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
-          </button>
+          </button>}
   </>;
 
   return (
@@ -138,7 +138,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
         <div className="compact-actions-col">
           {(!expanded || stoppable) && broadcastControls}
           <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
-            <span>{expanded ? "收起" : "设置"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
+            <span>{expanded ? "收起" : "配置直播"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
         </div>
       </div>
@@ -147,7 +147,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
       {issues.filter(problem => !(deviceOffline && problem.code === "CLOUD_UNAVAILABLE" && problem.stage === "读取实例状态" && !problem.attemptId)).map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
-      <p className={blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
+      <p className={!expanded && blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
       <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
@@ -170,7 +170,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
           </div></details>
           <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
-            <h3 id={`step-2-${id}`}>音视频编排</h3>
+            <h3 className="visually-hidden" id={`step-2-${id}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">
             <label htmlFor={`video-${id}`} className="field-label">循环视频</label>
@@ -205,6 +205,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
             <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
+            {blocker && !live && <p className="readiness-text">{readiness}</p>}
             {!stoppable && <div className="broadcast-actions">{broadcastControls}</div>}
           </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>

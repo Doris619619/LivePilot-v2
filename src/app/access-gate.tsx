@@ -94,9 +94,8 @@ export default function AccessGate({ children }: { children: ReactNode }) {
         <div className="login-brand"><LiveNestLogo width={28} height={28} /><span>LiveNest</span><span className="login-brand-caption">工作台</span></div>
         <section className="login-card" aria-labelledby="login-title">
           <div className="login-head">
-            <div className="login-mark"><LiveNestLogo width={32} height={32} /></div>
-            <h1 id="login-title">LiveNest 控制台</h1>
-            <p>登录工作台，管理你的设备与直播频道。</p>
+            <h1 id="login-title">登录工作台</h1>
+            <p>使用管理员提供的账号登录。</p>
           </div>
 
           <form onSubmit={submit} className="login-form" aria-busy={busy}>
@@ -186,11 +185,9 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           <div className="brand-section">
             <LiveNestLogo />
             <span className="brand-name">LiveNest</span>
-            <span className="brand-tag">Studio</span>
           </div>
 
-          <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
-          </div>
+
         </div>
       </header>
 

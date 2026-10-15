@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "./client-request";
 import type { AgentDescriptor } from "@/shared/remote";
+import { SurfaceDialog } from "./components/ui/primitives";
 /** 配对状态由工作台持有，抽屉关闭或布局切换不会丢失草稿、邀请或在途操作。 */
 export function useDevicePairing(agents: AgentDescriptor[]) {
   const [loadError,setLoadError]=useState("");const [listReady,setListReady]=useState(false);const [loadKey,setLoadKey]=useState(0);
@@ -25,10 +26,10 @@ export function useDevicePairing(agents: AgentDescriptor[]) {
   function toggle() { if (!open && paired) { setAgentId(undefined); setName(""); setInvitation(""); setMessage(""); } setOpen(!open); }
   return { agents, open, setOpen, name, setName, invitation, agentId, setAgentId, busy, message, setMessage, loadError, listReady, setLoadKey, customers, owner, setOwner, selected, paired, recoverable, create, toggle };
 }
-/** 配对视图可随导航抽屉卸载；状态留在上层工作台，邀请不写本地存储。 */
+/** 侧栏和空状态共用一个配对对话框；关闭保留草稿，提交时锁定关闭。 */
 export default function DevicePairing({ model }: { model: ReturnType<typeof useDevicePairing> }) {
-  const { agents, open, setOpen, name, setName, invitation, agentId, setAgentId, busy, message, setMessage, loadError, listReady, setLoadKey, customers, owner, setOwner, selected, paired, recoverable, create, toggle } = model;
-  return <div className="device-pairing"><button onClick={toggle} aria-expanded={open}>添加直播电脑</button>{open && <section className="pairing-panel" aria-label="添加直播电脑">{loadError && <p role="alert">{loadError}<button onClick={()=>setLoadKey(k=>k+1)}>重新读取客户</button></p>}
+  const { agents, open, setOpen, name, setName, invitation, agentId, setAgentId, busy, message, setMessage, loadError, listReady, setLoadKey, customers, owner, setOwner, selected, paired, recoverable, create } = model;
+  return <SurfaceDialog open={open} onOpenChange={setOpen} locked={busy} title="添加直播电脑" description="生成配对码，在直播电脑的 LiveNest 客户端中连接。"><section className="pairing-dialog">{loadError && <p role="alert">{loadError}<button onClick={()=>setLoadKey(k=>k+1)}>重新读取客户</button></p>}
     {paired && selected ? <><p role="status">{selected.online ? "连接成功" : "配对成功，等待电脑上线"}：{selected.name}</p><a href={"#device-" + selected.id} onClick={() => setOpen(false)}>查看电脑</a></> : <>
       {!invitation && <>{customers && <label className="field-group">所属客户<select value={selected?.owner || owner} disabled={!!selected?.owner} onChange={e=>setOwner(e.target.value)}><option value="">选择客户</option>{customers.map(c=><option key={c}>{c}</option>)}</select></label>}
         <label className="field-group">电脑名称<input disabled={!listReady || busy || !!agentId} value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="给这台电脑起个名字" /></label>
@@ -42,5 +43,5 @@ export default function DevicePairing({ model }: { model: ReturnType<typeof useD
       </> : <button className="btn-primary" disabled={!listReady || busy || !name.trim()} onClick={() => void create()}>{busy ? "正在生成…" : "生成配对码"}</button>}
       {message && <p role="status">{message}</p>}<Link href="/download">下载 Windows 客户端</Link>
     </>}
-  </section>}</div>;
+  </section></SurfaceDialog>;
 }

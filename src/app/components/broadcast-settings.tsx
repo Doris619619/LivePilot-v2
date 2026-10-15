@@ -65,7 +65,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
     finally { setWorking(""); onBusyChange(false); }
   }
   return <Tabs value={tab} onValueChange={setTab} asChild><section className="broadcast-settings" aria-labelledby={`broadcast-heading-${id}`}>
-    <div className="broadcast-section-heading"><div><h3 id={`broadcast-heading-${id}`}>直播设置</h3></div><span className="draft-label">{disabled ? "本场设置" : "本页草稿 · 开播时应用"}</span></div>
+    <h3 className="visually-hidden" id={`broadcast-heading-${id}`}>直播设置</h3>
     <div className="broadcast-editor-grid">
       <div className="broadcast-edit-column">
       <TabsList aria-label="开播配置">{tabs.map((item, index) => <TabsTrigger key={item.id} value={item.id} id={`studio-tab-${id}-${item.id}`}><span className="step-number" aria-hidden="true">{index + 1}</span><span>{item.label}</span></TabsTrigger>)}</TabsList>
@@ -90,7 +90,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
         </div>
 </fieldset>    <details className="studio-options"><summary>更多 YouTube 设置</summary><p>年龄限制、字幕、片尾画面、卡片、付费宣传与联合创作需在 YouTube Studio 中设置；本页不会代为保存这些项目。部分功能仅在直播结束后可用。</p><a href={studio} target="_blank" rel="noopener noreferrer">打开 YouTube Studio<ExternalLinkIcon /></a></details></TabsContent>
       <TabsContent className="studio-panel" value="start" aria-labelledby={`studio-tab-${id}-start`}>{controls}</TabsContent>
-      <div className="studio-step-footer"><span>第 {tabs.findIndex(item => item.id === tab) + 1} 步 / 共 4 步</span>{tab !== "start" && <button type="button" className="btn-secondary" onClick={() => { const next = tabs[tabs.findIndex(item => item.id === tab) + 1].id; setTab(next); document.getElementById(`studio-tab-${id}-${next}`)?.focus(); }}>下一步：{tabs[tabs.findIndex(item => item.id === tab) + 1].label} →</button>}</div>
+      <div className="studio-step-footer"><span>{disabled ? "本场设置" : "草稿 · 开播时应用"}</span>{tab !== "start" && <button type="button" className="btn-secondary" onClick={() => { const next = tabs[tabs.findIndex(item => item.id === tab) + 1].id; setTab(next); document.getElementById(`studio-tab-${id}-${next}`)?.focus(); }}>下一步：{tabs[tabs.findIndex(item => item.id === tab) + 1].label} →</button>}</div>
       </div>
       <div className="studio-rail"><aside className="broadcast-preview" aria-label="直播信息预览">
         <div className="broadcast-media-desktop">{desktop && <MediaPreview key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} selection={instance.agentId && videoName ? { agentId: instance.agentId, instanceId: instance.id, ...(channelId ? { channelId } : {}), source: { kind: "live", video: videoName, ...(musicName ? { music: musicName } : {}), ...(details.thumbnail?.id ? { coverId: details.thumbnail.id } : {}) } } : undefined} mode="live" receiver={{ id: broadcastId, privacy: details.privacy }} title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} />}</div>

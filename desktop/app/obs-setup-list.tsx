@@ -10,7 +10,7 @@ export default function ObsSetupList({ state, snapshots, now, online, busy, sele
   const [adding, setAdding] = useState(false);
   const completeBadge = <span className="obs-complete-badge">已完成</span>;
   const rows = state.instances.map(instance => ({ instance, ...obsReadiness(instance, state.checks.find(c => c.id === "network-" + instance.id), snapshots.find(s => s.instance.id === instance.id), now) }));
-  const current = selected || rows.find(row => !row.ready)?.instance.id || rows[0]?.instance.id;
+  const current = selected || rows.find(row => !row.ready || !online)?.instance.id;
   /** 步骤导航定位原实例，频道和素材状态从不跨实例合并。 */
   function goToStep(id: string, index: number) {
     onSelect(id);
@@ -29,7 +29,7 @@ export default function ObsSetupList({ state, snapshots, now, online, busy, sele
       <div className="obs-status-grid" aria-label={i.name + " 准备状态"}>
         <span>控制连接 <b>{row.control ? "已连接" : "待检查"}</b></span><span>频道 <b>{row.channel ? dashboard?.youtube.channel || "已连接" : "待连接"}</b></span><span>素材 <b>{row.media ? "已备齐" : "待准备"}</b></span>
       </div>
-      <nav className="setup-progress" aria-label={i.name + " 配置步骤"}><div className="setup-progress-caption"><strong>{i.name} 的 5 步配置</strong><span>{complete.filter(Boolean).length} / 5 已完成</span></div><ol>{["准备 OBS", "连接网页", "检查 OBS", "连接频道", "准备素材"].map((label, index) => <li key={label} className={complete[index] ? "is-complete" : index === nextStep ? "is-current" : ""}><button type="button" aria-current={index === nextStep ? "step" : undefined} onClick={() => goToStep(i.id, index)}><span className="setup-step-index">{index + 1}</span><span>{label}<small>{complete[index] ? "已完成" : index === nextStep ? "下一步" : "待完成"}</small></span></button></li>)}</ol></nav>
+      {(expanded || !row.ready || !online) && <nav className="setup-progress" aria-label={i.name + " 配置步骤"}><div className="setup-progress-caption"><strong>配置进度</strong><span>{complete.filter(Boolean).length} / 5 已完成</span></div><ol>{["准备 OBS", "连接网页", "检查 OBS", "连接频道", "准备素材"].map((label, index) => <li key={label} className={complete[index] ? "is-complete" : index === nextStep ? "is-current" : ""}><button type="button" aria-current={index === nextStep ? "step" : undefined} onClick={() => goToStep(i.id, index)}><span className="setup-step-index">{index + 1}</span><span>{label}<small>{complete[index] ? "已完成" : index === nextStep ? "下一步" : "待完成"}</small></span></button></li>)}</ol></nav>}
       {!expanded && controls(i)}
       <button className="btn-ghost" aria-expanded={expanded} aria-controls={"obs-detail-" + i.id} onClick={() => onSelect(expanded ? "none" : i.id)}>{expanded ? "收起配置" : row.ready && online ? "查看配置" : "继续配置"}</button>
       {expanded && <div id={"obs-detail-" + i.id} className="obs-detail">

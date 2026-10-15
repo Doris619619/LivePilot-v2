@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, open } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 
-const output = path.resolve("docs/screenshots/settings"); await mkdir(output, { recursive: true });
+const output = path.resolve("docs/screenshots/ux-simplification"); await mkdir(output, { recursive: true });
 await mkdir(".data/settings-ui", { recursive: true });
 const root = await mkdtemp(path.resolve(".data/settings-ui/session-"));
 const reservation = createServer(); await new Promise(resolve => reservation.listen(0, "127.0.0.1", resolve));
@@ -22,20 +22,21 @@ const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start
 let browser;
 const errors = [], requests = [];
 let failSave = false, failGenerate = false, failStatus = false, failInventory = false, slowStatus, slowSave;
+let broadcastMode = "idle";
 const configured = { main: true, second: false };
 const instances = [{ id: "main", name: "OBS 1", agentId: "synthetic_pc", agentName: "演示直播电脑" }, { id: "second", name: "OBS 2", agentId: "synthetic_pc", agentName: "演示直播电脑" }, { id: "offline", name: "离线 OBS", agentId: "synthetic_offline", agentName: "离线电脑" }];
 let chat = { config: { enabled: false, preset: "friendly", customPrompt: "", intervalSeconds: 5 }, configured: true, state: "disabled", recent: [], sent: 0, skipped: 0, queued: 0, updatedAt: Date.now() };
 /** 提供无推流、无授权副作用的业务快照。 */
 function dashboard(id) {
-  return { state: { phase: "stopped", stage: "待机", updatedAt: new Date().toISOString(), selection: { video: "", music: "", videoAudio: false } }, busy: false,
-    obs: { ready: true, running: true, streaming: false }, youtube: { connected: true, channel: "演示频道 " + id }, media: { videos: [], music: [] },
+  return { state: { phase: broadcastMode === "live" ? "live" : broadcastMode === "pending" ? "error" : "stopped", ...(broadcastMode === "pending" ? { broadcastTitle: "待核对场次" } : {}), stage: "待机", updatedAt: new Date().toISOString(), selection: { video: "", music: "", videoAudio: false } }, busy: false,
+    obs: { ready: true, running: true, streaming: broadcastMode === "live" }, youtube: { connected: true, lifecycle: broadcastMode === "live" ? "live" : "ready", ingest: broadcastMode === "live" ? "active" : "inactive", channel: "演示频道 " + id }, media: { videos: [], music: [] },
     configuration: { broadcastDetails: true, liveChat: true, missing: [], privacy: "private", madeForKids: false }, liveChat: structuredClone(chat),
     device: { agentId: "synthetic_pc", online: true, lastSeen: Date.now(), observedAt: Date.now() } };
 }
 /** 未声明的业务接口一律拒绝；写入只改变测试内存。 */
 async function mock(route) {
   const url = new URL(route.request().url());
-  const user = { username: "synthetic_customer", role: "admin" };
+  const user = { username: "Demo", role: "admin" };
   let result;
   if (url.pathname === "/api/session") result = { user };
   else if (url.pathname === "/api/session/accounts") result = { accounts: [{ ...user, current: true }] };
@@ -80,6 +81,22 @@ try {
   await page.goto(origin + "/workspace");
   const first = page.locator("#instance-synthetic_pc-main");
   const title = first.locator('[id^="broadcast-title-"]');
+  await expect(title).toBeVisible();
+  await expect(first.getByRole("button", { name: "结束直播", exact: true })).toHaveCount(0);
+  broadcastMode = "live"; await page.reload();
+  await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
+  await expect(first.getByRole("button", { name: "开始直播", exact: true })).toHaveCount(0);
+  broadcastMode = "pending"; await page.reload();
+  await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
+  await expect(first.getByRole("button", { name: "重试开播", exact: true })).toBeVisible();
+  broadcastMode = "idle"; await page.reload();
+  await title.fill("保留我的草稿");
+  await page.setViewportSize({ width: 1280, height: 820 });
+  await title.fill("Late Night Lofi · Study & Relax");
+  await title.press("Tab");
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: path.join(output, "workspace-desktop.png") });
+  await page.setViewportSize({ width: 1440, height: 1100 });
   await title.fill("保留我的草稿");
   await expect(first.getByRole("button", { name: "一键生成文案", exact: true })).toBeVisible();
   await expect(first.locator('input[type="password"]')).toHaveCount(0);
@@ -152,6 +169,18 @@ try {
   assert.equal(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage }).includes("sk-synthetic")), false);
   failInventory = true; await openSettings.click(); await expect(dialog.getByRole("alert")).toContainText("无法读取设备列表");
   failInventory = false; await dialog.getByRole("button", { name: "重新读取设备" }).click(); await expect(target).toBeVisible(); await dialog.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  // 同一配对表单在关闭、移动导航和宽度切换后保留草稿。
+  const pairingTrigger = page.getByRole("button", { name: "添加直播电脑", exact: true });
+  await pairingTrigger.click();
+  const pairingDialog = page.getByRole("dialog", { name: "添加直播电脑", exact: true });
+  await pairingDialog.getByLabel("电脑名称").fill("保留电脑名称");
+  await pairingDialog.press("Escape"); await expect(pairingTrigger).toBeFocused();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "导航", exact: true }).click(); await pairingTrigger.click();
+  await expect(pairingDialog.getByLabel("电脑名称")).toHaveValue("保留电脑名称");
+  await pairingDialog.press("Escape"); await expect(pairingTrigger).toBeFocused();
+  await page.getByRole("dialog", { name: "工作台导航" }).press("Escape");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(origin + "/admin"); await page.getByRole("button", { name: "显示设置", exact: true }).click();
   const display = page.getByRole("dialog", { name: "显示设置", exact: true });
