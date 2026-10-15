@@ -25,7 +25,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={setOpen} locked={saving} title="设置" description="管理服务凭据和长期偏好，关闭后继续当前操作。">{open && <SettingsContent initial={target} initialSection={section} onSaving={setSaving} saving={saving} />}</SurfaceDialog></SettingsContext.Provider>;
 }
 
-/** 顶栏、侧栏与生成区共享入口；目标由调用方显式提供。 */
+/** 侧栏账户区与生成区共享入口；目标由调用方显式提供。 */
 export function ApiSettingsButton({ instance, section = "ai", children = "设置", className = "btn-ghost", disabled = false }: { instance?: InstanceDescriptor; section?: SettingsSection; children?: ReactNode; className?: string; disabled?: boolean }) {
   const show = useContext(SettingsContext);
   return <button type="button" className={className} disabled={disabled || !show} onClick={() => show?.(instance, section)}>{children}</button>;

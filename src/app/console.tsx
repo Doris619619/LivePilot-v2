@@ -11,7 +11,6 @@ import InstanceConsole from "./instance-console";
 import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
 import WorkspaceSidebar from "./components/workspace-sidebar";
-import { ApiSettingsButton } from "./components/api-settings";
 import Link from "next/link";
 import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
 
@@ -80,7 +79,6 @@ export default function Console() {
         <div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div>
         <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
         <Link className="sidebar-link" href="/publishing"><VideoIcon /><span>视频发布</span></Link>
-        <ApiSettingsButton className="sidebar-link"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="M4 7h6m4 0h6M4 17h10m4 0h2" /><circle cx="12" cy="7" r="2" /><circle cx="16" cy="17" r="2" /></svg><span>设置</span></ApiSettingsButton>
         <div className="sidebar-heading device-heading">直播设备</div>
         <nav aria-label="设备定位">
           {devices ? devices.map(agent => (

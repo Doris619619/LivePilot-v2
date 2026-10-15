@@ -21,8 +21,8 @@ export function listenAccountChanges() {
 }
 /** 返回稳定入口；从管理员切到客户时回客户工作台，不延续管理员筛选参数。 */
 function destination(user: User) { return window.location.pathname === "/publishing" ? "/publishing" : user.role === "admin" ? "/admin" : "/workspace"; }
-/** 点击成员名称读取有效会话，错误保留当前工作台；密码只随首次登录请求发送。 */
-export default function AccountSwitcher({ user }: { user?: User }) {
+/** 点击成员名称读取有效会话；侧栏菜单向上展开，密码只随首次登录请求发送。 */
+export default function AccountSwitcher({ user, placement = "default" }: { user?: User; placement?: "default" | "sidebar" }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<Remembered[]>([]); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
 
@@ -49,8 +49,8 @@ export default function AccountSwitcher({ user }: { user?: User }) {
     catch (e) { setError((e as Error).message); setBusy(false); }
   }
   return <Popover open={open} onOpenChange={value => { setOpen(value); if (value) void read(); else { setAdding(false); setError(""); } }}>
-    <PopoverTrigger asChild><button type="button" className="account-menu-trigger" aria-label="切换登录账号"><span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span><span>{user?.username || "选择已登录账号"}</span><span aria-hidden="true">⌄</span></button></PopoverTrigger>
-    <PopoverContent aria-label="登录账号">
+    <PopoverTrigger asChild><button type="button" className="account-menu-trigger" aria-label="切换登录账号"><span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span><span className="account-menu-name">{user?.username || "选择已登录账号"}</span><span aria-hidden="true">{placement === "sidebar" ? "⌃" : "⌄"}</span></button></PopoverTrigger>
+    <PopoverContent aria-label="登录账号" side={placement === "sidebar" ? "top" : "bottom"} align={placement === "sidebar" ? "start" : "end"}>
     <div className="account-switcher-panel">
       <span className="account-switcher-caption">登录账号</span>
       <div className="account-switcher-list">{accounts.map(account => <button key={account.username} type="button" disabled={busy || account.current} onClick={() => void choose(account.username)}><span><strong>{account.username}</strong><small>{account.role === "admin" ? "管理员" : "客户"}</small></span><span>{account.current ? "当前" : "切换"}</span></button>)}</div>

@@ -16,8 +16,6 @@
 .api-settings-actions button { min-height: 40px; }
 .api-settings-success { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
 .api-settings-footnote { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
-.workspace-sidebar-content > button.sidebar-link { width: 100%; justify-content: flex-start; border: 0; background: transparent; font-weight: 400; }
-.workspace-sidebar-content > button.sidebar-link:hover { background: var(--surface-active); }
 .broadcast-ai .ai-heading { margin-bottom: 12px; }
 .broadcast-ai .ai-heading button { min-height: 36px; padding: 6px 10px; }
 .broadcast-ai .ai-compose { margin-bottom: 10px; }

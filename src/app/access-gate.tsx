@@ -7,7 +7,9 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { api, setRequestMember } from "./client-request";
 import AccountSwitcher, { listenAccountChanges, notifyAccountChange } from "./account-switcher";
-import { ApiSettingsProvider, ApiSettingsButton } from "./components/api-settings";
+import { ApiSettingsProvider } from "./components/api-settings";
+import { WorkspaceUserContext } from "./components/workspace-account";
+import WorkspaceSidebar from "./components/workspace-sidebar";
 import { LiveNestLogo, UserIcon, LockIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
 type User = { username: string; role: "admin" | "customer" };
@@ -177,7 +179,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <ApiSettingsProvider key={user.username}>
+    <ApiSettingsProvider key={user.username}><WorkspaceUserContext.Provider value={user}>
       <a className="skip-link" href="#workspace">跳转到工作台</a>
       <header className="app-header">
         <div className="header-container">
@@ -188,7 +190,6 @@ export default function AccessGate({ children }: { children: ReactNode }) {
           </div>
 
           <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
-            <ApiSettingsButton /><AccountSwitcher user={user} />
           </div>
         </div>
       </header>
@@ -202,7 +203,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {children}
-    </ApiSettingsProvider>
+      {pathname === "/admin" ? <div className="workspace-shell"><WorkspaceSidebar label="管理员导航"><div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div><Link className="sidebar-link is-active" href="/admin" aria-current="page">管理员总览</Link><Link className="sidebar-link" href="/workspace">直播工作台</Link><Link className="sidebar-link" href="/publishing">视频发布</Link></WorkspaceSidebar>{children}</div> : children}
+    </WorkspaceUserContext.Provider></ApiSettingsProvider>
   );
 }
