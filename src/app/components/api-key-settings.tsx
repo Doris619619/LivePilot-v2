@@ -45,7 +45,6 @@ export default function ApiKeySettings({ instance, offline, onSaving }: { instan
   return <section className="api-service-section" aria-labelledby="api-service-title" aria-busy={loading && !offline || saving}>
     <div className="api-service-heading"><div><h3 id="api-service-title">DeepSeek</h3><p>直播与视频发布的标题、说明生成</p></div><span className="api-config-state">{offline ? "设备离线" : loading ? "读取中…" : configured === true ? "已配置" : configured === false ? "未配置" : "状态未知"}</span></div>
     {offline ? <p role="status" className="api-settings-hint">电脑离线，暂时无法修改。上线后重新打开设置。</p> : <>
-      {configured === true && !editing && <p className="api-settings-hint">已有文案服务，无需重复填写。连接与额度在生成时验证。</p>}
       {showForm && <form id="api-key-form" onSubmit={event => void save(event)} className="api-key-form">
         <label htmlFor="service-api-key">{configured ? "新的 API Key" : "API Key"}</label>
         <input id="service-api-key" type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none" maxLength={256} value={key} onChange={event => setKey(event.target.value)} disabled={loading || saving} placeholder="粘贴 DeepSeek API Key" aria-describedby="api-key-privacy" />

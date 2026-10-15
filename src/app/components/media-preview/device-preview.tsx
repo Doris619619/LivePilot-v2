@@ -33,7 +33,7 @@ export default function DevicePreview({ selection, ...props }: Omit<MediaPreview
     catch (failure) { setError(failure instanceof Error ? failure.message : "操作失败，请重试。"); }
     finally { setWorking(false); }
   }
-  if (error) return <div className={styles.empty} role="alert"><strong>{error.includes("请升级") ? "客户端版本较旧，暂不支持素材预览。" : error}</strong>{error.includes("请升级") && <p>在这台直播电脑打开 LiveNest，进入“设置”检查更新。更新后重新读取。<br /><a href="/download" target="_blank" rel="noopener noreferrer">下载最新版客户端</a></p>}<button type="button" onClick={() => { setError(""); setSession(undefined); setRetry(retry + 1); }}>重新读取</button></div>;
+  if (error) return <div className={styles.connectionNotice} role="alert"><strong>素材预览不可用</strong><p>{error.includes("请升级") ? "请在直播电脑的设置中更新客户端。" : error}</p><div>{error.includes("请升级") && <a href="/download" target="_blank" rel="noopener noreferrer">下载客户端</a>}<button type="button" className="btn-ghost" onClick={() => { setError(""); setSession(undefined); setRetry(retry + 1); }}>重新读取</button></div></div>;
   if (!session || session.key !== key) return <div className={styles.empty} role="status">正在读取设备素材…</div>;
   return <MediaPreviewPanel {...props} remote={{ ...session, busy: session.busy || working, url: part => session.files[part] ? `/api/media-preview?id=${encodeURIComponent(session.id)}&part=${part}` : undefined, action: value => void action(value) }} />;
 }

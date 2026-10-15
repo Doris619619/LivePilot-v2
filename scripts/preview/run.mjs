@@ -62,6 +62,7 @@ async function proxy(port, username) {
       }
       if (/^\/api\/(uploads|youtube)/.test(url.pathname)) return json(response, 409, { error: '本地界面预览：不上传真实素材或连接 YouTube。' });
       const input = ['GET', 'HEAD'].includes(request.method) ? undefined : await body(request);
+      if (url.pathname === '/api/media-preview') return json(response, 409, { error: '本地演示未连接真实素材。' });
       if (url.pathname === '/api/live-chat' && request.method === 'POST') {
         const value = JSON.parse(input); await authorizePreviewControl(origin, cookie, { ...value, action: 'launch' });
         const agent = agents.find(agent => agent.id === value.agentId); const instance = agent.instances.find(instance => instance.id === value.instanceId);

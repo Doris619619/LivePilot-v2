@@ -87,6 +87,18 @@ try {
   const first = page.locator("#instance-synthetic_pc-main");
   const title = first.locator('[id^="broadcast-title-"]');
   await expect(title).toBeVisible();
+  // 码点与 UTF-8 字节限制保持原算法；计数在字段右下方，超限仍可修正并被标记。
+  const titleCount = first.locator('[id^="title-hint-"]'), description = first.locator('[id^="broadcast-description-"]');
+  await title.fill("雨".repeat(89) + "🌙"); await expect(titleCount).toContainText("90/100"); await expect(titleCount).toHaveClass(/is-warning/);
+  await title.fill("🌙".repeat(101)); await expect(title).toHaveAttribute("aria-invalid", "true"); await expect(titleCount).toContainText("超出 1 字符");
+  await description.fill("雨".repeat(1667)); await expect(description).toHaveAttribute("aria-invalid", "true"); await expect(first.locator('[id^="description-hint-"]')).toContainText("超出 1 字节");
+  await title.fill("保留我的草稿"); await description.fill(""); await expect(title).toHaveAttribute("aria-invalid", "false");
+  const inputRect = await title.boundingBox(), counterRect = await titleCount.boundingBox();
+  assert.ok(counterRect.y >= inputRect.y + inputRect.height && Math.abs(counterRect.x + counterRect.width - inputRect.x - inputRect.width) < 2, "计数位于输入框下方并与右侧对齐");
+  assert.equal(await titleCount.evaluate(element => getComputedStyle(element).textAlign), "right");
+  const records = first.getByRole("button", { name: "活动记录", exact: true });
+  await expect(records).toHaveAttribute("aria-expanded", "false"); await records.focus(); await records.press("Enter");
+  await expect(records).toHaveAttribute("aria-expanded", "true"); await records.press("Space"); await expect(records).toHaveAttribute("aria-expanded", "false");
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toHaveCount(0);
   broadcastMode = "live"; await page.reload();
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
@@ -107,7 +119,7 @@ try {
   await page.screenshot({ path: path.join(output, "workspace-desktop.png") });
   await page.setViewportSize({ width: 1440, height: 1100 });
   await title.fill("保留我的草稿");
-  await expect(first.getByRole("button", { name: "一键生成文案", exact: true })).toBeVisible();
+  await expect(first.getByRole("button", { name: "生成英文文案", exact: true })).toBeVisible();
   await expect(first.locator('input[type="password"]')).toHaveCount(0);
   const openSettings = first.getByRole("button", { name: "API 设置", exact: true });
   await openSettings.click();
@@ -156,9 +168,9 @@ try {
   await target.selectOption("synthetic_pc:main");
   await expect(dialog.getByText("已配置", { exact: true })).toBeVisible();
   await dialog.press("Escape"); await expect(openSettings).toBeFocused(); await expect(title).toHaveValue("保留我的草稿");
-  failGenerate = true; await first.getByRole("button", { name: "一键生成文案", exact: true }).click();
+  failGenerate = true; await first.getByRole("button", { name: "生成英文文案", exact: true }).click();
   await expect(first.getByText("模拟生成失败，原文案已保留。", { exact: true })).toBeVisible(); await expect(title).toHaveValue("保留我的草稿");
-  failGenerate = false; await first.getByRole("button", { name: "一键生成文案", exact: true }).click();
+  failGenerate = false; await first.getByRole("button", { name: "生成英文文案", exact: true }).click();
   await expect(title).toHaveValue("Quiet Night | Lofi for Study");
   await first.getByRole("button", { name: "撤销填入", exact: true }).click(); await expect(title).toHaveValue("保留我的草稿");
   await first.locator(".broadcast-settings").screenshot({ path: path.join(output, "content-desktop.png"), style: ".app-header,.skip-link {visibility:hidden!important}" });

@@ -8,7 +8,8 @@
 .ui-tabs-content[data-state="active"] { animation: none; }
 .ui-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms ease, opacity 180ms ease; }
 .ui-reveal[data-state="open"] { grid-template-rows: 1fr; opacity: 1; }
-.ui-reveal-inner { min-height: 0; overflow: hidden; }
+/* 将读屏用绝对定位内容限制在折叠容器内，避免隐藏表单撑出页面底部空白。 */
+.ui-reveal-inner { position: relative; min-height: 0; overflow: hidden; }
 .ui-progress { position: relative; height: 7px; width: 100%; overflow: hidden; border-radius: 999px; background: var(--accent-subtle); }
 .ui-progress-indicator { height: 100%; width: 100%; background: var(--accent-primary); border-radius: inherit; transition: transform 250ms ease; }
 .ui-progress[data-state="indeterminate"] .ui-progress-indicator { animation: ui-progress-wait 1.5s ease-in-out infinite; }

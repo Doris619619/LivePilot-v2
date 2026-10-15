@@ -22,14 +22,14 @@ export default function BroadcastAi({ id, instance, disabled, current, onApply, 
     setWorking("ai-generate"); setError(""); setMessage(""); onBusyChange(true);
     try {
       const result = await aiServiceRequest<AiCopy & { demo?: boolean }>(instance, "ai-generate", { brief });
-      setPrevious(current); onApply({ title: result.title, description: result.description }); setMessage(result.demo ? "演示文案已填入，未调用真实 DeepSeek API。" : "已填入英文标题和说明。");
+      setPrevious(current); onApply({ title: result.title, description: result.description }); setMessage(result.demo ? "已填入演示文案 · 未调用 AI" : "已填入英文文案");
     } catch (e) { setError(e instanceof Error ? e.message : "请求失败，原文案已保留。"); }
     finally { setWorking(""); onBusyChange(false); }
   }
   return <div className="broadcast-ai">
-    <div className="ai-heading"><label htmlFor={`ai-brief-${id}`}>主题 · 生成英文文案</label><ApiSettingsButton instance={instance} disabled={locked}>API 设置</ApiSettingsButton></div>
-    <div className="ai-compose"><input id={`ai-brief-${id}`} value={brief} maxLength={500} placeholder="lofi / jazz / rainy Tokyo night" disabled={locked} onChange={e => setBrief(e.target.value)} /><button type="button" className="btn-secondary" disabled={locked || !brief.trim()} onClick={() => void generate()}>{working ? "正在生成…" : "一键生成文案"}</button></div>
-    {message && <p className="field-hint" role="status">{message}</p>}{error && <p className="broadcast-error" role="alert">{error}</p>}
-    {previous && <button type="button" className="btn-ghost" disabled={locked} onClick={() => { onApply(previous); setPrevious(undefined); setMessage("已恢复生成前的标题和说明。"); }}>撤销填入</button>}
+    <label htmlFor={`ai-brief-${id}`}>文案主题</label>
+    <div className="ai-compose"><input id={`ai-brief-${id}`} value={brief} maxLength={500} placeholder="lofi / jazz / rainy Tokyo night" disabled={locked} onChange={e => setBrief(e.target.value)} /><button type="button" className="btn-secondary" disabled={locked || !brief.trim()} onClick={() => void generate()}>{working ? "正在生成…" : "生成英文文案"}</button><ApiSettingsButton instance={instance} disabled={locked}>API 设置</ApiSettingsButton></div>
+    {(message || previous) && <div className="ai-feedback">{message && <p className="field-hint" role="status">{message}</p>}{previous && <button type="button" className="btn-ghost" disabled={locked} onClick={() => { onApply(previous); setPrevious(undefined); setMessage("已恢复原文案"); }}>撤销填入</button>}</div>}
+    {error && <p className="broadcast-error" role="alert">{error}</p>}
   </div>;
 }

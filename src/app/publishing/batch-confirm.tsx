@@ -4,6 +4,7 @@ import { useState } from "react";
 import { UPLOAD_NOTICE, type ItemOverride, type MediaAsset, type PublishingProfile } from "@/shared/publishing";
 import { descriptionBytes, visibilityLabel, titleCharacters } from "./display";
 import { itemOverrideSchema } from "@/shared/publishing";
+import FieldCounter from "../components/field-counter";
 
 export type PublishingPreview = {
   id: string; profile: PublishingProfile; assets: MediaAsset[]; thumbnails: string[];
@@ -47,10 +48,10 @@ export default function BatchConfirm({ preview, channel, busy, cancel, confirm }
           </div>
           {editing === asset.id && <div className="publishing-inline-editor">
             <div className="publishing-section-heading"><h3>{asset.filename}</h3><button className="btn-ghost" onClick={() => setEditing("")}>收起</button></div>
-            <label>标题覆盖<input value={override?.title || ""} placeholder={copy?.title} onChange={e => change(asset.id, { title: e.target.value || undefined })} /></label>
-            <div className="publishing-field-meta"><span>留空使用配置文案</span><span>{titleCharacters(title)} / 100</span></div>
-            <label>说明<textarea rows={3} value={description} onChange={e => change(asset.id, { description: e.target.value })} /></label>
-            <div className="publishing-field-meta"><span /><span>{descriptionBytes(description)} / 5000 bytes</span></div>
+            <label>标题覆盖<input value={override?.title || ""} placeholder={copy?.title} aria-invalid={titleCharacters(title) > 100} aria-describedby={`batch-title-help-${asset.id} batch-title-count-${asset.id}`} onChange={e => change(asset.id, { title: e.target.value || undefined })} /></label>
+            <div className="publishing-field-meta"><span id={`batch-title-help-${asset.id}`}>留空使用配置文案</span><FieldCounter id={`batch-title-count-${asset.id}`} count={titleCharacters(title)} limit={100} /></div>
+            <label>说明<textarea rows={3} value={description} aria-invalid={descriptionBytes(description) > 5000} aria-describedby={`batch-description-count-${asset.id}`} onChange={e => change(asset.id, { description: e.target.value })} /></label>
+            <FieldCounter id={`batch-description-count-${asset.id}`} count={descriptionBytes(description)} limit={5000} unit="字节" />
             {profile.thumbnailMode === "matching" && <label>封面<select value={override?.thumbnail || asset.thumbnail || ""} onChange={e => change(asset.id, { thumbnail: e.target.value || undefined })}><option value="">请选择图片</option>{preview.thumbnails.map(name => <option key={name}>{name}</option>)}</select></label>}
             {issues && !issues.success && <p className="publishing-validation" role="alert">{issues.error.issues[0]?.message}</p>}
           </div>}

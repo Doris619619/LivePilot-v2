@@ -21,9 +21,6 @@
 .api-settings-help { border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
 .api-settings-help summary { cursor: pointer; padding-block: 12px; min-height: 44px; }
 .api-settings-help ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
-.broadcast-ai .ai-heading { margin-bottom: 12px; }
-.broadcast-ai .ai-heading button { min-height: 36px; padding: 6px 10px; }
-.broadcast-ai .ai-compose { margin-bottom: 10px; }
 @media (max-width: 600px) {
   .ui-dialog-center:has(.api-settings) { padding: 20px; }
   .api-settings-actions button { min-height: 44px; }

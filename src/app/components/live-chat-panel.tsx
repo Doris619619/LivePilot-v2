@@ -1,4 +1,4 @@
-/** 展示频道互动的启停、运行状态和记录；长期人设偏好集中在设置窗口。 */
+/** 频道互动的紧凑控制条；待机收起统计和记录，故障与恢复操作始终可见。 */
 "use client";
 import { useEffect, useState } from "react";
 import { targetKey } from "@/shared/remote";
@@ -13,7 +13,7 @@ const states: Record<LiveChatStatus["state"], string> = {
   running: "互动中", reconnecting: "正在重连", needs_attention: "需要处理", unavailable: "聊天不可用", quota_wait: "等待配额重置",
 };
 const entryStates = { queued: "排队中", sent: "已发送", skipped: "已跳过", uncertain: "发送结果待核对", failed: "回复失败" };
-/** 只显示公开聊天状态；开关立即保存，设置窗口保存后同步状态，直播期间均可操作。 */
+/** 开关立即保存；记录默认随运行状态展开，手动选择优先，错误与恢复始终可达。 */
 export default function LiveChatPanel({ instance, status, supported, stale, onRefresh }: {
   instance: InstanceDescriptor; status?: LiveChatStatus; supported: boolean; stale: boolean; onRefresh: () => Promise<void> | void;
 }) {
@@ -22,7 +22,9 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
   const [working, setWorking] = useState<"" | "configure" | "read">("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [recordsExpanded, setRecordsExpanded] = useState<boolean>();
   const current = savedStatus && (!status || savedStatus.updatedAt >= status.updatedAt) ? savedStatus : status;
+  const recordsOpen = recordsExpanded ?? current?.state === "running";
   const canRequest = supported && !stale;
   const locked = !canRequest || !current || !!working;
   useEffect(() => {
@@ -80,29 +82,31 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
 
   return <section className={styles.panel} aria-labelledby={`chat-heading-${id}`}>
     <div className={styles.heading}>
-      <div><h3 id={`chat-heading-${id}`}>AI 观众互动</h3></div>
+      <h3 id={`chat-heading-${id}`}>AI 观众互动</h3>
+      <div className={styles.controls}>
       <span className={`${styles.status} ${!stale && current?.state === "running" ? styles.running : ""}`}>{stale ? "当前状态未知" : !supported ? "需要升级" : current ? states[current.state] : "读取中"}</span>
+        {supported && <button type="button" role="switch" aria-checked={current?.config.enabled ?? false} aria-label={`${instance.name} AI 自动回复观众${!current ? "，状态未读取" : stale ? "，上次状态" : ""}`} disabled={locked} className={`switch-btn ${current?.config.enabled ? "active" : ""}`} onClick={() => void configure({ ...(current?.config || defaultLiveChatConfig), enabled: !current?.config.enabled })}>
+          <span className="switch-track" aria-hidden="true"><span /></span><span>{working === "configure" ? "保存中…" : !current ? "待读取" : stale ? "上次" + (current.config.enabled ? "开启" : "关闭") : current.config.enabled ? "开启" : "关闭"}</span>
+        </button>}
+      </div>
     </div>
     {!supported ? <p className={styles.notice}>请更新这台电脑的 LiveNest 客户端，再刷新互动状态。</p> : <>
-      {stale && <p className={styles.notice} role="status">设备离线或状态已过期，当前互动状态未知。以下显示上次记录，重新连接后再调整设置。</p>}
-      <div className={styles.topRow}>
-        <div><strong>自动回复观众</strong></div>
-        <button type="button" role="switch" aria-checked={current?.config.enabled ?? false} aria-label={`${instance.name} AI 自动回复观众${!current ? "，状态未读取" : stale ? "，上次状态" : ""}`} disabled={locked} className={`switch-btn ${current?.config.enabled ? "active" : ""}`} onClick={() => void configure({ ...(current?.config || defaultLiveChatConfig), enabled: !current?.config.enabled })}>
-          <span className="switch-track" aria-hidden="true"><span /></span><span>{working === "configure" ? "保存中…" : !current ? "待读取" : stale ? "上次" + (current.config.enabled ? "开启" : "关闭") : current.config.enabled ? "开启" : "关闭"}</span>
-        </button>
-      </div>
+      {stale && <p className={styles.notice} role="status">设备离线或状态已过期。以下为上次记录，重新连接后可修改。</p>}
       <div className={styles.runtime}>
-        <div className={styles.runtimeHeading}><h4>互动状态</h4><button type="button" className="btn-ghost" disabled={!!working} onClick={() => void readStatus()}>{working === "read" ? "读取中…" : stale ? "刷新设备状态" : "刷新互动状态"}</button></div>
-        <p className={styles.hint} role="status">{stale ? "当前状态未知；发送数量及互动记录是上次设备报告。" : current?.state === "needs_key" ? "直播电脑的 DeepSeek 环境配置未就绪，请联系管理员" : current?.message || "正在读取直播电脑的互动状态。"}</p>
+        {!stale && (!current || current.message || current.state === "needs_key") && <p className={styles.hint} role="status">{current?.state === "needs_key" ? "直播电脑的 DeepSeek 环境配置未就绪，请联系管理员" : current?.message || "正在读取互动状态…"}</p>}
         {!stale && current?.nextRetryAt !== undefined && <p className={styles.hint}>预计重试：<time dateTime={new Date(current.nextRetryAt).toISOString()}>{new Date(current.nextRetryAt).toISOString().slice(0, 19).replace("T", " ")} UTC</time></p>}
         {!stale && current?.recoveryAction === "authorize" && <div className={styles.actions}><button type="button" className="btn-ghost" onClick={openChannelSettings}>检查频道授权</button></div>}
         {!stale && current?.state === "needs_attention" && <div className={styles.actions}><button type="button" className="btn-secondary" disabled={locked || !current.config.enabled} onClick={() => void configure(current.config)}>重试互动</button><span className={styles.hint}>{current.recoveryAction === "check_storage" ? "先在直播电脑检查磁盘空间与目录权限。" : current.recoveryAction === "contact_admin" ? "请管理员处理 AI 服务配置或余额后重试。" : "处理上方问题后，重新连接互动。"}</span></div>}
-        <dl className={styles.counts} aria-label="互动统计"><div><dt>已发送</dt><dd>{stale ? "—" : current?.sent ?? "—"}</dd></div><div><dt>已跳过</dt><dd>{stale ? "—" : current?.skipped ?? "—"}</dd></div><div><dt>排队中</dt><dd>{stale ? "—" : current?.queued ?? "—"}</dd></div></dl>
-
       </div>
-      <ApiSettingsButton instance={instance} section="chat" disabled={!!working}>互动设置</ApiSettingsButton>
-      <details className={styles.history}><summary>活动记录{stale ? " · 上次记录" : ""}</summary>{current?.recent.length ? <ol>{current.recent.slice(-30).reverse().map(entry => <li key={entry.id}><div className={styles.entryHeading}><strong>{entry.author || "观众"}</strong><span>{entryStates[entry.status]}</span></div><p>{entry.text}</p>{entry.reply && <p className={styles.reply}>{entry.reply}</p>}{entry.reason && <p className={styles.hint}>{entry.reason}</p>}</li>)}</ol> : <p className={styles.hint}>还没有互动记录；启用后只回复新留言。</p>}</details>
-      <details className={styles.help}><summary>互动说明</summary><p className={styles.hint}>由直播电脑运行，关闭网页后继续互动。设置按频道保存，重启后保留。聊天使用管理员配置的 DeepSeek 服务，与文案生成的密钥独立。</p>        <p className={styles.hint}>回复受 DeepSeek 余额和 YouTube 项目共享配额限制。队列最多 100 条，超过 2 分钟或溢出的旧留言会跳过。<a href="https://developers.google.com/youtube/v3/determine_quota_cost" target="_blank" rel="noopener noreferrer">查看配额说明</a></p></details>
+      <div className={styles.toolbar}>
+        <button type="button" className="btn-ghost" aria-expanded={recordsOpen} aria-controls={`chat-records-${id}`} onClick={() => setRecordsExpanded(!recordsOpen)}>活动记录{stale ? " · 上次记录" : ""}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" style={{ transform: recordsOpen ? "rotate(90deg)" : undefined }}><path d="m9 5 7 7-7 7" /></svg></button>
+        <ApiSettingsButton instance={instance} section="chat" disabled={!!working}>互动设置</ApiSettingsButton>
+        <button type="button" className="btn-ghost" disabled={!!working} onClick={() => void readStatus()}>{working === "read" ? "读取中…" : stale ? "刷新设备状态" : "刷新互动状态"}</button>
+      </div>
+      <div className={styles.history} id={`chat-records-${id}`} hidden={!recordsOpen}>
+        <dl className={styles.counts} aria-label="互动统计"><div><dt>已发送</dt><dd>{stale ? "—" : current?.sent ?? "—"}</dd></div><div><dt>已跳过</dt><dd>{stale ? "—" : current?.skipped ?? "—"}</dd></div><div><dt>排队中</dt><dd>{stale ? "—" : current?.queued ?? "—"}</dd></div></dl>
+        {current?.recent.length ? <ol>{current.recent.slice(-30).reverse().map(entry => <li key={entry.id}><div className={styles.entryHeading}><strong>{entry.author || "观众"}</strong><span>{entryStates[entry.status]}</span></div><p>{entry.text}</p>{entry.reply && <p className={styles.reply}>{entry.reply}</p>}{entry.reason && <p className={styles.hint}>{entry.reason}</p>}</li>)}</ol> : <p className={styles.hint}>还没有互动记录；启用后只回复新留言。</p>}
+      </div>
       {message && <p className={styles.feedback} role="status">{message}</p>}{error && <p className={styles.error} role="alert">{error}</p>}
     </>}
   </section>;

@@ -268,6 +268,9 @@ progress { accent-color: var(--accent-primary); }
 .broadcast-fields .field-group { display: flex; flex-direction: column; gap: 8px; }
 .broadcast-fields label, .field-label-row { font-weight: 500; font-size: 14px; }
 .field-required, .field-hint { font-size: 12px; color: var(--text-secondary); font-weight: 400; }
+.field-counter { display: block; text-align: right; font-size: 12px; line-height: 1.5; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.field-counter.is-warning { color: var(--warning-amber); }
+.field-counter.is-error { color: var(--error-rose); }
 .field-required { margin-left: 6px; }
 .broadcast-fields textarea { display: block; width: 100%; min-height: 132px; resize: vertical; padding: 12px 14px; font: inherit; color: var(--text-primary); background: var(--surface-base); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
 .broadcast-fields textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
@@ -312,8 +315,6 @@ progress { accent-color: var(--accent-primary); }
 /* DeepSeek 文案生成与密钥设置，保持次要操作层级。 */
 .broadcast-edit-column { min-width: 0; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-base); overflow: hidden; }
 .broadcast-ai { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border-subtle); }
-.ai-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 14px; }
-.ai-heading span { font-size: 12px; color: var(--text-secondary); }
 .ai-compose { display: flex; gap: 10px; margin-top: 10px; }
 .ai-compose input { flex: 1; min-width: 0; }
 .broadcast-ai > [role] { margin-top: 10px; }

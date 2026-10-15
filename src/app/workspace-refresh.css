@@ -88,8 +88,8 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .broadcast-settings .broadcast-actions button { flex: 0 1 auto; min-width: 160px; }
 .studio-connections { border-bottom: 0; margin-bottom: 8px; padding-bottom: 0; }
 .studio-connections > summary { font-size: 13px; }
-/* AI 与标题共用面板留白，只保留原有底部分隔线，避免无内边距的嵌套卡片。 */
-.broadcast-ai { border-radius: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-subtle); }
+/* 生成器作为内容编辑工具，反馈与撤销同排；不额外分隔为独立设置区。 */
+.broadcast-ai { border-radius: 0; background: transparent; border: 0; }
 .media-dock { margin-bottom: 16px; }
 .media-dock > .dock-header { margin-bottom: 0; }
 .dock-content { background: var(--surface-base); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 20px; animation: none; margin: 0 0 20px; box-shadow: none; }
@@ -135,8 +135,12 @@ select { appearance: none; padding-right: 36px; background-image: url("data:imag
 .main-wrapper .setup-step { border-radius: 10px; }
 .broadcast-settings .broadcast-ai button { min-height: 44px; }
 .broadcast-settings { padding: 0; }
-.broadcast-ai { padding-bottom: 16px; margin-bottom: 16px; }
-.broadcast-ai .ai-heading { margin-bottom: 4px; }
+.broadcast-ai { padding-bottom: 0; margin-bottom: 24px; }
+.broadcast-ai > label { font-size: 14px; font-weight: 500; }
+.broadcast-ai .ai-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; margin: 8px 0 0; }
+.ai-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.ai-feedback button { padding-inline: 0; }
+@media (max-width: 600px) { .broadcast-ai .ai-compose { grid-template-columns: 1fr auto; } .ai-compose input { grid-column: 1 / -1; } }
 .desktop-account-identity { display: flex; align-items: center; gap: 10px; padding: 12px; overflow-wrap: anywhere; }
 @media (max-width: 1200px) { .broadcast-editor-grid { grid-template-columns: minmax(0,1fr); } .studio-rail .broadcast-preview { border-left: 0; padding: 0; } .studio-rail { display: grid; grid-template-columns: minmax(0,1fr); max-width: 600px; } }
 /* 侧栏仍可见的平板宽度下，编辑列也可能不足 500px，四步入口提前换成等宽布局。 */

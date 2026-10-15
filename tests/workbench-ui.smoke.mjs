@@ -69,7 +69,7 @@ try {
   const title = live.getByRole("textbox", { name: "标题 必填", exact: true });
   await title.fill("跨工作区保留的直播草稿");
   await live.getByRole("textbox", { name: "说明", exact: true }).fill("切换后继续编辑这段说明。");
-  await live.getByRole("textbox", { name: "主题 · 生成英文文案" }).fill("jazz night");
+  await live.getByRole("textbox", { name: "文案主题" }).fill("jazz night");
   const titleNode = await title.elementHandle();
   const sidebarNode = await page.getByRole("complementary", { name: "工作台导航" }).elementHandle();
   await live.locator('input[type="file"][accept="video/*,.mkv,.avi"]').setInputFiles(path.resolve("public/preview/normal.mp4"));
@@ -107,7 +107,7 @@ try {
   await live.getByRole("tab", { name: "直播内容", exact: true }).click();
   await expect(title).toHaveValue("跨工作区保留的直播草稿");
   await expect(live.getByRole("textbox", { name: "说明", exact: true })).toHaveValue("切换后继续编辑这段说明。");
-  await expect(live.getByRole("textbox", { name: "主题 · 生成英文文案" })).toHaveValue("jazz night");
+  await expect(live.getByRole("textbox", { name: "文案主题" })).toHaveValue("jazz night");
   await expect(live.locator("video")).toBeVisible();
   assert.equal(await live.locator("video").evaluate(node => node.paused), true);
   await switchTo("视频发布");

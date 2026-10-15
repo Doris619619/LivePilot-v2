@@ -6,6 +6,7 @@ import { targetKey } from "@/shared/remote";
 import { liveChatConfigSchema, type LiveChatConfig, type LiveChatStatus } from "@/shared/live-chat";
 import { api } from "../client-request";
 import styles from "./live-chat-panel.module.css";
+import FieldCounter from "./field-counter";
 
 /** 读取失败不提供虚构的默认值；目标切换由父组件重新挂载以隔离草稿和异步结果。 */
 export default function LiveChatSettings({ instance, offline, onSaving }: { instance: InstanceDescriptor; offline: boolean; onSaving: (value: boolean) => void }) {
@@ -43,17 +44,16 @@ export default function LiveChatSettings({ instance, offline, onSaving }: { inst
     finally { setSaving(false); onSaving(false); }
   }
   return <section className="api-service-section" aria-label="互动人设与频率" aria-busy={loading && !offline || saving}>
-    <p className="api-settings-hint">开关在直播工作台；此处保存人设和回复频率。</p>
     {offline ? <p role="status">直播电脑离线，暂时无法读取或修改互动偏好。</p> : loading ? <p role="status">正在读取互动设置…</p> : config && <form className={styles.form + " api-chat-form"} onSubmit={event => void save(event)}>
       <div className={styles.fields}>
         <div className={styles.field}><label htmlFor="settings-chat-preset">互动人设</label><select id="settings-chat-preset" disabled={saving} value={config.preset} onChange={event => setDraft({ ...config, preset: event.target.value as LiveChatConfig["preset"] })}><option value="friendly">友善陪聊</option><option value="playful">活泼幽默</option><option value="gentle">安静温柔</option><option value="custom">自定义</option></select></div>
         <div className={styles.field}><label htmlFor="settings-chat-interval">发送间隔（5–60 秒）</label><input id="settings-chat-interval" type="number" required min={5} max={60} step={1} disabled={saving} value={interval ?? config.intervalSeconds} onChange={event => setInterval(event.target.value)} /></div>
       </div>
-      <div className={styles.field}><label htmlFor="settings-chat-prompt">{config.preset === "custom" ? "自定义人设描述" : "补充人设描述（可选）"}</label><textarea id="settings-chat-prompt" rows={3} maxLength={2000} disabled={saving} value={config.customPrompt} onChange={event => setDraft({ ...config, customPrompt: event.target.value })} placeholder="例如：温柔的电台主持人，回答简短自然。" aria-describedby="settings-chat-prompt-hint" /><span id="settings-chat-prompt-hint" className={styles.hint}>{config.customPrompt.length}/2000 字符</span></div>
+      <div className={styles.field}><label htmlFor="settings-chat-prompt">{config.preset === "custom" ? "自定义人设描述" : "补充人设描述（可选）"}</label><textarea id="settings-chat-prompt" rows={3} maxLength={2000} disabled={saving} value={config.customPrompt} onChange={event => setDraft({ ...config, customPrompt: event.target.value })} placeholder="例如：温柔的电台主持人，回答简短自然。" aria-describedby="settings-chat-prompt-hint" /><FieldCounter id="settings-chat-prompt-hint" count={config.customPrompt.length} limit={2000} /></div>
       <div className="api-settings-actions"><button className="btn-primary" type="submit" disabled={saving || (!draft && interval === undefined)}>{saving ? "保存中…" : "保存互动设置"}</button></div>
     </form>}
     {error && <div role="alert"><p>{error}</p>{!offline && <button type="button" disabled={saving || loading} onClick={() => { setError(""); setLoading(true); setRevision(value => value + 1); }}>重新读取互动设置</button>}</div>}
     {message && <p role="status" className="api-settings-success">{message}</p>}
-    <details className="api-settings-help"><summary>互动说明</summary><ul><li>按频道保存，重启后保留；直播期间修改立即生效。</li><li>回复跟随观众语言，包含 [AI] 和观众称呼。</li><li>使用管理员配置的独立服务，无需在文案生成中填写密钥。</li></ul></details>
+    <details className="api-settings-help"><summary>互动说明</summary><ul><li>在工作台启停，关闭网页后继续运行；偏好按频道保存，直播期间修改立即生效。</li><li>回复跟随观众语言，包含 [AI] 和观众称呼。</li><li>使用管理员配置的独立服务，受服务余额和 YouTube 共享配额限制。</li><li>队列最多 100 条；超过 2 分钟或溢出的旧留言会跳过。<a href="https://developers.google.com/youtube/v3/determine_quota_cost" target="_blank" rel="noopener noreferrer">查看配额说明</a></li></ul></details>
   </section>;
 }

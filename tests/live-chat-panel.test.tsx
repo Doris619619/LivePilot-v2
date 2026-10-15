@@ -91,7 +91,9 @@ it("defaults to enabled, moves persona fields out of runtime and directs missing
   expect(html).toContain("互动设置"); expect(html).not.toContain("发送间隔（5–60 秒）");
   expect(html).toContain("直播电脑的 DeepSeek 环境配置未就绪，请联系管理员");
   expect(html).not.toContain('type="password"'); expect(html).not.toContain("DeepSeek API Key"); expect(html).not.toContain("保存 Key"); expect(html).not.toContain("检查密钥设置");
-  expect(html).not.toContain("每日回复条数无上限"); expect(html).toContain("项目共享配额");
+  expect(html).not.toContain("每日回复条数无上限");
+  const settings = renderToStaticMarkup(mountedSettings().tree);
+  expect(settings).toContain("YouTube 共享配额"); expect(settings).toContain("队列最多 100 条");
 });
 
 it("shows an upgrade explanation without implying unsupported Agents can send replies", () => {
@@ -200,6 +202,8 @@ it("keeps recovery guidance before the settings entrance and never redirects AI 
     const html = render(fixture({ state: "needs_attention", recoveryAction, message: "合成故障：需要处理" }));
     expect(html).not.toContain("检查频道授权");
     expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf(">互动设置</button>"));
-    expect(html).toContain("<summary>活动记录"); expect(html).not.toContain(' open=""');
+    expect(html).toContain('aria-expanded="false" aria-controls="chat-records-agent-one-LIVE"');
+    expect(html).toContain('id="chat-records-agent-one-LIVE" hidden=""');
+    expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf('id="chat-records-agent-one-LIVE"'));
   }
 });

@@ -81,7 +81,10 @@ try {
   await expect(refreshChat).toBeEnabled(); await refreshChat.click(); await expect(panel.getByRole("button", { name: "检查频道授权", exact: true })).toBeVisible(); await expect(panel.getByRole("button", { name: "保存 Key", exact: true })).toHaveCount(0);
   chat = { ...chat, state: "running", recoveryAction: undefined, message: "演示数据：正在与观众互动。", updatedAt: Date.now() };
   await expect(refreshChat).toBeEnabled(); await refreshChat.click(); await expect(panel.getByText("互动中", { exact: true })).toBeVisible();
-  const historySummary = panel.getByText("活动记录", { exact: true }); await historySummary.focus(); await historySummary.press("Enter"); await expect(panel.locator("ol > li")).toHaveCount(2);
+  const historySummary = panel.getByRole("button", { name: "活动记录", exact: true });
+  await expect(historySummary).toHaveAttribute("aria-expanded", "true");
+  await historySummary.focus(); await historySummary.press("Enter"); await expect(panel.locator("ol")).toBeHidden();
+  await historySummary.press("Space"); await expect(panel.locator("ol > li")).toHaveCount(2); await expect(panel.locator("ol")).toBeVisible();
   const minimumTouchHeight = await panel.locator("button, summary").evaluateAll(elements => Math.min(...elements.filter(element => element.getClientRects().length > 0).map(element => element.getBoundingClientRect().height)));
   assert.ok(minimumTouchHeight >= 44, "可见按钮和折叠入口需达到 44px 触控高度。"); await screenshotPanel(panel, "desktop-1440.png");
   await expect(page.locator("#instance-synthetic_old-main").getByText("请更新这台电脑的 LiveNest 客户端，再刷新互动状态。", { exact: true })).toBeVisible();
