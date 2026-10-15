@@ -83,12 +83,12 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
       <div><h3 id={`chat-heading-${id}`}>AI 观众互动</h3></div>
       <span className={`${styles.status} ${!stale && current?.state === "running" ? styles.running : ""}`}>{stale ? "当前状态未知" : !supported ? "需要升级" : current ? states[current.state] : "读取中"}</span>
     </div>
-    {!supported ? <p className={styles.notice}>这台直播电脑的 Agent 暂不支持 AI 观众互动，请升级 Agent 后刷新状态。</p> : <>
+    {!supported ? <p className={styles.notice}>请更新这台电脑的 LiveNest 客户端，再刷新互动状态。</p> : <>
       {stale && <p className={styles.notice} role="status">设备离线或状态已过期，当前互动状态未知。以下显示上次记录，重新连接后再调整设置。</p>}
       <div className={styles.topRow}>
         <div><strong>自动回复观众</strong></div>
-        <button type="button" role="switch" aria-checked={current?.config.enabled ?? true} aria-label={`${instance.name} AI 自动回复观众`} disabled={locked} className={`switch-btn ${(current?.config.enabled ?? true) ? "active" : ""}`} onClick={() => void configure({ ...(current?.config || defaultLiveChatConfig), enabled: !current?.config.enabled })}>
-          <span className="switch-track" aria-hidden="true"><span /></span><span>{working === "configure" ? "保存中…" : (current?.config.enabled ?? true) ? "开启" : "关闭"}</span>
+        <button type="button" role="switch" aria-checked={current?.config.enabled ?? false} aria-label={`${instance.name} AI 自动回复观众${!current ? "，状态未读取" : stale ? "，上次状态" : ""}`} disabled={locked} className={`switch-btn ${current?.config.enabled ? "active" : ""}`} onClick={() => void configure({ ...(current?.config || defaultLiveChatConfig), enabled: !current?.config.enabled })}>
+          <span className="switch-track" aria-hidden="true"><span /></span><span>{working === "configure" ? "保存中…" : !current ? "待读取" : stale ? "上次" + (current.config.enabled ? "开启" : "关闭") : current.config.enabled ? "开启" : "关闭"}</span>
         </button>
       </div>
       <div className={styles.runtime}>

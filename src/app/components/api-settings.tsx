@@ -22,7 +22,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   const [section, setSection] = useState<SettingsSection>("ai");
   /** 业务入口携带实例，公共入口允许用户主动选择，避免隐式写入首台设备。 */
   function show(instance?: InstanceDescriptor, tab: SettingsSection = "ai") { setTarget(instance); setSection(tab); setOpen(true); }
-  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={setOpen} locked={saving} title="设置" description="管理服务凭据和长期偏好，关闭后继续当前操作。">{open && <SettingsContent initial={target} initialSection={section} onSaving={setSaving} saving={saving} />}</SurfaceDialog></SettingsContext.Provider>;
+  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={setOpen} locked={saving} title="设置" description="选择直播电脑与 OBS，配置文案生成或观众互动。" descriptionHidden>{open && <SettingsContent initial={target} initialSection={section} onSaving={setSaving} saving={saving} />}</SurfaceDialog></SettingsContext.Provider>;
 }
 
 /** 侧栏账户区与生成区共享入口；目标由调用方显式提供。 */
@@ -51,17 +51,15 @@ function SettingsContent({ initial, initialSection, onSaving, saving }: { initia
   const instance = inventory?.instances.find(item => targetKey(item) === selected);
   const agent = inventory?.agents?.find(item => item.id === instance?.agentId);
   return <Tabs value={section} onValueChange={setSection} asChild><div className="api-settings">
-    <TabsList aria-label="设置分类"><TabsTrigger value="ai" disabled={saving}>AI 服务与 API Key</TabsTrigger><TabsTrigger value="chat" disabled={saving}>互动偏好</TabsTrigger></TabsList>
     {error && <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新读取设备</button></div>}
     {!inventory && !error && <p role="status">正在读取设备…</p>}
     {inventory && <>
-      <label htmlFor="api-settings-target">配置对象</label><select id="api-settings-target" value={selected} disabled={saving} onChange={event => setSelected(event.target.value)}><option value="">选择直播电脑 / OBS 实例</option>{inventory.instances.map(item => <option key={targetKey(item)} value={targetKey(item)}>{inventory.agents?.find(device => device.id === item.agentId)?.name || "本机电脑"} / {item.name}</option>)}</select>
+      <div className="api-settings-target"><div className="api-settings-label"><label htmlFor="api-settings-target">配置对象</label><span>仅作用于所选实例</span></div><select id="api-settings-target" value={selected} disabled={saving || !inventory.instances.length} onChange={event => setSelected(event.target.value)}><option value="">选择直播电脑 / OBS 实例</option>{inventory.instances.map(item => <option key={targetKey(item)} value={targetKey(item)}>{inventory.agents?.find(device => device.id === item.agentId)?.name || "本机电脑"} / {item.name}</option>)}</select></div>
       {!inventory.instances.length && <p role="status">还没有可配置的实例，请先接入直播电脑。</p>}
       {selected && !instance && <p role="status">此实例已不可用，请重新选择配置对象。</p>}
-      {instance && <p className="api-settings-scope">当前对象：{agent?.name || "本机电脑"} / {instance.name}。其他实例保持各自配置。</p>}
     </>}
+    <TabsList aria-label="设置分类"><TabsTrigger value="ai" disabled={saving}>文案生成</TabsTrigger><TabsTrigger value="chat" disabled={saving}>观众互动</TabsTrigger></TabsList>
     <TabsContent value="ai">{instance && section === "ai" && <ApiKeySettings key={targetKey(instance)} instance={instance} offline={!!agent && !agent.online} onSaving={onSaving} />}</TabsContent>
     <TabsContent value="chat">{instance && section === "chat" && <LiveChatSettings key={targetKey(instance)} instance={instance} offline={!!agent && !agent.online} onSaving={onSaving} />}</TabsContent>
-    <p className="api-settings-footnote">AI 观众互动使用管理员配置的独立服务；此处更换密钥不会修改互动服务。</p>
   </div></Tabs>;
 }

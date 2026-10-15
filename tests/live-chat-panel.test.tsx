@@ -88,7 +88,7 @@ it("keeps chat settings operable while the broadcast console is live and its bro
 it("defaults to enabled, moves persona fields out of runtime and directs missing environment configuration to administrators", () => {
   const html = render(fixture({ configured: false, state: "needs_key", message: "请保存 DeepSeek API Key" }));
   expect(html).toContain('role="switch" aria-checked="true"');
-  expect(html).toContain("互动设置"); expect(html).not.toContain("发送间隔（秒）");
+  expect(html).toContain("互动设置"); expect(html).not.toContain("发送间隔（5–60 秒）");
   expect(html).toContain("直播电脑的 DeepSeek 环境配置未就绪，请联系管理员");
   expect(html).not.toContain('type="password"'); expect(html).not.toContain("DeepSeek API Key"); expect(html).not.toContain("保存 Key"); expect(html).not.toContain("检查密钥设置");
   expect(html).not.toContain("每日回复条数无上限"); expect(html).toContain("项目共享配额");
@@ -96,8 +96,14 @@ it("defaults to enabled, moves persona fields out of runtime and directs missing
 
 it("shows an upgrade explanation without implying unsupported Agents can send replies", () => {
   const html = render(fixture(), { supported: false, status: undefined });
-  expect(html).toContain("请升级 Agent 后刷新状态");
+  expect(html).toContain("请更新这台电脑的 LiveNest 客户端，再刷新互动状态");
   expect(html).not.toContain('role="switch"'); expect(html).not.toContain("互动中");
+});
+
+it("does not display an enabled switch before the first interaction status arrives", () => {
+  const html = render(fixture(), { status: undefined });
+  expect(html).toContain('aria-checked="false"'); expect(html).toContain("状态未读取");
+  expect(html).toContain("待读取"); expect(html).not.toContain('switch-btn active');
 });
 
 it("marks stale status as unknown, disables changes and labels retained interaction history", () => {
@@ -168,7 +174,7 @@ it("turns off with the latest saved preferences instead of resetting them to def
 it("offers all personas in settings and refuses an invalid interval without writing", () => {
   const { tree, controls } = mountedSettings({ interval: "2" });
   const html = renderToStaticMarkup(tree);
-  for (const label of ["友善陪聊", "活泼幽默", "安静温柔", "自定义", "发送间隔（秒）"]) expect(html).toContain(label);
+  for (const label of ["友善陪聊", "活泼幽默", "安静温柔", "自定义", "发送间隔（5–60 秒）"]) expect(html).toContain(label);
   (controls.find(element => element.type === "form")!.props.onSubmit as (event: { preventDefault(): void }) => void)({ preventDefault: () => {} });
   expect(api).not.toHaveBeenCalled();
 });

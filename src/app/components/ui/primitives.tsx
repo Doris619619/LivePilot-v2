@@ -35,14 +35,14 @@ export const PopoverTrigger = PopoverPrimitive.Trigger;
 export function PopoverContent({ className = "", ...props }: ComponentProps<typeof PopoverPrimitive.Content>) {
   return <PopoverPrimitive.Portal><PopoverPrimitive.Content sideOffset={8} collisionPadding={12} align="end" className={"ui-popover " + className} {...props} /></PopoverPrimitive.Portal>;
 }
-/** Sheet/Dialog 共用 shadcn 门户结构；锁定时不能通过遮罩或 Escape 取消正在提交的操作。 */
-export function SurfaceDialog({ open, onOpenChange, title, description, children, trigger, side = "center", locked = false }: { open: boolean; onOpenChange: (value: boolean) => void; title: string; description: string; children: ReactNode; trigger?: ReactNode; side?: "center" | "left" | "right"; locked?: boolean }) {
+/** Sheet/Dialog 保留读屏说明；简单表单可隐藏重复介绍，锁定时不能关闭在途提交。 */
+export function SurfaceDialog({ open, onOpenChange, title, description, descriptionHidden = false, children, trigger, side = "center", locked = false }: { open: boolean; onOpenChange: (value: boolean) => void; title: string; description: string; descriptionHidden?: boolean; children: ReactNode; trigger?: ReactNode; side?: "center" | "left" | "right"; locked?: boolean }) {
   const returnFocus = useRef<HTMLElement | null>(null);
   return <DialogPrimitive.Root open={open} onOpenChange={value => { if (!locked) onOpenChange(value); }}>
     {trigger && <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger>}
     <DialogPrimitive.Portal><DialogPrimitive.Overlay className="ui-overlay" /><DialogPrimitive.Content className={"ui-dialog ui-dialog-" + side} onOpenAutoFocus={() => { returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; }} onCloseAutoFocus={event => { if (!trigger && returnFocus.current?.isConnected) { event.preventDefault(); returnFocus.current.focus(); } }} onEscapeKeyDown={event => { if (locked) event.preventDefault(); }} onInteractOutside={event => { if (locked) event.preventDefault(); }}>
       <div className="ui-dialog-heading"><DialogPrimitive.Title>{title}</DialogPrimitive.Title><DialogPrimitive.Close disabled={locked} className="ui-close" aria-label="关闭"><span aria-hidden="true">×</span></DialogPrimitive.Close></div>
-      <DialogPrimitive.Description className="ui-dialog-description">{description}</DialogPrimitive.Description>{children}
+      <DialogPrimitive.Description className={descriptionHidden ? "visually-hidden" : "ui-dialog-description"}>{description}</DialogPrimitive.Description>{children}
     </DialogPrimitive.Content></DialogPrimitive.Portal>
   </DialogPrimitive.Root>;
 }

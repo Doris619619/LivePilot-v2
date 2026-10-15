@@ -1,6 +1,6 @@
 /** 网页成员切换：已有会话直接选择，新成员首次验证密码；切换整页载入，隔离旧账号草稿和请求。 */
 "use client";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "./components/ui/primitives";
 import { api } from "./client-request";
 import "./account-switcher.css";
@@ -25,10 +25,14 @@ function destination(user: User) { return window.location.pathname === "/publish
 export default function AccountSwitcher({ user, placement = "default" }: { user?: User; placement?: "default" | "sidebar" }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<Remembered[]>([]); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const [reading, setReading] = useState(false); const [readError, setReadError] = useState(""); const readSequence = useRef(0);
 
-  /** 只在打开时读取，过期或重置过密码的成员不会冒充有效登录。 */
+  /** 加载、失败与空列表分开显示；关闭后的旧响应不能覆盖重新打开的菜单。 */
   async function read() {
-    try { const result = await api<{ accounts: Remembered[] }>("/api/session/accounts"); setAccounts(result.accounts); setError(""); } catch (e) { setError((e as Error).message); }
+    const request = ++readSequence.current; setReading(true); setReadError("");
+    try { const result = await api<{ accounts: Remembered[] }>("/api/session/accounts"); if (request === readSequence.current) setAccounts(result.accounts); }
+    catch { if (request === readSequence.current) setReadError("无法读取已登录账号，请重试。"); }
+    finally { if (request === readSequence.current) setReading(false); }
   }
   /** 服务端已接受切换后通知其他标签页，并清空当前账号的已挂载组件。 */
   async function choose(username: string) {
@@ -48,12 +52,12 @@ export default function AccountSwitcher({ user, placement = "default" }: { user?
     try { await api("/api/session", { method: "DELETE", headers: { "x-livepilot": "1", "x-livepilot-user": user?.username || "" } }); notifyAccountChange(); window.location.reload(); }
     catch (e) { setError((e as Error).message); setBusy(false); }
   }
-  return <Popover open={open} onOpenChange={value => { setOpen(value); if (value) void read(); else { setAdding(false); setError(""); } }}>
+  return <Popover open={open} onOpenChange={value => { if (busy) return; setOpen(value); if (value) void read(); else { readSequence.current++; setAdding(false); setError(""); } }}>
     <PopoverTrigger asChild><button type="button" className="account-menu-trigger" aria-label="切换登录账号"><span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span><span className="account-menu-name">{user?.username || "选择已登录账号"}</span><span aria-hidden="true">{placement === "sidebar" ? "⌃" : "⌄"}</span></button></PopoverTrigger>
     <PopoverContent aria-label="登录账号" side={placement === "sidebar" ? "top" : "bottom"} align={placement === "sidebar" ? "start" : "end"}>
     <div className="account-switcher-panel">
       <span className="account-switcher-caption">登录账号</span>
-      <div className="account-switcher-list">{accounts.map(account => <button key={account.username} type="button" disabled={busy || account.current} onClick={() => void choose(account.username)}><span><strong>{account.username}</strong><small>{account.role === "admin" ? "管理员" : "客户"}</small></span><span>{account.current ? "当前" : "切换"}</span></button>)}</div>
+      {reading ? <p role="status">正在读取账号…</p> : readError ? <div role="alert"><p>{readError}</p><button type="button" className="btn-ghost" onClick={() => void read()}>重试读取账号</button></div> : <div className="account-switcher-list">{accounts.length ? accounts.map(account => <button key={account.username} type="button" disabled={busy || account.current} onClick={() => void choose(account.username)}><span><strong>{account.username}</strong><small>{account.role === "admin" ? "管理员" : "客户"}</small></span><span>{account.current ? "当前" : "切换"}</span></button>) : <p role="status">没有可切换的已登录账号。</p>}</div>}
       {adding ? <form onSubmit={add} aria-label="添加登录账号"><label>账号<input name="username" required autoComplete="username" autoCapitalize="none" pattern="[A-Za-z0-9_]{2,32}" maxLength={32} disabled={busy} /></label><label>密码<input name="password" type="password" required autoComplete="current-password" maxLength={256} disabled={busy} /></label><div className="account-switcher-form-actions"><button type="submit" className="btn-primary" disabled={busy}>{busy ? "登录中…" : "登录并切换"}</button><button type="button" disabled={busy} onClick={() => { setAdding(false); setError(""); }}>返回</button></div></form> : <button type="button" className="account-switcher-add" disabled={busy} onClick={() => setAdding(true)}>＋ 添加登录账号</button>}
       {error && <p role="alert" className="account-switcher-error">{error}</p>}
       {user && !adding && <button type="button" className="account-switcher-exit" disabled={busy} onClick={() => void exit()}>退出当前账号</button>}

@@ -14,7 +14,7 @@ export default function FileDropzone({ id, label, hint, name, accept, maxSize, d
     <input {...getInputProps({ id, "aria-hidden": true, tabIndex: -1 })} />
     <div className="ui-dropzone-icon">{name ? <CheckCircleIcon /> : <UploadIcon />}</div>
     <strong>{isDragActive ? "松开以选择文件" : name || "拖拽文件到这里"}</strong>
-    <span id={id + "-hint"}>{hint}</span><button type="button" disabled={disabled} onClick={open}>{label}</button>
+    <span id={id + "-hint"}>{hint}</span><button type="button" aria-describedby={id + "-hint"} disabled={disabled} onClick={open}>{label}</button>
     {error && <p role="alert" className="broadcast-error">{error}</p>}
   </div>;
 }

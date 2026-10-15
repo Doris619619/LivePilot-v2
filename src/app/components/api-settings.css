@@ -1,22 +1,31 @@
-/* 设置窗口以配置对象、服务状态、密钥编辑分层；常用生成操作仍在业务页面。 */
-.ui-dialog-center:has(.api-settings) { width: min(680px, calc(100vw - 32px)); }
-.api-settings { display: grid; gap: 14px; min-width: 0; }
-.api-settings-section { padding-bottom: 16px; border-bottom: 1px solid var(--border-subtle); }
-.api-settings-section h2 { margin: 0 0 6px; font-size: 18px; }
-.api-settings-section p, .api-service-heading p { margin: 0; color: var(--text-secondary); font-size: 13px; }
-.api-settings > label, .api-key-form > label { font-size: 13px; font-weight: 600; }
+/* 设置使用单层表单；目标只显示一次，操作同排，低频说明按需展开。 */
+.ui-dialog-center:has(.api-settings) { width: min(600px, calc(100vw - 32px)); padding: 24px; }
+.api-settings { display: grid; gap: 16px; min-width: 0; margin-top: 12px; }
+.api-settings-target, .api-key-form { display: grid; gap: 8px; }
+.api-settings-label { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.api-settings-label label, .api-key-form > label { font-size: 13px; font-weight: 600; }
+.api-settings-label span { font-size: 12px; color: var(--text-secondary); }
 .api-settings select, .api-key-form input { width: 100%; min-width: 0; }
-.api-settings-scope, .api-settings-hint, .api-settings-footnote { color: var(--text-secondary); font-size: 13px; line-height: 1.7; margin: 0; overflow-wrap: anywhere; }
-.api-service-card { display: grid; gap: 16px; border: 1px solid var(--border-subtle); border-radius: 12px; padding: 20px; }
+.api-settings .ui-tabs-list { gap: 24px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; }
+.api-settings .ui-tabs-trigger { flex: none; min-height: 44px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 14px; }
+.api-settings .ui-tabs-trigger[data-state="active"] { border-bottom-color: var(--accent-primary); background: transparent; box-shadow: none; }
+.api-service-section { display: grid; gap: 12px; min-width: 0; }
+.api-settings .api-chat-form { gap: 12px; }
 .api-service-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .api-service-heading h3 { font-size: 16px; margin: 0 0 4px; }
-.api-config-state { font-size: 12px; white-space: nowrap; padding: 5px 10px; border-radius: 6px; background: var(--surface-hover); }
-.api-key-form { display: grid; gap: 10px; }
-.api-settings-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.api-service-heading p, .api-settings-hint { margin: 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.api-config-state { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+.api-settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .api-settings-actions button { min-height: 40px; }
-.api-settings-success { margin: 0; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
-.api-settings-footnote { border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+.api-settings-success { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-primary); }
+.api-settings-help { border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.api-settings-help summary { cursor: pointer; padding-block: 12px; min-height: 44px; }
+.api-settings-help ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
 .broadcast-ai .ai-heading { margin-bottom: 12px; }
 .broadcast-ai .ai-heading button { min-height: 36px; padding: 6px 10px; }
 .broadcast-ai .ai-compose { margin-bottom: 10px; }
-@media (max-width: 600px) { .api-service-card { padding: 14px; } .api-settings-actions button { min-height: 44px; } }
+@media (max-width: 600px) {
+  .ui-dialog-center:has(.api-settings) { padding: 20px; }
+  .api-settings-actions button { min-height: 44px; }
+  .api-settings input, .api-settings select { font-size: 16px; }
+}

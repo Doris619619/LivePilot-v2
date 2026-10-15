@@ -32,37 +32,38 @@ export default function ProfileEditor({ initial, target, thumbnails, save, cance
   }
   /** 原生表单校验后提交完整 Profile，儿童内容不由 AI 推断。 */
   async function submit(event: FormEvent) {
-    event.preventDefault(); await save({ ...value, revision: initial ? initial.revision + 1 : 1, madeForKids: childrenChoice === "true" });
+    event.preventDefault(); if (busy || reading) return; await save({ ...value, revision: initial ? initial.revision + 1 : 1, madeForKids: childrenChoice === "true" });
   }
   return <form className="publishing-form" onSubmit={e => void submit(e)}>
     <p className="publishing-editor-target">{target.channel || target.name}</p>
-    <label>配置名称<input required value={value.name} maxLength={80} onChange={e => setValue({ ...value, name: e.target.value })} /></label>
+    <label>配置名称<input disabled={busy} required value={value.name} maxLength={80} onChange={e => setValue({ ...value, name: e.target.value })} /></label>
     <fieldset><legend>视频文案</legend>
-      <label>标题模板<input required value={value.titleTemplate} onChange={e => setValue({ ...value, titleTemplate: e.target.value })} /></label>
-      <label>说明模板<textarea rows={3} value={value.descriptionTemplate} onChange={e => setValue({ ...value, descriptionTemplate: e.target.value })} /></label>
+      <label>标题模板<input disabled={busy} required value={value.titleTemplate} onChange={e => setValue({ ...value, titleTemplate: e.target.value })} /></label>
+      <label>说明模板<textarea disabled={busy} rows={3} value={value.descriptionTemplate} onChange={e => setValue({ ...value, descriptionTemplate: e.target.value })} /></label>
       <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{packageName}} 发布包 · {{batchName}} 批次 · {{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期"}</p></details>
-      <label className="publishing-check"><input type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
+      <label className="publishing-check"><input disabled={busy} type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
       {value.ai.enabled && <div className="publishing-ai-fields">
         <p className="publishing-hint">使用当前实例的 DeepSeek 文案服务。批次确认时单独授权。</p><ApiSettingsButton instance={{ id: target.instanceId, agentId: target.agentId, name: target.name }} disabled={busy}>API 设置</ApiSettingsButton>
-        <div className="publishing-fields"><label>生成语言<input required value={value.ai.language} onChange={e => setValue({ ...value, ai: { ...value.ai, language: e.target.value } })} /></label><label>失败兜底标题<input required value={value.ai.fallbackTitle} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackTitle: e.target.value } })} /></label></div>
-        <label>生成要求<textarea required rows={3} value={value.ai.prompt} onChange={e => setValue({ ...value, ai: { ...value.ai, prompt: e.target.value } })} /></label>
-        <label>失败兜底说明<textarea rows={3} value={value.ai.fallbackDescription} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackDescription: e.target.value } })} /></label>
+        <div className="publishing-fields"><label>生成语言<input disabled={busy} required value={value.ai.language} onChange={e => setValue({ ...value, ai: { ...value.ai, language: e.target.value } })} /></label><label>失败兜底标题<input disabled={busy} required value={value.ai.fallbackTitle} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackTitle: e.target.value } })} /></label></div>
+        <label>生成要求<textarea disabled={busy} required rows={3} value={value.ai.prompt} onChange={e => setValue({ ...value, ai: { ...value.ai, prompt: e.target.value } })} /></label>
+        <label>失败兜底说明<textarea disabled={busy} rows={3} value={value.ai.fallbackDescription} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackDescription: e.target.value } })} /></label>
       </div>}
     </fieldset>
     <fieldset><legend>发布方式</legend>
-      <div className="publishing-fields"><label>可见性<select value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingProfile["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select required value={childrenChoice} onChange={e => setChildrenChoice(e.target.value)}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
-      <div className="publishing-fields"><label>封面<select value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingProfile["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label>{value.thumbnailMode === "fixed" && <label>固定图片<input required list="publishing-thumbnails" value={value.thumbnailFilename || ""} onChange={e => setValue({ ...value, thumbnailFilename: e.target.value })} /><datalist id="publishing-thumbnails">{thumbnails.map(name => <option key={name}>{name}</option>)}</datalist></label>}</div>
+      <div className="publishing-fields"><label>可见性<select disabled={busy} value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingProfile["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select disabled={busy} required value={childrenChoice} onChange={e => setChildrenChoice(e.target.value)}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
+      <div className="publishing-fields"><label>封面<select disabled={busy} value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingProfile["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label>{value.thumbnailMode === "fixed" && <label>固定图片<input disabled={busy} required list="publishing-thumbnails" value={value.thumbnailFilename || ""} onChange={e => setValue({ ...value, thumbnailFilename: e.target.value })} /><datalist id="publishing-thumbnails">{thumbnails.map(name => <option key={name}>{name}</option>)}</datalist></label>}</div>
     </fieldset>
     <details className="publishing-details"><summary>标签与播放列表{value.playlistIds.length > 0 ? " · " + value.playlistIds.length + " 个已选" : ""}</summary>
-      <label>标签 · 逗号分隔<input value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
+      <label>标签 · 逗号分隔<input disabled={busy} value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
       <div className="publishing-section-heading"><span>播放列表</span><button type="button" disabled={busy || reading} onClick={() => void loadPlaylists()}>{reading ? "读取中…" : "读取播放列表"}</button></div>
       {playlistError && <p className="publishing-validation" role="alert">{playlistError}</p>}
-      {playlists?.map(item => <label className="publishing-check" key={item.id}><input type="checkbox" checked={value.playlistIds.includes(item.id)} onChange={e => setValue({ ...value, playlistIds: e.target.checked ? [...value.playlistIds, item.id] : value.playlistIds.filter(id => id !== item.id) })} />{item.title}</label>)}
+      {playlists?.length === 0 && <p className="publishing-hint">这个频道还没有播放列表。</p>}
+      {playlists?.map(item => <label className="publishing-check" key={item.id}><input disabled={busy} type="checkbox" checked={value.playlistIds.includes(item.id)} onChange={e => setValue({ ...value, playlistIds: e.target.checked ? [...value.playlistIds, item.id] : value.playlistIds.filter(id => id !== item.id) })} />{item.title}</label>)}
     </details>
     <details className="publishing-details"><summary>高级设置</summary>
-      <div className="publishing-fields"><label>分类<select value={value.categoryId} onChange={e => setValue({ ...value, categoryId: e.target.value })}><option value="10">音乐</option><option value="22">人物与博客</option><option value="24">娱乐</option><option value="27">教育</option><option value="28">科学与技术</option><option value="20">游戏</option><option value="1">电影与动画</option></select></label><label>授权许可<select value={value.license} onChange={e => setValue({ ...value, license: e.target.value as PublishingProfile["license"] })}><option value="youtube">标准 YouTube 许可</option><option value="creativeCommon">Creative Commons</option></select></label></div>
-      {([ ["embeddable", "允许嵌入"], ["notifySubscribers", "通知频道订阅者"], ["containsSyntheticMedia", "含需披露的修改或合成内容"] ] as const).map(([key, label]) => <label key={key} className="publishing-check"><input type="checkbox" checked={value[key]} onChange={e => setValue({ ...value, [key]: e.target.checked })} />{label}</label>)}
+      <div className="publishing-fields"><label>分类<select disabled={busy} value={value.categoryId} onChange={e => setValue({ ...value, categoryId: e.target.value })}><option value="10">音乐</option><option value="22">人物与博客</option><option value="24">娱乐</option><option value="27">教育</option><option value="28">科学与技术</option><option value="20">游戏</option><option value="1">电影与动画</option></select></label><label>授权许可<select disabled={busy} value={value.license} onChange={e => setValue({ ...value, license: e.target.value as PublishingProfile["license"] })}><option value="youtube">标准 YouTube 许可</option><option value="creativeCommon">Creative Commons</option></select></label></div>
+      {([ ["embeddable", "允许嵌入"], ["notifySubscribers", "通知频道订阅者"], ["containsSyntheticMedia", "含需披露的修改或合成内容"] ] as const).map(([key, label]) => <label key={key} className="publishing-check"><input disabled={busy} type="checkbox" checked={value[key]} onChange={e => setValue({ ...value, [key]: e.target.checked })} />{label}</label>)}
     </details>
-    <div className="publishing-actions"><button className="btn-primary" type="submit" disabled={busy || reading}>{busy ? "保存中…" : "保存配置"}</button><button type="button" onClick={cancel}>返回</button></div>
+    <div className="publishing-actions"><button className="btn-primary" type="submit" disabled={busy || reading}>{busy ? "保存中…" : "保存配置"}</button><button type="button" disabled={busy} onClick={cancel}>返回</button></div>
   </form>;
 }

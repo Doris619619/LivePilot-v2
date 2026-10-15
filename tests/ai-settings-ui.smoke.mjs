@@ -21,7 +21,7 @@ const log = await open(path.join(root, "web.log"), "a");
 const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start", "--hostname", "127.0.0.1", "--port", String(port)], { env, windowsHide: true, stdio: ["ignore", log.fd, log.fd] }); await log.close();
 let browser;
 const errors = [], requests = [];
-let failSave = false, failGenerate = false, failStatus = false, failInventory = false, slowStatus, slowSave;
+let failSave = false, failGenerate = false, failStatus = false, failInventory = false, emptyInventory = false, failAccounts = false, missingChat = false, slowStatus, slowSave, slowAccounts;
 let broadcastMode = "idle";
 const configured = { main: true, second: false };
 const instances = [{ id: "main", name: "OBS 1", agentId: "synthetic_pc", agentName: "演示直播电脑" }, { id: "second", name: "OBS 2", agentId: "synthetic_pc", agentName: "演示直播电脑" }, { id: "offline", name: "离线 OBS", agentId: "synthetic_offline", agentName: "离线电脑" }];
@@ -30,7 +30,7 @@ let chat = { config: { enabled: false, preset: "friendly", customPrompt: "", int
 function dashboard(id) {
   return { state: { phase: broadcastMode === "live" ? "live" : broadcastMode === "pending" ? "error" : "stopped", ...(broadcastMode === "pending" ? { broadcastTitle: "待核对场次" } : {}), stage: "待机", updatedAt: new Date().toISOString(), selection: { video: "", music: "", videoAudio: false } }, busy: false,
     obs: { ready: true, running: true, streaming: broadcastMode === "live" }, youtube: { connected: true, lifecycle: broadcastMode === "live" ? "live" : "ready", ingest: broadcastMode === "live" ? "active" : "inactive", channel: "演示频道 " + id }, media: { videos: [], music: [] },
-    configuration: { broadcastDetails: true, liveChat: true, missing: [], privacy: "private", madeForKids: false }, liveChat: structuredClone(chat),
+    configuration: { broadcastDetails: true, liveChat: true, missing: [], privacy: "private", madeForKids: false }, liveChat: missingChat ? undefined : structuredClone(chat),
     device: { agentId: "synthetic_pc", online: true, lastSeen: Date.now(), observedAt: Date.now() } };
 }
 /** 未声明的业务接口一律拒绝；写入只改变测试内存。 */
@@ -39,9 +39,14 @@ async function mock(route) {
   const user = { username: "Demo", role: "admin" };
   let result;
   if (url.pathname === "/api/session") result = { user };
-  else if (url.pathname === "/api/session/accounts") result = { accounts: [{ ...user, current: true }] };
+  else if (url.pathname === "/api/session/accounts") {
+    if (slowAccounts) await slowAccounts;
+    if (failAccounts) return route.fulfill({ status: 503, json: { error: "模拟账号读取失败" } });
+    result = { accounts: [{ ...user, current: true }] };
+  }
   else if (url.pathname === "/api/instances") {
     if (failInventory) return route.fulfill({ status: 503, json: { error: "模拟目录失败" } });
+    if (emptyInventory) return route.fulfill({ json: { instances: [], agents: [] } });
     result = { instances, agents: ["synthetic_pc", "synthetic_offline"].map(id => ({ id, name: id === "synthetic_pc" ? "演示直播电脑" : "离线电脑", owner: user.username, online: id !== "synthetic_offline", revoked: false, lastSeen: Date.now(), instances: instances.filter(i => i.agentId === id) })) };
   } else if (url.pathname === "/api/status") result = dashboard(url.searchParams.get("instanceId"));
   else if (url.pathname === "/api/broadcast-assets") {
@@ -89,7 +94,11 @@ try {
   broadcastMode = "pending"; await page.reload();
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
   await expect(first.getByRole("button", { name: "重试开播", exact: true })).toBeVisible();
-  broadcastMode = "idle"; await page.reload();
+  broadcastMode = "idle"; missingChat = true; await page.reload();
+  await expect(first.getByRole("switch")).toBeDisabled();
+  await expect(first.getByRole("switch")).toHaveAttribute("aria-checked", "false");
+  await expect(first.getByRole("switch")).toContainText("待读取");
+  missingChat = false; await page.reload();
   await title.fill("保留我的草稿");
   await page.setViewportSize({ width: 1280, height: 820 });
   await title.fill("Late Night Lofi · Study & Relax");
@@ -107,19 +116,29 @@ try {
   await expect(target).toHaveValue("synthetic_pc:main");
   await expect(dialog.getByText("已配置", { exact: true })).toBeVisible();
   await expect(dialog.locator('input[type="password"]')).toHaveCount(0);
-  await dialog.screenshot({ path: path.join(output, "api-configured-desktop.png") });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  /** 普通配置不应强迫滚动；同时检查底部操作确实在可见视口内。 */
+  async function captureSettings(name) {
+    const metrics = await dialog.evaluate(element => ({ height: element.getBoundingClientRect().height, scroll: element.scrollHeight - element.clientHeight, overflow: element.scrollWidth - element.clientWidth }));
+    assert.ok(metrics.scroll <= 2 && metrics.overflow <= 2, `${name}: ${JSON.stringify(metrics)}`);
+    await dialog.screenshot({ path: path.join(output, name + ".png") });
+    console.log(name + ": " + JSON.stringify(metrics));
+  }
+  await captureSettings("api-configured-desktop");
   await dialog.getByRole("button", { name: "更换 API Key" }).click();
+  await captureSettings("api-edit-desktop");
   const key = dialog.getByLabel("新的 API Key", { exact: true });
   await key.fill("sk-synthetic-settings-only");
   failSave = true;
   await dialog.getByRole("button", { name: "保存 API Key", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("保存结果未确认");
   await expect(key).toHaveValue("sk-synthetic-settings-only");
+  await captureSettings("api-save-error-desktop");
   failSave = false;
   let finishSave; slowSave = new Promise(resolve => { finishSave = resolve; });
   await dialog.getByRole("button", { name: "保存 API Key", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "保存中…", exact: true })).toBeDisabled();
-  await expect(target).toBeDisabled(); await expect(dialog.getByRole("tab", { name: "互动偏好" })).toBeDisabled();
+  await expect(target).toBeDisabled(); await expect(dialog.getByRole("tab", { name: "观众互动" })).toBeDisabled();
   await dialog.press("Escape"); await expect(dialog).toBeVisible();
   finishSave(); slowSave = undefined;
   await expect(dialog.getByText(/API Key 已加密保存/)).toBeVisible();
@@ -128,8 +147,11 @@ try {
   await target.selectOption("synthetic_pc:second");
   await expect(dialog.getByText("未配置", { exact: true })).toBeVisible();
   await expect(dialog.getByLabel("API Key", { exact: true })).toHaveValue("");
+  await captureSettings("api-unconfigured-desktop");
+  await page.screenshot({ path: path.join(output, "settings-context-desktop.png") });
   await target.selectOption("synthetic_offline:offline");
   await expect(dialog.getByText("设备离线", { exact: true })).toBeVisible();
+  await captureSettings("api-offline-desktop");
   assert.equal(requests.some(r => r.instanceId === "offline"), false);
   await target.selectOption("synthetic_pc:main");
   await expect(dialog.getByText("已配置", { exact: true })).toBeVisible();
@@ -141,12 +163,15 @@ try {
   await first.getByRole("button", { name: "撤销填入", exact: true }).click(); await expect(title).toHaveValue("保留我的草稿");
   await first.locator(".broadcast-settings").screenshot({ path: path.join(output, "content-desktop.png"), style: ".app-header,.skip-link {visibility:hidden!important}" });
   await first.getByRole("button", { name: "互动设置", exact: true }).click();
-  await expect(dialog.getByRole("tab", { name: "互动偏好" })).toHaveAttribute("data-state", "active");
+  await expect(dialog.getByRole("tab", { name: "观众互动" })).toHaveAttribute("data-state", "active");
   await dialog.getByLabel("互动人设", { exact: true }).selectOption("custom"); await dialog.getByLabel("自定义人设描述").fill("温柔且简短。");
-  await dialog.getByLabel("发送间隔（秒）").fill("10"); await dialog.getByRole("button", { name: "保存互动设置" }).click();
+  await dialog.getByLabel("发送间隔（5–60 秒）").fill("10"); await dialog.getByRole("button", { name: "保存互动设置" }).click();
   await expect(dialog.getByText("互动设置已保存，直播期间立即生效。", { exact: true })).toBeVisible();
   assert.equal(chat.config.enabled, false); assert.equal(chat.config.intervalSeconds, 10);
-  await dialog.screenshot({ path: path.join(output, "chat-preferences-desktop.png") });
+  await captureSettings("chat-preferences-desktop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await captureSettings("chat-preferences-390");
+  await page.setViewportSize({ width: 1280, height: 720 });
   await dialog.press("Escape");
   await first.getByRole("switch").click(); assert.equal(chat.config.intervalSeconds, 10); assert.equal(chat.config.preset, "custom");
   await openSettings.click(); failStatus = true; await dialog.getByRole("button", { name: "刷新配置状态" }).click();
@@ -162,7 +187,7 @@ try {
     await page.setViewportSize({ width, height: 844 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     assert.equal(await dialog.evaluate(element => element.scrollWidth > element.clientWidth), false);
-    await dialog.screenshot({ path: path.join(output, `api-unconfigured-${width}.png`) });
+    await captureSettings(`api-unconfigured-${width}`);
   }
   await dialog.getByLabel("API Key", { exact: true }).fill("sk-synthetic-unsaved-only"); await dialog.press("Escape");
   await openSettings.click(); await expect(dialog.locator('input[type="password"]')).toHaveCount(0); await dialog.press("Escape");
@@ -170,6 +195,21 @@ try {
   failInventory = true; await openSettings.click(); await expect(dialog.getByRole("alert")).toContainText("无法读取设备列表");
   failInventory = false; await dialog.getByRole("button", { name: "重新读取设备" }).click(); await expect(target).toBeVisible(); await dialog.press("Escape");
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(target).toHaveValue(""); await expect(dialog.locator('input[type="password"]')).toHaveCount(0);
+  await dialog.press("Escape");
+  emptyInventory = true; await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expect(dialog.getByText("还没有可配置的实例，请先接入直播电脑。")).toBeVisible(); await expect(target).toBeDisabled();
+  await captureSettings("settings-empty-desktop"); await dialog.press("Escape"); emptyInventory = false;
+  // 账号加载不能看起来像空列表；失败有就地恢复，恢复不更改当前身份。
+  let releaseAccounts; slowAccounts = new Promise(resolve => { releaseAccounts = resolve; });
+  failAccounts = true; await page.getByRole("button", { name: "切换登录账号", exact: true }).click();
+  await expect(page.getByText("正在读取账号…", { exact: true })).toBeVisible();
+  releaseAccounts(); slowAccounts = undefined;
+  await expect(page.getByText("无法读取已登录账号，请重试。", { exact: true })).toBeVisible();
+  failAccounts = false; await page.getByRole("button", { name: "重试读取账号", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Demo 管理员 当前" })).toBeVisible();
+  await page.getByRole("dialog", { name: "登录账号" }).press("Escape");
   // 同一配对表单在关闭、移动导航和宽度切换后保留草稿。
   const pairingTrigger = page.getByRole("button", { name: "添加直播电脑", exact: true });
   await pairingTrigger.click();
