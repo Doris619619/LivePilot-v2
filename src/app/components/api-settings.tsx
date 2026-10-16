@@ -36,7 +36,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   }
   /** 业务入口携带实例，公共入口允许用户主动选择，避免隐式写入首台设备。 */
   function show(instance?: InstanceDescriptor, tab: SettingsSection = "ai") { setTarget(instance); setSection(tab); setConfirmClose(false); setOpen(true); }
-  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={changeOpen} locked={saving} title="设置" description="管理账号 AI 服务、直播默认值与直播配置包。" descriptionHidden>{open && <SettingsDraftContext.Provider value={reportDirty}><SettingsContent initial={target} initialSection={section} onSaving={setSaving} saving={saving} />{confirmClose && <div className="settings-close-confirm" role="alert"><p>有未保存的修改，确定关闭？</p><div><button ref={continueButton} type="button" className="btn-secondary" onClick={() => setConfirmClose(false)}>继续编辑</button><button type="button" onClick={() => { setConfirmClose(false); setOpen(false); }}>放弃修改并关闭</button></div></div>}</SettingsDraftContext.Provider>}</SurfaceDialog></SettingsContext.Provider>;
+  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={changeOpen} locked={saving} title="设置" description="管理账号 AI 服务、默认参数与直播配置包。" descriptionHidden>{open && <SettingsDraftContext.Provider value={reportDirty}><SettingsContent initial={target} initialSection={section} onSaving={setSaving} saving={saving} />{confirmClose && <div className="settings-close-confirm" role="alert"><p>有未保存的修改，确定关闭？</p><div><button ref={continueButton} type="button" className="btn-secondary" onClick={() => setConfirmClose(false)}>继续编辑</button><button type="button" onClick={() => { setConfirmClose(false); setOpen(false); }}>放弃修改并关闭</button></div></div>}</SettingsDraftContext.Provider>}</SurfaceDialog></SettingsContext.Provider>;
 }
 
 /** 侧栏账户区与生成区共享入口；目标由调用方显式提供。 */
@@ -75,9 +75,9 @@ function SettingsContent({ initial, initialSection, onSaving, saving }: { initia
   }, [revision]);
   const instance = inventory?.instances.find(item => targetKey(item) === selected);
   return <Tabs orientation="vertical" value={section} onValueChange={value => { setSection(value); setMobileDetail(true); focusMobile(true); }} asChild><div ref={settingsRoot} className="api-settings" data-mobile-detail={mobileDetail}>
-    <TabsList aria-label="设置分类"><TabsTrigger value="ai" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>AI 服务</TabsTrigger><TabsTrigger value="defaults" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>直播默认</TabsTrigger><TabsTrigger value="profiles" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>直播配置包</TabsTrigger></TabsList>
+    <TabsList aria-label="设置分类"><TabsTrigger value="ai" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>AI 服务</TabsTrigger><TabsTrigger value="defaults" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>默认参数</TabsTrigger><TabsTrigger value="profiles" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>直播配置包</TabsTrigger></TabsList>
     <div className="settings-detail">
-    <div className="settings-page-heading"><button type="button" className="btn-ghost settings-back" disabled={saving} onClick={() => { setMobileDetail(false); focusMobile(false); }}>返回分类</button><h3 ref={detailHeading} tabIndex={-1}>{section === "ai" ? "AI 服务" : section === "defaults" ? "直播默认" : "直播配置包"}</h3></div>
+    <div className="settings-page-heading"><button type="button" className="btn-ghost settings-back" disabled={saving} onClick={() => { setMobileDetail(false); focusMobile(false); }}>返回分类</button><h3 ref={detailHeading} tabIndex={-1}>{section === "ai" ? "AI 服务" : section === "defaults" ? "默认参数" : "直播配置包"}</h3></div>
     <SettingsPanel value="defaults"><BroadcastDefaultSettings onSaving={onSaving} /></SettingsPanel>
     <SettingsPanel value="profiles">
     {section === "profiles" && error && <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新读取设备</button></div>}

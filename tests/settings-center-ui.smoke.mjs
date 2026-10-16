@@ -50,7 +50,7 @@ try {
   assert.deepEqual(await measure('desktop-ai'), initial);
   await key.fill('synthetic_settings_draft');
   await dialog.getByLabel('文案生成').uncheck();
-  await dialog.getByRole('tab', { name: '直播默认', exact: true }).click();
+  await dialog.getByRole('tab', { name: '默认参数', exact: true }).click();
   const privacy = dialog.locator('#privacy-account-defaults');
   await expect(privacy).toBeEnabled();
   await privacy.selectOption('private');
@@ -71,7 +71,7 @@ try {
   await dialog.getByRole('tab', { name: 'AI 服务', exact: true }).click();
   await expect(key).toHaveValue('synthetic_settings_draft');
   await expect(dialog.getByLabel('文案生成')).not.toBeChecked();
-  await dialog.getByRole('tab', { name: '直播默认', exact: true }).click();
+  await dialog.getByRole('tab', { name: '默认参数', exact: true }).click();
   await expect(privacy).toHaveValue('private');
   await dialog.getByRole('tab', { name: '直播配置包', exact: true }).click();
   await expect(prompt).toHaveValue('仅保留在本次设置窗口中的草稿。');
@@ -100,7 +100,7 @@ try {
     await dialog.getByRole('button', { name: '返回分类', exact: true }).click();
     await expect(dialog.getByRole('tablist')).toBeVisible();
     await capture(`mobile-${width}-categories`);
-    await dialog.getByRole('tab', { name: '直播默认', exact: true }).click();
+    await dialog.getByRole('tab', { name: '默认参数', exact: true }).click();
     await expect(privacy).toHaveValue('private');
     assert.deepEqual(await measure(`mobile-${width}-defaults`), mobile);
     await dialog.getByRole('button', { name: '返回分类', exact: true }).click();

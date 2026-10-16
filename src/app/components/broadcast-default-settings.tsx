@@ -25,13 +25,13 @@ export default function BroadcastDefaultSettings({ onSaving }: { onSaving(value:
   async function save() {
     if (!record || !draft || busy) return;
     setBusy(true); onSaving(true); setError(""); setNotice("");
-    try { const result = await api<Record>("/api/broadcast-defaults", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ revision: record.revision, value: draft }) }); setRecord(result); setDraft(undefined); setNotice("默认设置已保存，供新建直播使用。"); }
+    try { const result = await api<Record>("/api/broadcast-defaults", { method: "POST", headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify({ revision: record.revision, value: draft }) }); setRecord(result); setDraft(undefined); setNotice("默认参数已保存，供新建直播使用。"); }
     catch (e) { setError(e instanceof Error ? e.message : "保存失败"); }
     finally { setBusy(false); onSaving(false); }
   }
-  return <section className="api-service-section" aria-label="直播默认设置"><p className="field-hint">用于本账号新建直播；已有草稿和正在进行的直播保持原设置。</p>
-    {record ? <><BroadcastRuleFields id="account-defaults" value={draft || record.value} disabled={busy} onChange={setDraft} /><SettingsActions><button type="button" className="btn-primary" disabled={busy || !draft} onClick={() => void save()}>保存默认设置</button></SettingsActions></> : !error && <p role="status">读取默认设置…</p>}
-    {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => { setError(""); setRefresh(value => value + 1); }}>重新读取默认设置</button></div>}
+  return <section className="api-service-section" aria-label="默认参数"><p className="field-hint">用于本账号新建直播；已有草稿和正在进行的直播保持原设置。</p>
+    {record ? <><BroadcastRuleFields id="account-defaults" value={draft || record.value} disabled={busy} onChange={setDraft} /><SettingsActions><button type="button" className="btn-primary" disabled={busy || !draft} onClick={() => void save()}>保存默认参数</button></SettingsActions></> : !error && <p role="status">读取默认参数…</p>}
+    {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => { setError(""); setRefresh(value => value + 1); }}>重新读取默认参数</button></div>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

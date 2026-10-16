@@ -86,7 +86,7 @@ try {
   await first.getByRole("button", { name: "默认设置", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "设置", exact: true });
   await dialog.getByLabel("公开范围", { exact: true }).selectOption("unlisted");
-  await dialog.getByRole("button", { name: "保存默认设置", exact: true }).click(); await expect(dialog.getByRole("status")).toContainText("默认设置已保存");
+  await dialog.getByRole("button", { name: "保存默认参数", exact: true }).click(); await expect(dialog.getByRole("status")).toContainText("默认参数已保存");
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(first.locator('#privacy-preview_liang-main-complete')).toHaveValue("private");
   await complete.locator("summary").click();
