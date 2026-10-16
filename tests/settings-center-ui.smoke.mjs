@@ -56,7 +56,7 @@ try {
   await privacy.selectOption('private');
   assert.deepEqual(await measure('desktop-defaults'), initial);
   await capture('desktop-defaults');
-  await dialog.getByRole('tab', { name: '直播配置包', exact: true }).click();
+  await dialog.getByRole('tab', { name: '发布配置', exact: true }).click();
   await dialog.locator('#api-settings-target').selectOption({ index: 1 });
   await expect(dialog.locator('#privacy-profile-editor')).toBeVisible();
   await dialog.getByLabel('自动回复观众', { exact: true }).check();
@@ -73,7 +73,7 @@ try {
   await expect(dialog.getByLabel('文案生成')).not.toBeChecked();
   await dialog.getByRole('tab', { name: '默认参数', exact: true }).click();
   await expect(privacy).toHaveValue('private');
-  await dialog.getByRole('tab', { name: '直播配置包', exact: true }).click();
+  await dialog.getByRole('tab', { name: '发布配置', exact: true }).click();
   await expect(prompt).toHaveValue('仅保留在本次设置窗口中的草稿。');
   assert.equal(await scroll.evaluate(el => el.scrollTop), scrollTop);
   await dialog.getByRole('tab', { name: 'AI 服务', exact: true }).click();

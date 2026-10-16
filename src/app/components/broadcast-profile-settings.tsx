@@ -7,6 +7,7 @@ import { api } from "../client-request";
 import BroadcastProfiles from "./broadcast-profiles";
 import LiveChatFields from "./live-chat-fields";
 import { defaultLiveChatConfig } from "@/shared/live-chat";
+import { ConfigurationStepTitle } from "./configuration-step";
 import BroadcastRuleFields from "./broadcast-rule-fields";
 
 /** 配置对象切换时父级通过 key 隔离全部状态，读取不修改工作台的草稿。 */
@@ -32,10 +33,10 @@ export default function BroadcastProfileSettings({ instance, onSaving }: { insta
     finally { setBusy(false); onSaving(false); }
   }
   return <section className="api-service-section" aria-label="管理直播配置包">
-    {channel && <><BroadcastProfiles management instance={instance} target={{ instanceId: instance.id, channelId: channel, ...(instance.agentId ? { agentId: instance.agentId } : {}) }} value={value} disabled={busy} onApply={setValue} onBusyChange={saving => { setBusy(saving); onSaving(saving); }} />
-      <BroadcastRuleFields id="profile-editor" value={{ privacy: details.privacy, madeForKids: details.madeForKids, videoAudio: value.videoAudio }} disabled={busy} onChange={rules => setValue({ ...value, videoAudio: rules.videoAudio, broadcast: { ...details, privacy: rules.privacy, madeForKids: rules.madeForKids } })} />
-      <h3>AI 观众互动</h3><LiveChatFields id="profile-editor" value={details.liveChat || defaultLiveChatConfig} disabled={busy} onChange={liveChat => setValue({ ...value, broadcast: { ...details, liveChat } })} />
-      <div className="api-settings-actions"><span>播放列表 · {details.playlistIds.length} 个已选</span><button type="button" disabled={busy} onClick={() => void loadPlaylists()}>读取播放列表</button></div>
+    {channel && <><h4 className="configuration-step-title"><ConfigurationStepTitle number={2}>选择或创建配置包</ConfigurationStepTitle></h4><BroadcastProfiles management instance={instance} target={{ instanceId: instance.id, channelId: channel, ...(instance.agentId ? { agentId: instance.agentId } : {}) }} value={value} disabled={busy} onApply={setValue} onBusyChange={saving => { setBusy(saving); onSaving(saving); }} />
+      <h4 className="configuration-step-title"><ConfigurationStepTitle number={3}>直播规则</ConfigurationStepTitle></h4><BroadcastRuleFields id="profile-editor" value={{ privacy: details.privacy, madeForKids: details.madeForKids, videoAudio: value.videoAudio }} disabled={busy} onChange={rules => setValue({ ...value, videoAudio: rules.videoAudio, broadcast: { ...details, privacy: rules.privacy, madeForKids: rules.madeForKids } })} />
+      <h4 className="configuration-step-title"><ConfigurationStepTitle number={4}>AI 观众互动</ConfigurationStepTitle></h4><LiveChatFields id="profile-editor" value={details.liveChat || defaultLiveChatConfig} disabled={busy} onChange={liveChat => setValue({ ...value, broadcast: { ...details, liveChat } })} />
+      <h4 className="configuration-step-title"><ConfigurationStepTitle number={5}>播放列表</ConfigurationStepTitle></h4><div className="api-settings-actions"><span>播放列表 · {details.playlistIds.length} 个已选</span><button type="button" disabled={busy} onClick={() => void loadPlaylists()}>读取播放列表</button></div>
       {playlists && <div className="playlist-options">{playlists.length ? playlists.map(item => <label key={item.id}><input type="checkbox" disabled={busy} checked={details.playlistIds.includes(item.id)} onChange={event => setValue({ ...value, broadcast: { ...details, playlistIds: event.target.checked ? [...details.playlistIds, item.id] : details.playlistIds.filter(id => id !== item.id) } })} />{item.title}</label>) : <p>当前频道没有播放列表。</p>}</div>}
     </>}
     {!channel && !error && <p role="status">读取频道…</p>}

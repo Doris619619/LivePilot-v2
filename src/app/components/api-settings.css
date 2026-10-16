@@ -59,3 +59,29 @@
 .ai-usage-fields label { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
 .ai-usage-fields input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0 0; flex-shrink: 0; }
 .ai-usage-fields small { display: block; font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-top: 4px; }
+
+/* 发布配置：两类配置共用入口，编号仅标记配置顺序，不增加嵌套卡片。 */
+.publication-type { display: flex; gap: 8px; position: sticky; top: 0; z-index: 1; padding: 0 0 16px; background: var(--surface-base); border-bottom: 1px solid var(--border-subtle); margin-bottom: 24px; }
+.publication-type button { flex: 1; min-height: 44px; padding: 8px 12px; background: transparent; color: var(--text-primary); border: 1px solid var(--border-default); }
+.publication-type button[aria-pressed="true"] { background: var(--accent-subtle); border-color: var(--accent-primary); color: var(--accent-primary); font-weight: 600; }
+.configuration-step-title { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; margin: 24px 0 12px; }
+.configuration-step-title:first-child { margin-top: 0; }
+.configuration-step-number { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border-radius: 50%; background: var(--surface-subtle, #f1f3f7); color: var(--text-primary); font-size: 13px; font-variant-numeric: tabular-nums; margin-right: 8px; vertical-align: middle; }
+.configuration-step-title .configuration-step-number { margin-right: 0; }
+.configuration-target { display: grid; gap: 8px; }
+.publishing-profile-settings .publishing-profile-row { padding: 16px 0; }
+.publishing-profile-settings .publishing-profile-row h4 { margin: 0; overflow-wrap: anywhere; }
+.publishing-profile-settings input:not([type="checkbox"]), .publishing-profile-settings textarea { width: 100%; min-width: 0; }
+.publishing-profile-settings .publishing-fields { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.publishing-profile-settings .publishing-form { min-width: 0; }
+.publishing-profile-settings .publishing-actions { position: sticky; bottom: -28px; background: var(--surface-base); border-top: 1px solid var(--border-subtle); padding: 16px 0; margin-bottom: 0; }
+@media (max-width: 600px) {
+  .publication-type { gap: 6px; }
+  .publication-type button { padding-inline: 8px; font-size: 14px; }
+  .publishing-profile-settings .publishing-actions { bottom: -20px; }
+}
+
+/* 编号与表单保持紧凑间距；键盘聚焦字段时避开固定类型栏和保存区。 */
+.api-service-section > section[aria-label="直播配置包"] { margin-bottom: 0; padding-bottom: 16px; }
+.api-service-section > .configuration-step-title { margin-top: 12px; }
+.settings-panel-body:has(.publishing-profile-settings) { scroll-padding-block: 80px; }

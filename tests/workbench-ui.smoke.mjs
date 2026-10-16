@@ -26,6 +26,8 @@ await context.route("**/api/**", async route => {
     else result = { accounts: [{ username, current: true, role: "customer" }, { username: "Bob", current: false, role: "customer" }] };
   } else if (url.pathname === "/api/instances") result = { instances: username === "Bob" ? [] : instances, agents: username === "Bob" ? [] : [{ id: "preview_liang", name: "演示电脑", owner: username, online: true, revoked: false, paired: true, instances }] };
   else if (url.pathname === "/api/status") result = { state: { phase: "stopped", stage: "待机", updatedAt: new Date().toISOString(), selection: { video: "", music: "", videoAudio: false } }, busy: false, obs: { ready: true, running: true, streaming: false }, youtube: { connected: true, channel: "演示频道", lifecycle: "ready", ingest: "inactive" }, media: { videos: [], music: [] }, configuration: { broadcastDetails: true, liveChat: true, missing: [] }, device: { online: true, agentId: "preview_liang", observedAt: Date.now() } };
+  else if (url.pathname === "/api/broadcast-defaults") result = { revision: 0, value: { privacy: "public", madeForKids: false, videoAudio: false } };
+  else if (url.pathname === "/api/account-ai") result = { revision: 0, configured: false, managed: false, uses: { copy: true, chat: true } };
   else if (url.pathname === "/api/publishing") result = method === "GET" ? publishing.view : publishing.request(request.postDataJSON());
   else if (url.pathname === "/api/uploads" && method === "POST") {
     creates++; const input = request.postDataJSON();
@@ -113,12 +115,16 @@ try {
   await expect(publishingSettings).toHaveAttribute("aria-expanded", "false");
   await publishingSettings.press("Space");
   await expect(publishingSettings).toHaveAttribute("aria-expanded", "true");
-  await page.getByRole("button", { name: "视频发布配置", exact: true }).click();
-  await publish.getByRole("button", { name: "编辑", exact: true }).click();
-  await publish.getByLabel("配置名称", { exact: true }).fill("尚未保存的视频发布配置");
-  await switchTo("直播工作台"); await switchTo("视频发布");
-  await expect(publish.getByLabel("配置名称", { exact: true })).toHaveValue("尚未保存的视频发布配置");
-  await publish.getByRole("button", { name: "返回", exact: true }).click();
+  await page.getByRole("button", { name: "视频发布配置包", exact: true }).click();
+  const settingsDialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await settingsDialog.getByRole("button", { name: /^编辑/ }).first().click();
+  await settingsDialog.getByLabel("配置名称", { exact: true }).fill("尚未保存的视频发布配置");
+  await settingsDialog.getByRole("tab", { name: "AI 服务", exact: true }).click();
+  await settingsDialog.getByRole("tab", { name: "发布配置", exact: true }).click();
+  await expect(settingsDialog.getByLabel("配置名称", { exact: true })).toHaveValue("尚未保存的视频发布配置");
+  await settingsDialog.getByRole("button", { name: "返回", exact: true }).click();
+  await settingsDialog.getByRole("button", { name: "放弃修改并返回", exact: true }).click();
+  await settingsDialog.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "我的发布", exact: true }).click();
   await switchTo("直播工作台"); await switchTo("视频发布");
   await expect(publish.getByRole("heading", { name: "我的发布", exact: true })).toBeVisible();
