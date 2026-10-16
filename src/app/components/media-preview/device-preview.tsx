@@ -33,7 +33,7 @@ export default function DevicePreview({ selection, ...props }: Omit<MediaPreview
     catch (failure) { setError(failure instanceof Error ? failure.message : "操作失败，请重试。"); }
     finally { setWorking(false); }
   }
-  if (error) return <div className={styles.empty} role="alert"><strong>{error}</strong><button type="button" onClick={() => { setError(""); setSession(undefined); setRetry(retry + 1); }}>重新读取</button></div>;
+  if (error) return <div className={styles.connectionNotice} role="alert"><strong>素材预览不可用</strong><p>{error.includes("请升级") ? "请在直播电脑的设置中更新客户端。" : error}</p><div>{error.includes("请升级") && <a href="/download" target="_blank" rel="noopener noreferrer">下载客户端</a>}<button type="button" className="btn-ghost" onClick={() => { setError(""); setSession(undefined); setRetry(retry + 1); }}>重新读取</button></div></div>;
   if (!session || session.key !== key) return <div className={styles.empty} role="status">正在读取设备素材…</div>;
   return <MediaPreviewPanel {...props} remote={{ ...session, busy: session.busy || working, url: part => session.files[part] ? `/api/media-preview?id=${encodeURIComponent(session.id)}&part=${part}` : undefined, action: value => void action(value) }} />;
 }

@@ -2,6 +2,7 @@
 "use client";
 import { useState } from "react";
 import { SurfaceDialog } from "../components/ui/primitives";
+import FieldCounter from "../components/field-counter";
 import { InlineMediaPreview } from "../components/media-preview/media-preview";
 import { packagePreviewSelection } from "../components/media-preview/selection";
 import PlanMediaPreview from "./plan-media-preview";
@@ -26,7 +27,8 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
   const copies = new Map(plan.copies.map(copy => [copy.packageId, copy])); const packages = new Map(plan.batch.packages.map(item => [item.id, item]));
   const currentCopy = editing && copies.get(editing.packageId);
   const title = editing?.title ?? currentCopy?.title ?? ""; const description = editing?.description ?? currentCopy?.description ?? "";
-  const valid = scheduleOnly || !editing || videoCopySchema.safeParse({ title, description }).success;
+  const copyValidation = videoCopySchema.safeParse({ title, description });
+  const valid = scheduleOnly || !editing || copyValidation.success;
   const timezone = plan.rule.timezone;
   /** 一次只编辑一个发布包，日期输入始终使用已确认的计划时区。 */
   function begin(item: PublishingPlanItem) { if (lockedPackageIds?.includes(item.packageId)) return; setEditing({ ...item }); setDate(item.publishAt ? localInputTime(item.publishAt, timezone) : ""); setError(""); }
@@ -71,9 +73,9 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
       {!scheduleOnly && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
       {!editing.excluded && <>
         {plan.profile.scheduled && <label>发布时间 · {timezone}<input type="datetime-local" disabled={busy} required value={date} onChange={e => setDate(e.target.value)} /></label>}
-        {!scheduleOnly && <><label>标题<input disabled={busy} value={title} onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{titleCharacters(title)} / 100</span></div>
-        <label>说明<textarea rows={3} disabled={busy} value={description} onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><div className="publishing-field-meta"><span /><span>{descriptionBytes(description)} / 5000 bytes</span></div>
-        {!valid && <p className="publishing-validation" role="alert">标题最多100个字符，说明最多5000字节。</p>}</>}
+        {!scheduleOnly && <><label>标题<input disabled={busy} value={title} aria-invalid={!title.trim() || titleCharacters(title) > 100} aria-describedby="plan-title-count" onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><FieldCounter id="plan-title-count" count={titleCharacters(title)} limit={100} />
+        <label>说明<textarea rows={3} disabled={busy} value={description} aria-invalid={descriptionBytes(description) > 5000} aria-describedby="plan-description-count" onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><FieldCounter id="plan-description-count" count={descriptionBytes(description)} limit={5000} unit="字节" />
+        {!valid && !copyValidation.success && <p className="publishing-validation" role="alert">{copyValidation.error.issues[0]?.message}</p>}</>}
       </>}
       {error && <p className="publishing-validation" role="alert">{error}</p>}
       <InlineMediaPreview selection={packages.get(editing.packageId) ? packagePreviewSelection(plan.profile, packages.get(editing.packageId)!, plan.profile) : undefined} key={plan.profile.channelId + editing.packageId + packages.get(editing.packageId)?.version} title={title || packages.get(editing.packageId)?.name || ""} channel={channel || plan.profile.channelId} videoName={packages.get(editing.packageId)?.sourceVideo?.filename} musicName={packages.get(editing.packageId)?.sourceMusic?.filename} coverName={plan.profile.thumbnailMode === "fixed" ? plan.profile.thumbnailFilename : plan.profile.thumbnailMode === "matching" ? packages.get(editing.packageId)?.cover?.filename : undefined} />

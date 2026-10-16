@@ -7,6 +7,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { api, setRequestMember } from "./client-request";
 import AccountSwitcher, { listenAccountChanges, notifyAccountChange } from "./account-switcher";
+import { ApiSettingsProvider } from "./components/api-settings";
+import { WorkspaceUserContext } from "./components/workspace-account";
+import WorkspaceSidebar from "./components/workspace-sidebar";
+import SidebarGroup, { SidebarGroupsProvider } from "./components/sidebar-group";
 import { LiveNestLogo, UserIcon, LockIcon, EyeIcon, EyeOffIcon, AlertCircleIcon } from "./components/icons";
 
 type User = { username: string; role: "admin" | "customer" };
@@ -91,9 +95,8 @@ export default function AccessGate({ children }: { children: ReactNode }) {
         <div className="login-brand"><LiveNestLogo width={28} height={28} /><span>LiveNest</span><span className="login-brand-caption">工作台</span></div>
         <section className="login-card" aria-labelledby="login-title">
           <div className="login-head">
-            <div className="login-mark"><LiveNestLogo width={32} height={32} /></div>
-            <h1 id="login-title">LiveNest 控制台</h1>
-            <p>登录工作台，管理你的设备与直播频道。</p>
+            <h1 id="login-title">登录工作台</h1>
+            <p>使用管理员提供的账号登录。</p>
           </div>
 
           <form onSubmit={submit} className="login-form" aria-busy={busy}>
@@ -176,19 +179,16 @@ export default function AccessGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <>
+    <ApiSettingsProvider key={user.username}><SidebarGroupsProvider><WorkspaceUserContext.Provider value={user}>
       <a className="skip-link" href="#workspace">跳转到工作台</a>
       <header className="app-header">
         <div className="header-container">
           <div className="brand-section">
             <LiveNestLogo />
             <span className="brand-name">LiveNest</span>
-            <span className="brand-tag">Studio</span>
           </div>
 
-          <div className="header-actions"><Link href={pathname === "/publishing" ? "/workspace" : "/publishing"}>{pathname === "/publishing" ? "直播工作台" : "视频发布"}</Link>{user.role === "admin" && <Link href="/admin">管理员总览</Link>}
-            <AccountSwitcher user={user} />
-          </div>
+
         </div>
       </header>
 
@@ -201,7 +201,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
         </div>
       )}
 
-      {children}
-    </>
+      {pathname === "/admin" ? <div className="workspace-shell"><WorkspaceSidebar label="管理员导航"><SidebarGroup name="admin-workspace" title="工作空间" flush><Link className="sidebar-link is-active" href="/admin" aria-current="page">管理员总览</Link><Link className="sidebar-link" href="/workspace">直播工作台</Link><Link className="sidebar-link" href="/publishing">视频发布</Link></SidebarGroup></WorkspaceSidebar>{children}</div> : children}
+    </WorkspaceUserContext.Provider></SidebarGroupsProvider></ApiSettingsProvider>
   );
 }

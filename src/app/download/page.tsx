@@ -19,12 +19,12 @@ export default function DownloadPage() {
       <section className="download-hero" aria-labelledby="download-title">
         <div className="download-hero-inner">
           <div className="download-copy">
-            <h1 id="download-title">LiveNest</h1>
-            <p className="download-intro">在网页管理你的直播。</p>
+            <h1 id="download-title">下载 Windows 客户端</h1>
+            <p className="download-intro">在直播电脑安装，用于连接 OBS、播放素材和发布视频。</p>
             <a className="download-primary" href={installer} download><DeviceIcon width={21} height={21} />下载 Windows 版 <span aria-hidden="true">↓</span></a>
             <p className="download-meta">v{version} · Windows x64</p>
           </div>
-          <figure className="download-visual"><div className="download-window-bar"><LiveNestLogo width={17} height={17} /><span>LiveNest Studio</span><span className="download-window-dots" aria-hidden="true">•••</span></div><Image src="/download/workspace.png" alt="LiveNest 网页工作台示例：分别管理同一电脑的 OBS 和频道" width={1280} height={820} priority unoptimized /><figcaption>工作台界面 · 示例数据</figcaption></figure>
+          <figure className="download-visual"><Image src="/download/workspace.png" alt="LiveNest 网页工作台示例：分别管理同一电脑的 OBS 和频道" width={1280} height={820} priority unoptimized /><figcaption>工作台界面 · 示例数据</figcaption></figure>
         </div>
       </section>
       <section className="download-steps" id="getting-started" aria-labelledby="steps-title">

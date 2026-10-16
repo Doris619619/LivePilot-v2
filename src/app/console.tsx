@@ -10,12 +10,14 @@ import { api } from "./client-request";
 import InstanceConsole from "./instance-console";
 import DevicePairing, { useDevicePairing } from "./device-pairing";
 import DeviceRemove from "./device-remove";
-import WorkspaceSidebar from "./components/workspace-sidebar";
-import Link from "next/link";
-import { AlertCircleIcon, DeviceIcon, RefreshIcon, VideoIcon } from "./components/icons";
+import { useWorkbenchActive } from "./components/workbench-context";
+import WorkbenchNavigation from "./components/workbench-navigation";
+import SidebarGroup from "./components/sidebar-group";
+import { AlertCircleIcon, DeviceIcon, RefreshIcon } from "./components/icons";
 
 /** 轮询设备清单；导航使用页内定位，保留实例草稿和正在进行的上传。 */
 export default function Console() {
+  const active = useWorkbenchActive();
   const [channels, setChannels] = useState<Record<string, string>>({});
   const [uploadRequest, setUploadRequest] = useState<UploadRequest>();
   /** 从空素材入口带入目标 OBS 和素材类型，不替换上传面板已有任务。 */
@@ -66,21 +68,17 @@ export default function Console() {
       } finally { reading = false; }
     }
     void load();
-    const timer = setInterval(() => void load(), 10_000);
+    const timer = setInterval(() => void load(), active ? 10_000 : 30_000);
     return () => { clearInterval(timer); abort.abort(); };
-  }, [refreshKey]);
+  }, [refreshKey, active]);
 
   // 未完成的邀请留在配对入口，不冒充另一台已接入的电脑。
   const devices = agents?.filter(a => !a.revoked && a.paired !== false);
 
   return (
     <OAuthFeedbackProvider><div className="workspace-shell">
-      <WorkspaceSidebar label="工作台导航">
-        <div className="sidebar-heading" style={{ marginTop: 0 }}>工作空间</div>
-        <a className="sidebar-link is-active" href="#workspace"><VideoIcon /><span>直播工作台</span><span className="nav-count">{loaded ? instances.length : "—"}</span></a>
-        <Link className="sidebar-link" href="/publishing"><VideoIcon /><span>视频发布</span></Link>
-        <div className="sidebar-heading device-heading">直播设备</div>
-        <nav aria-label="设备定位">
+      <WorkbenchNavigation label="工作台导航">
+        <SidebarGroup name="live-devices" title="直播设备" label="设备定位">
           {devices ? devices.map(agent => (
             <a key={agent.id} className="sidebar-link" href={"#device-" + agent.id}>
               <DeviceIcon /><span>{agent.name}</span><span className={"device-dot " + (agent.online ? "online" : "")} aria-label={agent.online ? "在线" : "离线"} />
@@ -88,18 +86,19 @@ export default function Console() {
           )) : loaded && <a className="sidebar-link" href="#device-local"><DeviceIcon /><span>本机设备</span></a>}
           {loaded && !devices?.length && agents && <p className="sidebar-hint">尚未接入设备</p>}
           {!loaded && <p className="sidebar-hint">{error ? "设备列表暂不可用" : "正在读取设备…"}</p>}
-        </nav>
-        {agents && <DevicePairing model={pairing} />}
-      </WorkspaceSidebar>
+        </SidebarGroup>
+        {agents && <div className="device-pairing"><button type="button" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button></div>}
+      </WorkbenchNavigation>
+      {agents && <DevicePairing model={pairing} />}
 
-      <main className="main-wrapper" id="workspace" tabIndex={-1}>
+      <main className="main-wrapper" id={active ? "workspace" : undefined} tabIndex={-1}>
         {instances.length ? <UploadPanel instances={instances} channels={channels} request={uploadRequest} heading={<><h1>直播工作台</h1><p className="workspace-subtitle">{devices ? `${devices.length} 台直播电脑 · ` : ""}{instances.length} 个直播实例</p></>} /> : <div className="workspace-heading"><h1>直播工作台</h1></div>}
 
         {error && <div className="banner error" role="alert"><AlertCircleIcon /><span>{error}{loaded ? " 当前显示上次获取的设备列表。" : ""}</span><button type="button" onClick={() => setRefreshKey(v => v + 1)}>重试连接</button></div>}
         <OAuthFeedback available={loaded?instances:undefined} />
         {notice && <div className="banner warning" role="status"><AlertCircleIcon /><span>{notice}</span><button type="button" onClick={() => setNotice("")}>关闭提示</button></div>}
         {!loaded && !error && <div className="empty-state" role="status"><RefreshIcon /><h2>正在读取工作台</h2><p>同步设备与实例状态…</p></div>}
-        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><div className="empty-icon"><DeviceIcon width={28} height={28} /></div><h2>连接直播电脑</h2><p>点击“添加直播电脑”，复制配对码到 LiveNest。<br />连接后，直播实例会自动出现在这里。</p><button type="button" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
+        {loaded && !instances.length && !devices?.length && !error && <div className="empty-state"><h2>连接直播电脑</h2><p>配对后，这台电脑的 OBS 会出现在这里。</p>{agents && <button type="button" className="btn-primary" onClick={pairing.toggle} aria-haspopup="dialog">添加直播电脑</button>}<button type="button" className="btn-ghost" onClick={() => setRefreshKey(v => v + 1)}><RefreshIcon />刷新设备</button></div>}
         {devices ? devices.map(agent => {
           const agentInstances = instances.filter(i => i.agentId === agent.id);
           return (

@@ -2,7 +2,8 @@
 
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { WorkbenchTransferContext } from "./components/workbench-context";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { UploadStatus } from "@/shared/uploads";
 import { targetKey } from "@/shared/remote";
@@ -30,6 +31,7 @@ function bytes(value: number): string {
 
 /** 在选定直播电脑上传或恢复文件；上传进度不依赖面板展开状态。 */
 export default function UploadPanel({ instances, channels, heading, request }: { instances: InstanceDescriptor[]; channels: Record<string, string>; heading?: ReactNode; request?: UploadRequest }) {
+  const reportTransfer = useContext(WorkbenchTransferContext);
   const [record, setRecord] = useState<UploadStatus>();
   const [instanceId, setInstanceId] = useState(instances[0] ? targetKey(instances[0]) : "main");
   const [kind, setKind] = useState<"videos" | "music">("videos");
@@ -231,6 +233,17 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   const destination = instances.find(i => targetKey(i) === instanceId);
   const destinationLabel = destination ? `${channels[instanceId] || destination.name} · ${destination.agentName || "本机"} / ${destination.name}` : "原上传目标暂不可用";
   const progressLabel = record?.status === "complete" ? "上传完成" : record?.status === "verifying" ? record.verification === "failed" ? "校验未完成，需要处理" : "正在校验文件…" : busy ? stage : "等待继续上传";
+  const transferLabel = error ? "上传需要处理" : record?.status === "complete" ? "上传完成" : record?.status === "verifying" ? "正在校验" : busy ? "正在上传" : "上传已暂停";
+  const transferName = record?.filename || file?.name || "素材上传";
+  const transferPercent = record?.status === "uploading" ? Math.floor(record.received / Math.max(1, record.size) * 100) : undefined;
+  const hasTransfer = busy || !!record;
+  /** 常驻侧栏只接收公开进度；切换模块不改变请求、文件或上传控制器。 */
+  useEffect(() => { reportTransfer?.(hasTransfer ? { filename: transferName, label: transferLabel, percent: transferPercent } : undefined); }, [reportTransfer, hasTransfer, transferName, transferLabel, transferPercent]);
+  useEffect(() => {
+    const show = () => setIsOpen(true);
+    window.addEventListener("livenest-open-upload", show);
+    return () => { window.removeEventListener("livenest-open-upload", show); reportTransfer?.(undefined); };
+  }, [reportTransfer]);
   return (
     <section className="media-dock" aria-label="素材上传">
       <div className="dock-header">

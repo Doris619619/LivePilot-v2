@@ -1,0 +1,19 @@
+{
+  "measurements": [
+    {
+      "width": 1440,
+      "scrollWidth": 1440
+    },
+    {
+      "width": 390,
+      "scrollWidth": 390
+    },
+    {
+      "width": 320,
+      "scrollWidth": 320
+    }
+  ],
+  "errors": [],
+  "checks": "three steps, bidirectional fields, rules-only package apply/undo, settings persistence, failed save, defaults preserve draft, exact final control payload",
+  "liveOperations": "none: start intercepted"
+}

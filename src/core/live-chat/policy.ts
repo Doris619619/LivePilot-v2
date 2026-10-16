@@ -5,8 +5,8 @@ import type { LiveChatMessage } from "@/shared/live-chat";
 
 export const MAX_AGE_MS = 120_000;
 export const errorMessages: Record<string, string> = {
-  AI_CONFIG: "DeepSeek 环境配置无效，请联系管理员检查直播电脑的 DEEPSEEK_API_KEY，然后重启客户端或显式重新启用互动。",
-  AI_BALANCE: "DeepSeek 服务余额不足，请联系管理员检查环境 Key 对应账户的余额，然后重启客户端或显式重新启用互动。",
+  AI_CONFIG: "AI 服务未启用或密钥无效，请检查账号 AI 服务设置，等待设备同步后重试互动。",
+  AI_BALANCE: "DeepSeek 余额不足，请为账号 Key 充值后重试互动。",
   YOUTUBE_AUTH: "YouTube 授权需要处理，请重新授权原频道后重新开启互动。",
   CHAT_UNAVAILABLE: "当前场次的实时聊天不可用，下一场直播会重新检查。",
   CHAT_QUOTA: "YouTube API 配额已耗尽，等待太平洋时间次日恢复。",

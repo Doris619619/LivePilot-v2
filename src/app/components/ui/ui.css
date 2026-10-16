@@ -5,14 +5,15 @@
 .ui-tabs-trigger[data-state="active"] .step-number { color: white; background: var(--accent-primary); }
 .ui-tabs-trigger .step-number { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; background: var(--surface-active); font-size: 12px; font-variant-numeric: tabular-nums; transition: background 180ms, color 180ms; }
 .ui-tabs-content[data-state="inactive"] { display: none !important; }
-.ui-tabs-content[data-state="active"] { animation: ui-enter 220ms ease-out; }
+.ui-tabs-content[data-state="active"] { animation: none; }
 .ui-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms ease, opacity 180ms ease; }
 .ui-reveal[data-state="open"] { grid-template-rows: 1fr; opacity: 1; }
-.ui-reveal-inner { min-height: 0; overflow: hidden; }
+/* 将读屏用绝对定位内容限制在折叠容器内，避免隐藏表单撑出页面底部空白。 */
+.ui-reveal-inner { position: relative; min-height: 0; overflow: hidden; }
 .ui-progress { position: relative; height: 7px; width: 100%; overflow: hidden; border-radius: 999px; background: var(--accent-subtle); }
 .ui-progress-indicator { height: 100%; width: 100%; background: var(--accent-primary); border-radius: inherit; transition: transform 250ms ease; }
 .ui-progress[data-state="indeterminate"] .ui-progress-indicator { animation: ui-progress-wait 1.5s ease-in-out infinite; }
-.ui-overlay { position: fixed; inset: 0; z-index: 100; background: #18223559; backdrop-filter: blur(3px); animation: ui-fade 180ms ease-out; }
+.ui-overlay { position: fixed; inset: 0; z-index: 100; background: #18223559; animation: ui-fade 180ms ease-out; }
 .ui-dialog { position: fixed; z-index: 101; padding: 28px; background: var(--surface-base); box-shadow: 0 24px 80px #18223526; overflow-y: auto; max-height: calc(100dvh - 32px); animation: ui-enter 220ms ease-out; }
 .ui-dialog-center { top: 50%; left: 50%; translate: -50% -50%; width: min(520px, calc(100vw - 32px)); border: 1px solid var(--border-subtle); border-radius: 18px; }
 .ui-dialog-left, .ui-dialog-right { top: 0; bottom: 0; width: min(440px, 92vw); max-height: 100dvh; border-radius: 0; }
@@ -38,7 +39,7 @@ button.ui-close { padding: 0; min-width: 44px; font-size: 26px; border: 0; backg
 .ui-workflow-steps button:disabled { opacity: .65; }
 .ui-workflow-steps .ui-step-dot { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--border-default); border-radius: 50%; background: var(--surface-base); font-variant-numeric: tabular-nums; transition: background 220ms, box-shadow 220ms; }
 .ui-workflow-steps > li[data-current="true"] button { color: var(--accent-primary); opacity: 1; }
-.ui-workflow-steps > li[data-current="true"] .ui-step-dot { color: white; background: var(--accent-primary); border-color: var(--accent-primary); box-shadow: 0 0 0 5px var(--accent-subtle); }
+.ui-workflow-steps > li[data-current="true"] .ui-step-dot { color: white; background: var(--accent-primary); border-color: var(--accent-primary); box-shadow: none; }
 .ui-workflow-steps > li[data-reached="true"]:not([data-current="true"]) .ui-step-dot { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent-primary); }
 @keyframes ui-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }

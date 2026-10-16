@@ -26,6 +26,9 @@ const accounts = [
 const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", accountId: accountOne, channelId: "channel_one", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching", ai: { enabled: false, language: "English", prompt: "Generate accurate copy", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1, 3, 5, 7], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
 const thirdProfile = { ...structuredClone(profile), id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", accountId: accountThree, channelId: "channel_three" };
 const view = { accounts, profiles: [profile, thirdProfile], jobs: [], plans: [], cleanups: [], policy, administrator: false };
+const templates = view.profiles.map(value => Object.fromEntries(Object.entries(value).filter(([key]) => !["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"].includes(key))));
+view.templates = templates;
+let settingsSave, emptyPlaylists = false;
 let confirmed; let latestPlan; let createdAccount; let rejectReschedule = false; let rejectPreviewEdit = false; let failNextRead = false; let releasePreview; let holdPreview = false; const errors = []; const actions = []; const screenshots = []; const archiveRequests = []; const legacyRequests = []; const accountConnectRequests = []; const oauthResultRequests = []; const schedulePreviews = new Map();
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
 /** 模拟服务端自动排期；首六个时刻已占用，manual覆盖固定保留。 */
@@ -69,19 +72,34 @@ async function mock(route) {
     await route.fulfill({ status: 409, json: { error: "请升级这台设备的 Agent 后使用素材预览。" } }); return;
   }
   else if (url.pathname === "/api/youtube/result") { assert.equal(url.searchParams.get("id"), "55555555-5555-4555-8555-555555555555"); oauthResultRequests.push(url.searchParams.get("id")); result = { target: { agentId: "pc_two", instanceId: "main" }, accountId: accountTwo, status: "connected" }; }
+  else if (url.pathname === "/api/broadcast-defaults") result = { revision: 0, value: { privacy: "public", madeForKids: false, videoAudio: false } };
+  else if (url.pathname === "/api/account-ai") result = { revision: 0, configured: false, managed: false, uses: { copy: true, chat: true } };
+  else if (url.pathname === "/api/broadcast-profiles") result = { profiles: [] };
+  else if (url.pathname === "/api/publishing-templates") {
+    if (!body) result = { profiles: templates };
+    else {
+      for (const key of ["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"]) assert.equal(Object.hasOwn(body, key), false);
+      if (settingsSave) await settingsSave;
+      const index = templates.findIndex(value => value.id === body.id); if (index >= 0) templates[index] = body; else templates.push(body); result = body;
+    }
+  }
   else if (url.pathname === "/api/publishing") {
     if (!body) { if (failNextRead) { failNextRead = false; await route.fulfill({ status: 503, json: { error: "暂时无法读取状态。" } }); return; } result = view; }
     else {
       actions.push(body.action);
       if (body.action === "consent") { view.consent = { version: body.version }; result = { ok: true }; }
       if (body.action === "packages") { const account = view.accounts.find(value => value.id === body.accountId); if (body.accountId) { assert.ok(account); assert.equal(account.agentId, body.agentId); assert.equal(account.instanceId, body.instanceId); } result = { root: body.agentId === "pc" ? "D:\\LIVENEST\\Publishing" : "E:\\LiveNest\\Publishing", batches: body.agentId === "pc" ? batches : [batches[1]], thumbnails: [], ...(account ? { channelId: account.channelId, channel: account.channel } : {}) }; }
-      if (body.action === "account-playlists") { assert.equal(body.accountId, accountOne); result = { playlists: [{ id: "PLsynthetic", title: "Rainy Night Sessions" }] }; }
+      if (body.action === "account-playlists") { assert.equal(body.accountId, accountOne); result = { playlists: emptyPlaylists ? [] : [{ id: "PLsynthetic", title: "Rainy Night Sessions" }] }; }
       if (body.action === "account-create") { assert.equal(body.agentId, "pc"); assert.equal(body.instanceId, "main"); createdAccount = { id: "44444444-4444-4444-8444-444444444444", agentId: body.agentId, instanceId: body.instanceId, name: body.name, owner: "alice", status: "unbound", createdAt: Date.now(), updatedAt: Date.now() }; view.accounts.push(createdAccount); result = createdAccount; }
       if (body.action === "account-connect") { accountConnectRequests.push(body.accountId); assert.equal(body.accountId, createdAccount.id); result = { url: origin + "/publishing?synthetic-account=" + body.accountId }; }
-      if (body.action === "profile") { const index = view.profiles.findIndex(value => value.id === body.profile.id); if (index >= 0) view.profiles[index] = body.profile; else view.profiles.push(body.profile); result = body.profile; }
+      if (body.action === "profile") { if (settingsSave) await settingsSave; const index = view.profiles.findIndex(value => value.id === body.profile.id); if (index >= 0) view.profiles[index] = body.profile; else view.profiles.push(body.profile); result = body.profile; }
+      if (body.action === "policy") { if (settingsSave) await settingsSave; result = body.policy; }
       if (body.action === "plan-preview") {
         if (holdPreview) await new Promise(resolve => { releasePreview = resolve; });
-        latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(view.profiles.find(value => value.id === body.profileId)), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
+        const selected = body.use ? { ...templates.find(value => value.id === body.profileId), ...body.use } : view.profiles.find(value => value.id === body.profileId);
+        if (body.use) { assert.equal(selected.revision, body.use.templateRevision); delete selected.templateRevision; }
+        if (body.copy) selected.ai = { ...body.copy, fallbackTitle: "{{packageName}}", fallbackDescription: "" };
+        latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(selected), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
         view.plans.push(latestPlan); result = latestPlan;
       }
       if (body.action === "plan-update") {
@@ -125,9 +143,9 @@ async function mock(route) {
 /** 步骤导航按标签定位，排除页面内同名标题和操作按钮。 */
 function stepButton(page, name) { return page.locator(".ui-workflow-steps").getByRole("button", { name: new RegExp(name) }); }
 /** 通过用户可见的搜索和候选项选择时区，不依赖浏览器原生 datalist。 */
-async function selectTimezone(page, timezone) { await page.getByLabel("时区", { exact: true }).click(); await page.getByRole("combobox", { name: "搜索时区" }).fill(timezone); await page.getByRole("option").filter({ hasText: timezone }).click(); }
+async function selectTimezone(page, timezone) { await page.getByRole("button", { name: /^时区/ }).click(); await page.getByRole("combobox", { name: "搜索时区" }).fill(timezone); await page.getByRole("option").filter({ hasText: timezone }).click(); }
 /** 当前选项保留完整 IANA 标识，切换步骤和刷新后应保持一致。 */
-async function assertTimezone(page, timezone) { assert.ok((await page.getByLabel("时区", { exact: true }).innerText()).includes(timezone)); }
+async function assertTimezone(page, timezone) { assert.ok((await page.getByRole("button", { name: /^时区/ }).innerText()).includes(timezone)); }
 /** 每次切换都核对当前步骤的辅助技术语义和实际内容区域。 */
 async function expectStep(page, name) {
   await page.getByRole("heading", { name, exact: true }).waitFor();
@@ -197,17 +215,38 @@ try {
   await page.getByLabel("设备", { exact: true }).selectOption("pc:main"); await page.getByRole("button", { name: "检测素材", exact: true }).click(); await page.getByText("缺少 video", { exact: true }).waitFor();
   assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true);
   await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor();
+  await page.getByLabel("AI 自动生成标题和说明", { exact: true }).check();
+  await page.getByLabel("生成语言", { exact: true }).fill("简体中文");
+  await page.getByLabel("生成要求", { exact: true }).fill("围绕本批视频主题生成简洁文案");
+  await page.getByLabel("视频发布配置", { exact: true }).selectOption(thirdProfile.id);
+  assert.equal(await page.getByLabel("生成语言", { exact: true }).inputValue(), "简体中文");
+  await page.getByLabel("视频发布配置", { exact: true }).selectOption(profile.id);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByLabel("生成语言", { exact: true }).scrollIntoViewIfNeeded();
+    await capture(page, "copy-options-" + width + ".png");
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   // 侧栏直接进入配置/账号，返回发布流程保留原步骤与所选设备，不重复走设置子菜单。
-  await page.getByRole("button", { name: "发布配置", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "发布配置", exact: true }).getAttribute("aria-current"), "page");
+  await page.getByRole("button", { name: "视频发布配置包", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
+  await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
   await page.getByRole("button", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
-  await page.getByRole("button", { name: "新建配置", exact: true }).click(); await page.getByRole("heading", { name: "新建配置", exact: true }).waitFor();
-  assert.equal(await page.getByLabel("标题模板").inputValue(), "{{packageName}}"); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
-  await page.getByText("标签与播放列表", { exact: true }).click(); await page.getByRole("button", { name: "读取播放列表", exact: true }).click(); await page.getByRole("checkbox", { name: "Rainy Night Sessions", exact: true }).check(); assert.equal(actions.filter(action => action === "account-playlists").length, 1);
-  await page.getByLabel("是否专为儿童制作").selectOption("false"); failNextRead = true; await page.getByRole("button", { name: "保存配置", exact: true }).click();
-  await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); assert.equal(await page.getByLabel("发布配置", { exact: true }).inputValue(), view.profiles.at(-1).id); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
+  await page.getByRole("button", { name: "管理配置包", exact: true }).click(); await page.getByRole("button", { name: "新建视频发布配置包", exact: true }).click();
+  assert.equal(await page.getByLabel("标题模板").count(), 0); assert.equal(await page.getByLabel("说明模板").count(), 0); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("dialog").getByLabel("AI 自动生成标题和说明").count(), 0);
+  assert.equal(await page.getByRole("dialog").getByText(/播放列表/).count(), 0, "通用配置包不绑定频道播放列表");
+  let releaseSettings; settingsSave = new Promise(resolve => { releaseSettings = resolve; });
+  await page.getByLabel("是否专为儿童制作").selectOption("false"); failNextRead = true; await page.getByRole("button", { name: "保存配置包", exact: true }).click();
+  await page.getByRole("button", { name: "保存中…", exact: true }).waitFor();
+  assert.equal(await page.getByLabel("配置名称", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("标签 · 逗号分隔", { exact: true }).isDisabled(), true);
+  assert.equal(await page.getByLabel("是否专为儿童制作").isDisabled(), true); assert.equal(await page.getByRole("button", { name: "返回", exact: true }).isDisabled(), true);
+  releaseSettings(); settingsSave = undefined;
+  await page.getByRole("dialog").getByText(/已保存「/).waitFor(); await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("视频发布配置", { exact: true }).selectOption(templates.at(-1).id); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
+  await page.getByText("本次播放列表（可选）", { exact: true }).click();
+  emptyPlaylists = true; await page.getByRole("button", { name: "读取频道播放列表", exact: true }).click(); await page.getByText("这个频道还没有播放列表。", { exact: true }).waitFor();
+  emptyPlaylists = false; await page.getByRole("button", { name: "读取频道播放列表", exact: true }).click(); await page.getByRole("checkbox", { name: "Rainy Night Sessions", exact: true }).check(); assert.equal(actions.filter(action => action === "account-playlists").length, 2);
   await page.getByLabel("周一发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("20:00"); await page.getByLabel("周五发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周日发布时间", { exact: true }).fill("12:00");
   await page.getByRole("button", { name: "周一添加时间", exact: true }).click(); assert.equal(await page.getByLabel("周一发布时间 2", { exact: true }).count(), 1); await page.getByRole("button", { name: "删除周一时间 2", exact: true }).click();
   await stepButton(page, "准备素材").focus(); await page.keyboard.press("Enter"); await expectStep(page, "准备素材");
@@ -217,20 +256,32 @@ try {
   await page.getByRole("checkbox", { name: /暂不发布.*003/ }).check(); await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); await assertTimezone(page, "Asia/Shanghai"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00");
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "schedule-" + width + ".png"); }
-  await page.getByLabel("时区", { exact: true }).click(); await page.getByRole("combobox", { name: "搜索时区" }).fill("纽约"); await page.getByRole("option").filter({ hasText: "America/New_York" }).waitFor(); await page.getByRole("combobox", { name: "搜索时区" }).locator("..").screenshot({ path: path.join(output, "timezone-search.png") }); await page.keyboard.press("Escape"); await assertTimezone(page, "Asia/Shanghai");
+  // 搜索时区只占一个 Tab 停靠点，当前值可被读屏读取；Escape 不改草稿。
+  const timezoneTrigger = page.getByRole("button", { name: /^时区/ });
+  assert.match(await timezoneTrigger.getAttribute("aria-labelledby"), /-value/);
+  await timezoneTrigger.click();
+  assert.equal(await page.getByRole("option").evaluateAll(options => options.every(option => option.tabIndex === -1)), true);
+  await page.getByRole("combobox", { name: "搜索时区" }).press("Tab");
+  await page.getByRole("listbox").waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("listbox").count(), 0);
+  await timezoneTrigger.click(); await page.getByRole("combobox", { name: "搜索时区" }).fill("纽约"); await page.getByRole("option").filter({ hasText: "America/New_York" }).waitFor(); await page.getByRole("combobox", { name: "搜索时区" }).locator("..").screenshot({ path: path.join(output, "timezone-search.png") }); await page.keyboard.press("Escape"); await assertTimezone(page, "Asia/Shanghai");
   await page.getByLabel("发布账号", { exact: true }).selectOption(accountThree); await expectStep(page, "准备素材"); await page.getByRole("button", { name: "检测素材", exact: true }).click();
   assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), false); await page.getByRole("radio", { name: /2030-10-Batch-02/ }).check(); await page.getByRole("button", { name: "下一步", exact: true }).click();
   assert.equal(await page.getByLabel("发布频道", { exact: true }).inputValue(), "第三频道"); await page.getByLabel("开始日期", { exact: true }).fill("2030-11-01"); await page.getByLabel("周三发布时间", { exact: true }).fill("09:00");
   await page.getByLabel("发布账号", { exact: true }).selectOption(accountOne); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00"); await assertTimezone(page, "Asia/Shanghai");
   await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true); await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期");
+  assert.equal(await page.getByLabel("生成语言", { exact: true }).inputValue(), "简体中文");
+  assert.equal(await page.getByLabel("生成要求", { exact: true }).inputValue(), "围绕本批视频主题生成简洁文案");
+  await page.getByLabel("AI 自动生成标题和说明", { exact: true }).uncheck();
   holdPreview = true; const pendingPreview = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/publishing" && request.postDataJSON().action === "plan-preview");
-  await page.getByRole("button", { name: "生成排期", exact: true }).click(); await pendingPreview; assert.equal(await page.getByLabel("发布配置", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("开始日期", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("时区", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).isDisabled(), true); holdPreview = false; releasePreview();
+  await page.getByRole("button", { name: "生成排期", exact: true }).click(); await pendingPreview; assert.equal(await page.getByLabel("视频发布配置", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("开始日期", { exact: true }).isDisabled(), true); assert.equal(await page.getByRole("button", { name: /^时区/ }).isDisabled(), true); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).isDisabled(), true); holdPreview = false; releasePreview();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
+  assert.deepEqual(latestPlan.profile.ai, { enabled: false, language: "简体中文", prompt: "围绕本批视频主题生成简洁文案", fallbackTitle: "{{packageName}}", fallbackDescription: "" });
   assert.equal(latestPlan.profile.accountId, accountOne); assert.equal(latestPlan.items.filter(item => !item.excluded).length, 98); assert.equal(latestPlan.skippedOccupied, 6); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "20:00");
   assert.equal(await page.getByRole("button", { name: "日历", exact: true }).getAttribute("aria-pressed"), "true"); await page.locator('[aria-label="发布排期日历"]').waitFor();
   await page.getByRole("button", { name: "下个月", exact: true }).click(); assert.equal(await page.getByRole("button", { name: "编辑发布包 001", exact: true }).count(), 0);
   await page.getByRole("button", { name: "上个月", exact: true }).click(); await page.getByRole("button", { name: "编辑发布包 001", exact: true }).click();
-  await page.getByRole("dialog", { name: "编辑发布内容", exact: true }).getByText("请升级这台设备的 Agent 后使用素材预览。", { exact: true }).waitFor();
+  await page.getByRole("dialog", { name: "编辑发布内容", exact: true }).getByText("请在直播电脑的设置中更新客户端。", { exact: true }).waitFor();
   const title = page.getByLabel("标题", { exact: true }); await title.fill("🌙".repeat(101)); assert.equal(await page.getByRole("button", { name: "保存修改", exact: true }).isDisabled(), true);
   await title.fill("🌙".repeat(100)); assert.equal(await title.getAttribute("maxlength"), null); assert.equal(await page.getByRole("button", { name: "保存修改", exact: true }).isDisabled(), false);
   await title.fill("东京雨夜 · Tokyo Rainy Night"); await page.getByLabel("发布时间 · Asia/Shanghai", { exact: true }).fill("2030-10-10T00:30"); await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -280,7 +331,7 @@ try {
   await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行"); await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材");
   for (const checkbox of await page.getByRole("checkbox", { name: /暂不发布/ }).all()) assert.equal(await checkbox.isDisabled(), true);
   assert.equal(await page.getByRole("radio").count(), 0); assert.equal(await page.getByRole("button", { name: "检测素材", exact: true }).count(), 0);
-  await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("发布配置", { exact: true }).getAttribute("readonly"), ""); assert.equal(await page.getByRole("button", { name: "新建配置", exact: true }).count(), 0);
+  await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("视频发布配置", { exact: true }).getAttribute("readonly"), ""); assert.equal(await page.getByRole("button", { name: "管理配置包", exact: true }).count(), 0);
   assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "21:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("22:00"); await page.getByRole("button", { name: "返回执行", exact: true }).click(); await expectStep(page, "自动执行");
   assert.deepEqual(latestPlan.rule, beforeReschedule.rule); assert.equal(actions.filter(action => action === "plan-reschedule-preview").length, 0);
   await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "22:00");
@@ -437,6 +488,16 @@ try {
   const originalPackages = batches[0].packages; const originalVersion = batches[0].version; batches[0].packages = originalPackages.slice(0, 2); batches[0].version = "f".repeat(64);
   await initialPage.getByRole("button", { name: "检测素材", exact: true }).click(); await initialPage.locator(".publishing-package-row").nth(2).waitFor({ state: "hidden" }); assert.equal(await initialPage.locator(".publishing-package-row").count(), 2); assert.equal(await initialPage.getByRole("button", { name: "下一页", exact: true }).count(), 0); batches[0].packages = originalPackages; batches[0].version = originalVersion; await initialPage.close();
   assert.deepEqual(legacyRequests, []); console.log("Publishing smoke: background polling preserves errors; manual retry and refresh clear recovered errors.");
+  // 管理员策略的保存快照也必须冻结，慢响应期间不能留下看似已保存的新输入。
+  view.administrator = true;
+  const policyPage = await browser.newPage(); policyPage.on("pageerror", error => errors.push(error.message)); await policyPage.route("**/api/**", mock);
+  await policyPage.goto(origin + "/publishing"); await policyPage.getByRole("button", { name: "发布策略", exact: true }).click();
+  await policyPage.getByLabel("每日上传次数", { exact: true }).fill("21");
+  settingsSave = new Promise(resolve => { releaseSettings = resolve; });
+  await policyPage.getByRole("button", { name: "保存策略", exact: true }).click(); await policyPage.getByRole("button", { name: "保存中…", exact: true }).waitFor();
+  assert.equal(await policyPage.getByLabel("每日上传次数", { exact: true }).isDisabled(), true);
+  assert.equal(await policyPage.getByLabel("上传带宽 · Mbps", { exact: true }).isDisabled(), true);
+  releaseSettings(); settingsSave = undefined; await policyPage.getByText("策略已保存", { exact: true }).waitFor(); await policyPage.close(); view.administrator = false;
   await page.goto(origin + "/privacy"); await page.getByRole("heading", { name: "LiveNest 隐私政策" }).waitFor(); await page.goto(origin + "/terms"); await page.getByRole("heading", { name: "LiveNest 服务条款" }).waitFor();
   assert.deepEqual(errors, []);
   await writeFile(path.join(output, "result.json"), JSON.stringify({ passed: true, mockedApi: true, realUploads: false, packageCount: 100, steps: 4, covered: ["independent-account-selection", "same-device-account-draft-isolation", "independent-account-playlists", "account-scoped-cleanup", "account-create-synthetic-connect", "oauth-result-original-account", "oauth-result-consumed-once", "account-selection-refresh", "new-batch-before-preview-refresh", "execution-exclusive-counts", "pause-reconcile-preserves-intent", "polling-preserves-operation-error", "manual-refresh-clears-error", "folder-guide-folded-direct-files", "no-shared-live-auth-requests", "step-button-keyboard", "step-touch-targets", "step-draft-preservation", "step-invalid-package-guard", "step-manual-override-preservation", "step-unsaved-edit-preservation", "step-changed-batch-guard", "confirmed-step-navigation", "confirmed-materials-readonly", "confirmed-rules-draft-reload", "confirmed-return-execution-without-save", "confirmed-schedule-preview-confirm", "reschedule-same-jobs-upload-facts", "reschedule-manual-terminal-fixed", "reschedule-paused-intent-preserved", "history-100-record-pagination", "history-full-search", "history-result-filter", "history-single-detail", "default-plan-calendar", "plan-calendar-months", "plan-calendar-local-date", "plan-list-pagination", "cross-channel-overview", "overview-channel-filter", "overview-visible-channel-boundaries", "overview-distinct-channel-colors", "overview-channel-color-filter-stability", "overview-past-scheduled-not-published", "overview-batch-details", "package-errors", "explicit-exclusion", "device-draft-isolation", "per-weekday-time", "same-day-slots", "occupied-slots", "manual-override", "cloud-draft-reload", "unicode-title", "100-job-confirm", "pause-cancel-pending", "archive-persistent-completion", "archive-expired-api-fields", "archive-pending-reconcile", "permission-navigation"], actions, screenshots, viewportWidths: [1440, 1024, 390, 320] }, null, 2)); console.log("Publishing browser smoke passed (100 packages, four steps, mock API; no real upload).");

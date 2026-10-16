@@ -20,17 +20,18 @@ export default function TimezoneSelect({ value, date, change, disabled = false }
   /** 回车只选择时区，不提交所在发布表单；Escape 不改变已保存选择。 */
   function navigate(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setActive(index => Math.max(0, Math.min(visible.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))); }
+    else if (event.key === "Tab") setOpen(false);
     else if (event.key === "Enter") { event.preventDefault(); if (visible[active]) choose(visible[active].value); }
   }
   return <div className={styles.control} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }} onKeyDown={event => { if (event.key === "Escape" && open) { event.preventDefault(); setOpen(false); trigger.current?.focus(); } }}>
     <label id={id + "-label"} htmlFor={id}>时区</label>
-    <button ref={trigger} id={id} type="button" className={styles.trigger} disabled={disabled} aria-labelledby={id + "-label"} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id + "-list" : undefined} onClick={() => open ? setOpen(false) : show()} onKeyDown={event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); show(); } }}>
-      <span><strong>{selected.city}{selected.offset && " · " + selected.offset}</strong><small>{value}</small></span><span aria-hidden="true">⌄</span>
+    <button ref={trigger} id={id} type="button" className={styles.trigger} disabled={disabled} aria-labelledby={id + "-label " + id + "-value"} aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? id + "-list" : undefined} onClick={() => open ? setOpen(false) : show()} onKeyDown={event => { if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); show(); } }}>
+      <span id={id + "-value"}><strong>{selected.city}{selected.offset && " · " + selected.offset}</strong><small>{value}</small></span><span aria-hidden="true">⌄</span>
     </button>
     {open && <div className={styles.menu}>
       <input ref={search} role="combobox" aria-label="搜索时区" aria-autocomplete="list" aria-expanded="true" aria-controls={id + "-list"} aria-activedescendant={visible[active] ? id + "-option-" + active : undefined} autoComplete="off" placeholder="城市、时区或 UTC 偏移" value={query} onChange={event => { setQuery(event.target.value); setActive(0); }} onKeyDown={navigate} />
-      <div ref={list} id={id + "-list"} className={styles.options} role="listbox" aria-labelledby={id + "-label"}>
-        {visible.map((option, index) => <button key={option.value} id={id + "-option-" + index} type="button" role="option" aria-selected={option.value === value} data-active={index === active} className={index === active ? styles.active : ""} onClick={() => choose(option.value)}><span>{option.city} · {option.offset}</span><small>{option.value}</small></button>)}
+      <div ref={list} id={id + "-list"} className={styles.options} role="listbox" tabIndex={-1} aria-labelledby={id + "-label"}>
+        {visible.map((option, index) => <button key={option.value} id={id + "-option-" + index} type="button" role="option" tabIndex={-1} aria-selected={option.value === value} data-active={index === active} className={index === active ? styles.active : ""} onMouseDown={event => event.preventDefault()} onClick={() => choose(option.value)}><span>{option.city} · {option.offset}</span><small>{option.value}</small></button>)}
         {!visible.length && <p className={styles.empty} role="status">没有匹配时区，请换个城市或 IANA 名称。</p>}
       </div>
       {matches.length > visible.length && <p className={styles.hint}>输入城市或名称，搜索全部时区。</p>}

@@ -4,15 +4,15 @@ import { useState } from "react";
 import { Reveal } from "./ui/primitives";
 import { guidance, problemSummary, type Problem, type ProblemAction } from "../../shared/problems";
 import { problemPresentation } from "../../shared/problem-policy";
-type Props = { problem: Problem; objectName?: string; disabled?: boolean; onRefresh?: () => void; onLogin?: () => void; onAuthorize?: () => void; onSettings?: () => void; onHelp?: () => void };
+type Props = { problem: Problem; objectName?: string; disabled?: boolean; showGuidance?: boolean; settingsLabel?: string; onRefresh?: () => void; onLogin?: () => void; onAuthorize?: () => void; onSettings?: () => void; onHelp?: () => void };
 /** 客户问题仅显示事实与操作；非阻塞检查只进入折叠的技术报告。 */
-export default function ProblemCard({ problem, objectName, disabled, onRefresh, onLogin, onAuthorize, onSettings, onHelp }: Props) {
+export default function ProblemCard({ problem, objectName, disabled, showGuidance = false, settingsLabel = "查看连接设置", onRefresh, onLogin, onAuthorize, onSettings, onHelp }: Props) {
   const [copied, setCopied] = useState("");
   const [expanded, setExpanded] = useState(false);
   const info = guidance(problem);
   const presentation = problemPresentation(problem);
   const handlers: Partial<Record<ProblemAction, (() => void) | undefined>> = { login:onLogin, refresh:onRefresh, authorize:onAuthorize, settings:onSettings, help:onHelp };
-  const labels: Partial<Record<ProblemAction,string>> = { login:"重新登录", refresh:problem.stage === "读取本机状态" ? "重新读取" : problem.attemptId ? "查询本次操作" : "重新检查", authorize:"重新授权原频道", settings:"查看连接设置", help:"查看对应步骤" };
+  const labels: Partial<Record<ProblemAction,string>> = { login:"重新登录", refresh:problem.stage === "读取本机状态" ? "重新读取" : problem.attemptId ? "查询本次操作" : "重新检查", authorize:"重新授权原频道", settings:settingsLabel, help:"查看对应步骤" };
   /** 复制失败只影响复制提示，不覆盖原故障。 */
   async function copy() { try { if (window.liveNest?.copyProblem) { if (!await window.liveNest.copyProblem(problem)) throw new Error(); } else await navigator.clipboard.writeText(problemSummary(problem)); setCopied("摘要已复制，请交给管理员"); } catch { setCopied("无法自动复制，请复制下方诊断信息"); } }
   const report = <details className="technical-report"><summary>技术报告{presentation === "technical" ? " · " + (objectName || "本机") : ""}</summary><p>{info.title} · {problem.stage} · {new Date(problem.observedAt).toLocaleString()}</p><p>{problem.message}</p><code>{problemSummary(problem)}</code><div><button type="button" onClick={()=>void copy()}>复制脱敏报告</button></div>{copied && <p role="status">{copied}</p>}</details>;
@@ -22,10 +22,11 @@ export default function ProblemCard({ problem, objectName, disabled, onRefresh, 
   return <section className="problem-card error" role="alert">
     <strong>{objectName && objectName + " · "}{info.title}</strong>
     <p>{customerMessage}</p>
+    {showGuidance && <p>{info.steps[0]}</p>}
     {problem.outcome === "unknown" && <p>结果尚未确认，请先查询，避免重复操作。</p>}
 
     <div className="problem-actions">{problem.actions.filter(action=>handlers[action]).map(action=><button type="button" key={action} disabled={disabled} onClick={handlers[action]}>{labels[action]}</button>)}</div>
     <button type="button" className="problem-detail-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? "收起处理说明" : "处理说明与技术报告"}</button>
-    <Reveal open={expanded}><p>{info.steps[0]}</p>{report}</Reveal>
+    <Reveal open={expanded}>{!showGuidance && <p>{info.steps[0]}</p>}{report}</Reveal>
   </section>;
 }

@@ -5,9 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
 import { targetKey } from "@/shared/remote";
 import { api, requestProblem } from "./client-request";
+import type { BroadcastDefaults } from "@/shared/broadcast-options";
+import { defaultLiveChatConfig } from "@/shared/live-chat";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
+import { useWorkbenchActive } from "./components/workbench-context";
 
 /** 保存实例媒体与公开直播详情，不保存路径、图片原始数据或授权信息。 */
 function readDraft(id: string): Selection | undefined {
@@ -19,6 +22,7 @@ function readDraft(id: string): Selection | undefined {
 
 /** 每个调用绑定一个稳定实例 ID；请求和草稿永远携带该 ID。 */
 export function useInstance(instance: InstanceDescriptor) {
+  const active = useWorkbenchActive();
   const id = targetKey(instance); const instanceId = instance.id; const agentId = instance.agentId;
   const [data, setData] = useState<Dashboard>();
   const { durationMs, synchronize, clear: clearClock } = useStreamClock();
@@ -42,7 +46,6 @@ export function useInstance(instance: InstanceDescriptor) {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
       setReadAt(Date.now()); synchronize(result);
       if (result.operation?.id === failedRequest.current && ["succeeded", "failed"].includes(result.operation?.status || "")) { setError(""); setProblem(undefined); failedRequest.current = undefined; }
-      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
         const key = "livepilot-request-" + id;
@@ -54,12 +57,14 @@ export function useInstance(instance: InstanceDescriptor) {
         setSelection(previous => JSON.stringify(previous) === JSON.stringify(actual) ? previous : actual);
       }
       if (!initialized.current) {
-        initialized.current = true;
         const active = result.state.phase !== "stopped" && result.state.phase !== "idle";
         const saved = (active ? result.state.selection : readDraft(id)) || result.state.selection;
-        const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: false };
-        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: initial.broadcast || defaultBroadcast() });
+        const defaults = !saved ? (await api<{ value: BroadcastDefaults }>("/api/broadcast-defaults")).value : undefined;
+        const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: defaults?.videoAudio ?? false };
+        initialized.current = true;
+        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: { ...(initial.broadcast || { ...defaultBroadcast(), ...(defaults ? { privacy: defaults.privacy, madeForKids: defaults.madeForKids } : {}) }), liveChat: initial.broadcast?.liveChat || result.liveChat?.config || { ...defaultLiveChatConfig } } });
       }
+      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
     } catch (e) { clearClock(); setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
     finally { fetching.current = false; }
   }, [id, instanceId, agentId, synchronize, clearClock]);
@@ -68,12 +73,12 @@ export function useInstance(instance: InstanceDescriptor) {
   useEffect(() => {
     const first = setTimeout(() => void refresh(), 0);
     const clock=setInterval(()=>setNow(Date.now()),1000);
-    const interval = setInterval(() => void refresh(), 5000);
+    const interval = setInterval(() => void refresh(), active ? 5000 : 15000);
     /** 素材发布后刷新列表，不自动选择或替换当前直播内容。 */
     const mediaUpdated = () => { void refresh(); };
     window.addEventListener("livepilot-media-updated", mediaUpdated);
     return () => { clearTimeout(first); clearInterval(interval); clearInterval(clock); window.removeEventListener("livepilot-media-updated", mediaUpdated); };
-  }, [refresh]);
+  }, [refresh, active]);
 
   /** 修改当前实例草稿，在 OAuth 页面往返后仍可恢复选择。 */
   function select(next: Partial<Selection>) {

@@ -1,0 +1,17 @@
+/* 直播配置复用工具条；与下方本场表单分层，窄屏自然换行且不使用悬浮菜单。 */
+.root { margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border, #e3e8ef); }
+.toolbar, .actions, .nameRow, .feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.toolbar { gap: 16px; align-items: flex-end; }
+.picker { display: flex; flex-direction: column; gap: 8px; flex: 1 1 220px; min-width: 0; font-weight: 600; }
+.picker select { width: 100%; min-width: 0; font-weight: 400; }
+.actions { flex-shrink: 0; }
+.hint { display: block; margin-top: 8px; color: var(--text-muted, #56657a); font-size: 13px; }
+.editor { margin-top: 16px; }
+.editor p { margin: 0 0 12px; }
+.nameRow { margin-top: 8px; }
+.nameRow input { flex: 1 1 200px; min-width: 0; }
+.feedback { margin-top: 8px; font-size: 13px; }
+.feedback p { margin: 0; }
+.manage summary { padding: 10px 8px; cursor: pointer; }
+.manage[open] { flex-basis: 100%; }
+@media (max-width: 600px) { .toolbar { gap: 10px; } .picker { flex-basis: 100%; } .actions { flex-shrink: 1; } }

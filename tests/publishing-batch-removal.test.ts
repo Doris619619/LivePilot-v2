@@ -25,7 +25,7 @@ beforeEach(async () => {
   vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_INSTANCES", "main"); vi.stubEnv("LIVEPILOT_MODE", "cloud"); vi.stubEnv("LIVEPILOT_ORIGIN", "https://synthetic.invalid");
   const access = emptyAccess(); access.users.push(...[alice, admin].map(user => ({ ...user, salt: "synthetic", hash: "synthetic", revision: randomUUID(), disabled: false }))); await accessStore().write("access.json", access);
   const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []);
-  await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]); await cloudStore().write("bindings.json", [{ agentId: "pc", instanceId: "main", channelId: "channel_one", confirmed: true }]);
+  await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]); await cloudStore().write("bindings.json", [{ agentId: "pc", instanceId: "main", channelId: "channel_one", confirmed: true }]);
   await savePublishingPolicy(admin, { ...defaultPolicy, privacyContact: "synthetic@example.invalid" }); await acceptPublishingPrivacy(alice, PRIVACY_VERSION);
   const account = await createPublishingAccount(alice, "pc", "main", "Synthetic account"); await claimPublishingAccount("pc", account.id, "main", "channel_one", "Test", true, Date.now());
   profile = await savePublishingProfile(alice, { ...fixtureJob().profile, accountId: account.id });

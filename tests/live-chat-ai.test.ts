@@ -1,4 +1,4 @@
-/** 合成密钥与模拟 DeepSeek HTTP 验证互动语言、身份标记、上下文隔离、取消及安全错误协议。 */
+/** 合成密钥与模拟 DeepSeek HTTP 验证互动语言、观众称呼、上下文隔离、取消及安全错误协议。 */
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -23,7 +23,7 @@ function completion(content: unknown) { return Response.json({ choices: [{ finis
 it.each([["friendly", "Friendly"], ["playful", "Lively"], ["gentle", "Gentle"], ["custom", "style preference"]] as const)("applies %s persona with same-language and no-tools identity rules", async (preset, tone) => {
   const fetcher = vi.fn().mockResolvedValue(completion({ reply: "我还不知道歌名，希望你喜欢这段音乐！" })); vi.stubGlobal("fetch", fetcher);
   const reply = await generateLiveChatReply(storage, { ...defaultLiveChatConfig, preset, customPrompt: "古典诗意" }, message, [], new AbortController().signal);
-  expect(reply).toBe("[AI] @小梁 我还不知道歌名，希望你喜欢这段音乐！");
+  expect(reply).toBe("@小梁 我还不知道歌名，希望你喜欢这段音乐！");
   const request = JSON.parse(fetcher.mock.calls[0][1].body);
   expect(request.max_tokens).toBe(256); expect(request.tools).toBeUndefined();
   const prompt = request.messages[0].content;
@@ -70,13 +70,13 @@ it("treats injection and custom style as JSON data and includes at most five sam
 it("limits final label, name and reply to 200 UTF-16 units without splitting emoji", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion({ reply: "🎵".repeat(300) })));
   const result = await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, author: "🎈".repeat(40) }, [], new AbortController().signal);
-  expect(result.startsWith("[AI] @")).toBe(true); expect(result.length).toBeLessThanOrEqual(200);
+  expect(result.startsWith("@")).toBe(true); expect(result.length).toBeLessThanOrEqual(200);
   expect(result).not.toMatch(/[\uD800-\uDBFF]$/); expect(result).not.toContain("undefined");
 });
 
 it("uses a safe viewer salutation when the name is absent or contains only a URL", async () => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(completion({ reply: "Hello!" }))));
-  for (const author of ["", "https://untrusted.example"]) expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, author }, [], new AbortController().signal)).toBe("[AI] @viewer Hello!");
+  for (const author of ["", "https://untrusted.example"]) expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, author }, [], new AbortController().signal)).toBe("@viewer Hello!");
 });
 
 it.each([{ reply: "" }, { reply: "hello", tool: "start" }, { reply: "https://secret.example" }, { reply: "<b>text</b>" }, { reply: 5 }])("rejects unusable public reply output", async output => {
@@ -93,7 +93,7 @@ it.each([[401, "AI_CONFIG"], [402, "AI_BALANCE"], [429, "AI_RATE"], [503, "AI_NE
 it("maps absent credentials to AI_CONFIG without making a request", async () => {
   vi.stubEnv("DEEPSEEK_API_KEY", ""); const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
   const error = await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal).catch(error => error);
-  expect(error).toMatchObject({ code: "AI_CONFIG" }); expect(error.message).toContain("管理员"); expect(error.message).not.toContain(key); expect(error.message).not.toContain("保存"); expect(fetcher).not.toHaveBeenCalled();
+  expect(error).toMatchObject({ code: "AI_CONFIG" }); expect(error.message).toContain("账号 AI 服务设置"); expect(error.message).not.toContain(key); expect(error.message).not.toContain("保存"); expect(fetcher).not.toHaveBeenCalled();
 });
 
 it("uses the runtime environment key even with an independently saved instance key and never reads it", async () => {
@@ -101,7 +101,7 @@ it("uses the runtime environment key even with an independently saved instance k
   await saveAiKey(storage, storedKey); const read = vi.spyOn(storage, "read");
   const fetcher = vi.fn().mockResolvedValue(completion({ reply: "Hello!" })); vi.stubGlobal("fetch", fetcher);
   expect(liveChatAiConfigured()).toBe(true);
-  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal)).toBe("[AI] @小梁 Hello!");
+  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal)).toBe("@小梁 Hello!");
   expect(read).not.toHaveBeenCalled(); expect(fetcher.mock.calls[0][1].headers.Authorization).toBe("Bearer " + key);
   expect(fetcher.mock.calls[0][1].body).not.toContain(key); expect(fetcher.mock.calls[0][1].body).not.toContain(storedKey);
 });
@@ -118,7 +118,7 @@ it.each(["", " ", "invalid env key with spaces"])("reports invalid environment f
   vi.stubEnv("DEEPSEEK_API_KEY", value); const read = vi.spyOn(storage, "read"); const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
   expect(liveChatAiConfigured()).toBe(false);
   const error = await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal).catch(error => error);
-  expect(error.code).toBe("AI_CONFIG"); expect(error.message).toContain("管理员"); if (value.trim()) expect(error.message).not.toContain(value);
+  expect(error.code).toBe("AI_CONFIG"); expect(error.message).toContain("账号 AI 服务设置"); if (value.trim()) expect(error.message).not.toContain(value);
   expect(read).not.toHaveBeenCalled(); expect(fetcher).not.toHaveBeenCalled();
 });
 

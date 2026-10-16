@@ -10,7 +10,8 @@ export class Control {
   busy = false;
   constructor(readonly obs: ObsRuntime, readonly youtube: YouTubePort, readonly storage: Store,
     private media: (selection: Selection) => Promise<{ video: string; music: string }>,
-    private wait: typeof waitFor = waitFor) {}
+    private wait: typeof waitFor = waitFor,
+    private applyChat?: (selection: Selection) => Promise<void>) {}
   async state() { return await this.storage.read<ControlState>("control.json") || initialState(); }
   private async save(state: ControlState, patch: Partial<ControlState>) {
     Object.assign(state, patch, { updatedAt: new Date().toISOString() });
@@ -53,6 +54,7 @@ export class Control {
       }
       if (state.selection && state.broadcastTitle && JSON.stringify(state.selection) !== JSON.stringify(selection)) throw new AppError("RECOVER", "恢复当前场次时请保留原媒体与直播详情，或先结束当前场次再更换。");
       const files = await this.media(selection);
+      await this.applyChat?.(selection);
       await this.save(state, { phase: "starting", stage: "准备 OBS", error: undefined, channelId: channel.id, selection });
       await this.obs.ensureReady();
       const obs = await this.obs.status();

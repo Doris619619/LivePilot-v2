@@ -71,7 +71,8 @@ try {
   await page.keyboard.press('Escape'); assert.equal(await page.getByRole('dialog', { name: '软件更新详情' }).count(), 0);
   assert.equal(await page.getByRole('button', { name: '软件更新：更新需要处理' }).evaluate(button => button === document.activeElement), true);
   await page.evaluate(() => { window.updateFixture.state.update = { status: 'available', version: '0.1.4', message: '发现新版本 0.1.4' }; });
-  await page.locator('header').getByRole('button', { name: '更新并重启', exact: true }).click();
+  await page.locator('header').getByRole('button', { name: '有可用更新', exact: true }).click();
+  await page.getByRole('dialog', { name: '软件更新', exact: true }).getByRole('button', { name: '更新并重启', exact: true }).click();
   assert.deepEqual(await page.evaluate(() => window.updateFixture.calls), ['update-apply', 'update-install', 'update-apply']);
   await page.evaluate(() => window.updateFixture.fail());
   assert.deepEqual(errors, []); console.log('PASS simulated UI: login update, preparing, precise error, retry original action, revoked pairing, stale full-state isolation, keyboard, 780px');

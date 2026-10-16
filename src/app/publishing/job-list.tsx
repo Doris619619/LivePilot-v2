@@ -61,7 +61,7 @@ export default function JobList({ jobs, busy, operate, cancelling = false, remov
         <div><dt>原计划</dt><dd>{jobTime(job, false, true)}</dd></div>
         {job.initialPublishAt && job.initialPublishAt !== job.spec.originalPublishAt && <div><dt>当前计划</dt><dd>{jobTime(job)}</dd></div>}
         {confirmedAt && <div><dt>YouTube 已确认时间</dt><dd>{jobTime(job, true)}</dd></div>}
-        <div><dt>发布配置</dt><dd>{job.spec.profile.name}</dd></div>
+        <div><dt>视频发布配置</dt><dd>{job.spec.profile.name}</dd></div>
         <div><dt>大小</dt><dd>{Math.round((report?.prepared?.size || job.spec.asset.size) / 1024 ** 2)} MiB</dd></div>
         <div><dt>文件</dt><dd>{job.spec.asset.filename}</dd></div>
         <div><dt>频道</dt><dd>{job.spec.profile.channelId}</dd></div>

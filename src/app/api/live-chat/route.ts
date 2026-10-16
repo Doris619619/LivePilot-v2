@@ -36,7 +36,7 @@ export async function POST(request: Request) {
       if (body.action !== "read") await audit(user.username, "live-chat-" + body.action, selected.instanceId, "succeeded", selected.agentId);
     } else {
       const app = service(body.instanceId);
-      result = body.action === "configure" ? await app.chat.configure(body.config) : await app.chat.status();
+      result = body.action === "configure" ? await app.configureChat(body.config) : await app.chat.status();
       if (body.action !== "read") await audit(user.username, "live-chat-" + body.action, body.instanceId, "succeeded");
     }
     return Response.json(liveChatStatusSchema.parse(result), { headers: { "Cache-Control": "no-store" } });

@@ -2,7 +2,7 @@
 .publishing-shell { min-width: 0; }
 .publishing-batch-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 .publishing-sidebar nav { display: grid; gap: 4px; }
-.publishing-sidebar button.sidebar-link { width: 100%; border: 0; background: transparent; justify-content: start; font-size: 15px; font-weight: 400; }
+.publishing-sidebar button.sidebar-link { width: 100%; margin-bottom: 0; border: 0; background: transparent; justify-content: start; font-size: 15px; font-weight: 400; }
 .publishing-sidebar button.sidebar-link.is-active { background: var(--nav-active); color: var(--accent-primary); font-weight: 500; }
 .publishing-sidebar button.sidebar-link:hover { background: var(--surface-active); }
 .publishing-shell h2, .publishing-shell h3 { font-size: 16px; font-weight: 600; line-height: 1.5; }
@@ -118,9 +118,6 @@
 .publishing-data > button { margin: 20px 0; }
 .publishing-policy-links { margin-top: 40px; }
 .publishing-quota { padding: 16px 0; margin-bottom: 8px; border-bottom: 1px solid var(--border-subtle); }
-.publishing-settings-navigation { margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--border-subtle); }
-.publishing-admin-navigation { margin-top: auto; padding-top: 24px; }
-.publishing-admin-navigation .sidebar-heading { margin-top: 0; }
 .publishing-subnav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
 .publishing-subnav .is-active { background: var(--accent-subtle); border-color: var(--accent-border); color: var(--accent-primary); }
 .publishing-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); padding: 0; list-style: none; gap: 16px; margin: 0 0 32px; }

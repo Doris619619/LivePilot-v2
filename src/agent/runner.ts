@@ -12,7 +12,7 @@ import { Executor } from "./executor";
 import { Worker } from "./worker";
 import { Transport } from "./transport";
 import { connectSession } from "./session";
-import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync, resetAccountAiEnvironment } from "./live-chat-environment";
 export type Identity = { agentId: string; origin: string; token: string };
 export type AgentHooks = { stopped(): boolean; snapshots?(value: AgentSnapshot[]): void; connected?(transport: Transport): Promise<void>; heartbeat?(): void; problems?(value: Problem[]): void; error?(message: string, code?: string): void };
 /** 保留既有会话、心跳、去重与完整业务执行语义；桌面只获得受限状态回报。 */
@@ -22,7 +22,8 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
   const executor = new Executor(transport); const worker = new Worker(new Store(path.join(dataRoot(), "agent", "tasks")), task => executor.execute(task), identity.agentId);
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
-  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values()), failed => {
+  let accountAiSupported = false;
+  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values(), accountAiSupported), failed => {
     if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
     else health.delete("chat-environment");
   });
@@ -42,8 +43,11 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
         const session = await connectSession(transport, { bootId, instances: instanceDescriptors(), ...(process.env.LIVENEST_MAINTENANCE ? { maintenance: process.env.LIVENEST_MAINTENANCE } : {}) });
         delete process.env.LIVENEST_MAINTENANCE;
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await hooks.connected?.(transport); await executor.registerChannels(); connected = true;
+        accountAiSupported = !!session.capabilities?.includes("account-ai-v1");
+        await chatEnvironment.stop();
+        if (accountAiSupported) await resetAccountAiEnvironment(executor.services.values());
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
-        void chatEnvironment.refresh();
+        await chatEnvironment.refresh();
         executor.startChat();
         executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));

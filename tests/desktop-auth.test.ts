@@ -5,6 +5,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { createPairing, pairAgent, openSession, revokeAgent } from "@/cloud/agents";
+import { saveAccountAi } from "@/server/account-ai";
 import { POST } from "@/app/api/agent/[...path]/route";
 let root: string;
 /** 只用临时文件与虚构 Google 凭据。 */
@@ -35,4 +36,22 @@ it("delivers the deployment chat key only to enrolled Agents with a valid sessio
   const response = await bootstrap(authenticated, "live-chat-environment"); expect(response.headers.get("cache-control")).toBe("no-store"); expect(await response.json()).toEqual({ apiKey: "sk-cloud-synthetic-only" });
   vi.stubEnv("DEEPSEEK_API_KEY", ""); expect(await (await bootstrap(authenticated, "live-chat-environment")).json()).toEqual({});
   await revokeAgent("pc_chat"); expect((await bootstrap(authenticated, "live-chat-environment")).status).toBe(401);
+});
+
+
+it("delivers only the authenticated device owner's account key, with session and origin protection", async () => {
+  vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "c".repeat(64));
+  await saveAccountAi("alice", { revision: 0, apiKey: "synthetic_alice_account_key", uses: { copy: true, chat: false } });
+  await saveAccountAi("bob", { revision: 0, apiKey: "synthetic_bob_account_key", uses: { copy: false, chat: true } });
+  const invite = await createPairing("pc_account", "Account", "alice");
+  const token = "a".repeat(64); await pairAgent("pc_account", invite.code, token, undefined, "alice");
+  const headers = { authorization: "Bearer " + token, "x-livepilot-agent": "pc_account" };
+  expect((await bootstrap(headers, "account-ai-environment")).status).toBe(409);
+  const { session } = await openSession("pc_account", randomUUID(), [{ id: "main", name: "Main" }]);
+  const authenticated = { ...headers, "x-livepilot-session": session };
+  const response = await bootstrap(authenticated, "account-ai-environment");
+  expect(response.status).toBe(200); expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({ managed: true, apiKey: "synthetic_alice_account_key", uses: { copy: true, chat: false } });
+  expect((await bootstrap({ ...authenticated, origin: "https://cloud.example.com" }, "account-ai-environment")).status).toBe(403);
+  await revokeAgent("pc_account"); expect((await bootstrap(authenticated, "account-ai-environment")).status).toBe(401);
 });

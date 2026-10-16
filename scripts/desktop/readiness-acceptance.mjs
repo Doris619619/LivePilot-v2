@@ -1,10 +1,11 @@
 /** 指定 OBS 常驻操作的隔离界面验收，涵盖未配对、控制成功后的入口、目标绑定、运行反馈和窄窗口。 */
 import { chromium } from 'playwright';
+import { expect } from 'playwright/test';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-const root = path.resolve('desktop/out'); const output = path.resolve('docs/desktop/screenshots/obs-guide-019'); await mkdir(output, { recursive: true });
+const root = path.resolve('desktop/out'); const output = path.resolve('docs/screenshots/ux-simplification/desktop'); await mkdir(output, { recursive: true });
 /** 只读取本次构建的静态文件，模拟桥接不访问生产云端。 */
 const server = createServer(async (req, res) => {
   try { const file = path.resolve(root, '.' + new URL(req.url, 'http://localhost').pathname.replace(/\/$/, '/index.html')); if (!file.startsWith(root + path.sep)) throw Error(); res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' })[path.extname(file)] || 'application/octet-stream'); res.end(await readFile(file)); } catch { res.writeHead(404); res.end(); }
@@ -76,6 +77,8 @@ try {
   });
   await page.locator('#setup-obs-main').getByText('准备完成',{exact:true}).waitFor();
   for (const name of ['启动并检查 OBS 2', '重新检查 OBS 2']) assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name, exact: true }).isVisible(), true);
+  assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),0);
+  await page.locator('#setup-obs-main').getByRole('button',{name:'查看配置',exact:true}).click();
   assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),1);
   assert.equal(await page.locator('#setup-obs-second').getByText('3 / 5 已完成',{exact:true}).count(),1);
   await page.getByRole('navigation',{name:'OBS 1 配置步骤'}).getByRole('button',{name:/2.*连接网页/}).click();
@@ -85,6 +88,16 @@ try {
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-4-second');
   await capture(page,'two-obs-progress-1280');await page.setViewportSize({width:780,height:900});await capture(page,'two-obs-progress-780');
   assert.equal(await page.getByLabel('粘贴配对码').count(),0);
+  // 已就绪实例收起细节；更新入口不会因查看提示而执行更新。
+  await page.setViewportSize({width:1280,height:900});
+  await page.evaluate(()=>{ window.launchFixture.state.update = {status:'available',version:'0.1.15',message:'模拟可用更新'}; });
+  const updateTrigger = page.getByRole('button',{name:'有可用更新',exact:true});
+  await updateTrigger.click();
+  const updateDialog = page.getByRole('dialog',{name:'软件更新',exact:true});
+  await updateDialog.getByRole('button',{name:'更新并重启',exact:true}).waitFor();
+  assert.equal(await page.evaluate(()=>window.launchFixture.calls.some(call=>call.action.startsWith('update'))),false);
+  await page.keyboard.press('Escape');
+  await expect(updateTrigger).toBeFocused();
   assert.deepEqual(errors,[]);console.log('PASS independent five-step flows per OBS, shared pairing without repeat, retained pairing input, target navigation, pairing form, target launch, neutral firewall advice, error recovery, keyboard, 780/1280px and centralized addition');
 } finally { await browser.close(); server.close(); }
 /** 验收截图明确为模拟数据，并检查页面和按钮尺寸。 */

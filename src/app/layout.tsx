@@ -13,7 +13,7 @@ const workspaceFont = localFont({ src: "./fonts/livenest-sans-sc.woff2", variabl
 
 export const metadata: Metadata = {
   title: "LiveNest — 多频道广播控制台",
-  description: "LiveNest 现代专业直播发射台，支持多电脑 OBS 实例与 YouTube 频道独立编排调度",
+  description: "管理直播电脑、OBS 频道与视频发布",
 };
 
 /**

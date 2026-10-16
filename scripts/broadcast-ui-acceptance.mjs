@@ -25,14 +25,14 @@ try {
   await title.waitFor();
   assert.equal(await first.locator('[id^="broadcast-privacy-"]').inputValue(), 'public');
   assert.equal(await first.getByRole('button', { name: '开始直播', exact: true }).isDisabled(), true);
-  await first.getByRole('button', { name: '生成并填入', exact: true }).click();
+  await first.getByRole('button', { name: '一键生成文案', exact: true }).click();
   await first.getByText('演示文案已填入，未调用真实 DeepSeek API。', { exact: true }).waitFor();
   assert.match(await title.inputValue(), /Lofi/);
   assert.match(await first.locator('[id^="broadcast-description-"]').inputValue(), /#lofi/);
   assert.equal(await second.locator('[id^="broadcast-title-"]').inputValue(), '');
   await first.getByRole('button', { name: '撤销填入', exact: true }).click();
   assert.equal(await title.inputValue(), '');
-  await first.getByRole('button', { name: '生成并填入', exact: true }).click();
+  await first.getByRole('button', { name: '一键生成文案', exact: true }).click();
   await first.getByText('演示文案已填入，未调用真实 DeepSeek API。', { exact: true }).waitFor();
   await first.getByRole('tab', { name: '发布设置', exact: true }).click();
   await first.getByRole('button', { name: '读取频道列表', exact: true }).click();

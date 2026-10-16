@@ -112,7 +112,7 @@ export class Executor {
     const p = task.payload;
     if (p.kind === "live-chat-read") return app.chat.status();
     if (p.kind === "live-chat-configure") {
-      const result = await app.chat.configure(p.config);
+      const result = await app.configureChat(p.config);
       await audit(task.actor, "live-chat-configure", task.instanceId, "succeeded", task.id);
       return result;
     }

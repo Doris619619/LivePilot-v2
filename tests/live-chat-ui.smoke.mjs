@@ -62,15 +62,15 @@ try {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }); await context.route("**/api/**", mock);
   const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
   await page.goto(origin); const panel = page.locator("#instance-synthetic_pc-main section").filter({ has: page.getByRole("heading", { name: "AI 观众互动" }) });
-  const toggle = panel.getByRole("switch"), persona = panel.getByLabel("互动人设");
+  const toggle = panel.getByRole("switch"), settings = page.getByRole("dialog", { name: "设置", exact: true }), persona = settings.getByLabel("互动人设", { exact: true });
   await expect(toggle).toBeEnabled();
   await expect(panel.locator('input[type="password"]')).toHaveCount(0); await expect(panel.getByLabel("DeepSeek API Key", { exact: true })).toHaveCount(0); await expect(panel.getByRole("button", { name: "保存 Key", exact: true })).toHaveCount(0);
-  await expect(page.locator("#instance-synthetic_pc-main").getByRole("button", { name: "开始直播", exact: true })).toBeDisabled();
-  // 设置默认收起，从原生 disclosure 按 Enter 展开，再用 Tab 进入人设。
-  const settingsSummary = panel.getByText("互动设置", { exact: true }); await settingsSummary.focus(); await settingsSummary.press("Enter"); await settingsSummary.press("Tab"); await expect(persona).toBeFocused(); await persona.press("End"); await expect(persona).toHaveValue("custom");
+  await expect(page.locator("#instance-synthetic_pc-main").getByRole("button", { name: "开始直播", exact: true })).toHaveCount(0);
+  // 从运行面板进入统一设置，用键盘编辑人设，Escape 返回原入口。
+  const settingsSummary = panel.getByRole("button", { name: "互动设置", exact: true }); await settingsSummary.focus(); await settingsSummary.press("Enter"); await expect(persona).toBeVisible(); await persona.focus(); await persona.press("End"); await expect(persona).toHaveValue("custom");
   assert.equal(await persona.evaluate(element => parseFloat(getComputedStyle(element).outlineWidth) >= 2 && getComputedStyle(element).outlineStyle !== "none"), true);
-  await panel.getByLabel("自定义人设描述").fill("温柔、简短，跟随观众语言。"); await panel.getByLabel("发送间隔（秒）").fill("10");
-  const saveConfig = panel.getByRole("button", { name: "保存互动设置" }); await saveConfig.focus(); await saveConfig.press("Enter"); await panel.getByText("互动设置已保存，直播期间立即生效。", { exact: true }).waitFor();
+  await settings.getByLabel("自定义人设描述").fill("温柔、简短，跟随观众语言。"); await settings.getByLabel("发送间隔（5–60 秒）").fill("10");
+  const saveConfig = settings.getByRole("button", { name: "保存互动设置" }); await saveConfig.focus(); await saveConfig.press("Enter"); await settings.getByText("互动设置已保存，直播期间立即生效。", { exact: true }).waitFor(); await expect(saveConfig).toHaveText("保存互动设置"); await settings.press("Escape"); await expect(settingsSummary).toBeFocused();
   assert.equal(chat.config.preset, "custom"); assert.equal(chat.config.intervalSeconds, 10);
   await expect(toggle).toBeEnabled(); await toggle.focus(); await toggle.press("Space"); await panel.getByText("AI 互动已关闭，待回复队列已取消。", { exact: true }).waitFor(); assert.equal(chat.config.enabled, false); await expect(toggle).toHaveAttribute("aria-checked", "false");
   await expect(toggle).toBeEnabled(); await toggle.focus(); await toggle.press("Space"); await panel.getByText("AI 互动已开启；条件就绪后自动回复新留言。", { exact: true }).waitFor(); await expect(toggle).toHaveAttribute("aria-checked", "true");
@@ -81,10 +81,13 @@ try {
   await expect(refreshChat).toBeEnabled(); await refreshChat.click(); await expect(panel.getByRole("button", { name: "检查频道授权", exact: true })).toBeVisible(); await expect(panel.getByRole("button", { name: "保存 Key", exact: true })).toHaveCount(0);
   chat = { ...chat, state: "running", recoveryAction: undefined, message: "演示数据：正在与观众互动。", updatedAt: Date.now() };
   await expect(refreshChat).toBeEnabled(); await refreshChat.click(); await expect(panel.getByText("互动中", { exact: true })).toBeVisible();
-  const historySummary = panel.getByText("活动记录", { exact: true }); await historySummary.focus(); await historySummary.press("Enter"); await expect(panel.locator("ol > li")).toHaveCount(2);
+  const historySummary = panel.getByRole("button", { name: "活动记录", exact: true });
+  await expect(historySummary).toHaveAttribute("aria-expanded", "true");
+  await historySummary.focus(); await historySummary.press("Enter"); await expect(panel.locator("ol")).toBeHidden();
+  await historySummary.press("Space"); await expect(panel.locator("ol > li")).toHaveCount(2); await expect(panel.locator("ol")).toBeVisible();
   const minimumTouchHeight = await panel.locator("button, summary").evaluateAll(elements => Math.min(...elements.filter(element => element.getClientRects().length > 0).map(element => element.getBoundingClientRect().height)));
   assert.ok(minimumTouchHeight >= 44, "可见按钮和折叠入口需达到 44px 触控高度。"); await screenshotPanel(panel, "desktop-1440.png");
-  await expect(page.locator("#instance-synthetic_old-main").getByText("这台直播电脑的 Agent 暂不支持 AI 观众互动，请升级 Agent 后刷新状态。", { exact: true })).toBeVisible();
+  await expect(page.locator("#instance-synthetic_old-main").getByText("请更新这台电脑的 LiveNest 客户端，再刷新互动状态。", { exact: true })).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 }); await screenshotPanel(panel, "mobile-390.png");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.setViewportSize({ width: 320, height: 800 }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false); await screenshotPanel(panel, "mobile-320.png");

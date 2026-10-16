@@ -13,7 +13,7 @@ import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared
 import { Transport, controllerOrigin } from "./transport";
 import { connectSession } from "./session";
 import { Executor } from "./executor";
-import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync, resetAccountAiEnvironment } from "./live-chat-environment";
 import { Worker } from "./worker";
 /** 在启动阶段读取专用配置；不覆盖已存在环境，不在日志输出配置值。 */
 function loadEnvironment() { const file = process.env.LIVEPILOT_ENV_FILE || ".env.agent"; if (existsSync(file)) process.loadEnvFile(file); }
@@ -43,7 +43,8 @@ async function main() {
   const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task), identity.agentId);
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
-  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values()), failed => {
+  let accountAiSupported = false;
+  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values(), accountAiSupported), failed => {
     if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
     else health.delete("chat-environment");
   });
@@ -66,8 +67,11 @@ async function main() {
       if (!connected) {
         const session = await connectSession(transport, { bootId, instances: instanceDescriptors() });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
+        accountAiSupported = !!session.capabilities?.includes("account-ai-v1");
+        await chatEnvironment.stop();
+        if (accountAiSupported) await resetAccountAiEnvironment(executor.services.values());
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
-        void chatEnvironment.refresh();
+        await chatEnvironment.refresh();
         executor.startChat();
         executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));

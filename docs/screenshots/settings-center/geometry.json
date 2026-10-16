@@ -1,0 +1,72 @@
+[
+  {
+    "label": "desktop-loading",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "desktop-ai",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "desktop-defaults",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "desktop-profiles",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "desktop-save-error",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "desktop-after-confirm",
+    "x": 270,
+    "y": 160,
+    "width": 900,
+    "height": 680
+  },
+  {
+    "label": "mobile-390",
+    "x": 0,
+    "y": 0,
+    "width": 390,
+    "height": 844
+  },
+  {
+    "label": "mobile-390-defaults",
+    "x": 0,
+    "y": 0,
+    "width": 390,
+    "height": 844
+  },
+  {
+    "label": "mobile-320",
+    "x": 0,
+    "y": 0,
+    "width": 320,
+    "height": 844
+  },
+  {
+    "label": "mobile-320-defaults",
+    "x": 0,
+    "y": 0,
+    "width": 320,
+    "height": 844
+  }
+]

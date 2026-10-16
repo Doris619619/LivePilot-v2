@@ -1,6 +1,6 @@
 {
   "name": "livepilot-v2",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "main": "dist-electron/main.cjs",
   "engines": {
@@ -46,7 +46,7 @@
     "@radix-ui/react-progress": "^1.1.17",
     "@radix-ui/react-tabs": "^1.1.22",
     "electron-updater": "6.8.9",
-    "next": "16.3.6",
+    "next": "16.3.8",
     "obs-websocket-js": "5.0.8",
     "react": "19.2.8",
     "react-dom": "19.2.8",
@@ -64,7 +64,7 @@
     "electron-builder": "26.15.3",
     "esbuild": "^0.28.2",
     "eslint": "^9.35.0",
-    "eslint-config-next": "16.3.6",
+    "eslint-config-next": "16.3.8",
     "playwright": "1.62.1",
     "typescript": "^5.9.2",
     "vitest": "4.1.11"
