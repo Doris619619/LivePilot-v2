@@ -90,11 +90,14 @@ try {
   await page.screenshot({ path: path.join(output, "desktop-cover-mobile.png"), fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "桌面端", exact: true }).click();
   await page.screenshot({ path: path.join(output, "desktop-cover-wide.png"), fullPage: true, animations: "disabled" });
-  assert.equal(await page.getByRole("region", { name: "YouTube 桌面首页示意" }).isVisible(), true);
+  const card = page.getByRole("region", { name: "YouTube 桌面卡片示意" });
+  assert.equal(await card.isVisible(), true);
+  assert.equal(await card.evaluate(el => el.scrollWidth <= el.clientWidth), true);
   await page.getByRole("button", { name: "展开预览", exact: true }).click();
   const feedDialog = page.getByRole("dialog", { name: "YouTube 首页预览" });
   assert.equal(await feedDialog.locator("article h4").innerText(), longTitle);
   assert.equal(await feedDialog.locator("article img").evaluate(img => Math.abs(img.clientWidth / img.clientHeight - 16 / 9) < .03), true);
+  await page.waitForFunction(() => { const frame = document.querySelector('[aria-label="YouTube 桌面首页示意"]'); const card = frame?.querySelector('article'); return !!card && card.getBoundingClientRect().right <= frame.getBoundingClientRect().right; });
   await page.screenshot({ path: path.join(output, "desktop-feed-expanded.png"), fullPage: false, animations: "disabled" });
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => document.activeElement?.textContent === "展开预览");

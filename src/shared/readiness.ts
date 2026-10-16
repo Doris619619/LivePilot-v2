@@ -25,6 +25,17 @@ export function startBlocker(data: Dashboard | undefined, selection: Selection, 
 export function canStopBroadcast(data?: Dashboard): boolean {
   return !!data && (data.obs.streaming === true || !!data.state.broadcastIntent || (!!data.state.broadcastTitle && data.state.phase !== "stopped") || !["idle", "stopped"].includes(data.state.phase));
 }
+/** 展示操作必须先区分执行中和未知结果；仅确认失败后才将入口命名为重试。 */
+export function broadcastActionMode(data: Dashboard | undefined, busy: boolean, stale: boolean, live: boolean): "working" | "check" | "retry" | "start" | "live" {
+  if (stale || !data) return "check";
+  if (busy || (data.operation && ["queued", "delivering", "accepted", "running"].includes(data.operation.status))) return "working";
+  if (live) return "live";
+  if (data.operation && ["uncertain", "interrupted"].includes(data.operation.status)) return "check";
+  if (data.state.broadcastIntent && !data.state.broadcastId) return "check";
+  if (data.state.phase === "error" || data.operation?.status === "failed") return "retry";
+  if (canStopBroadcast(data)) return "check";
+  return "start";
+}
 /** 对观众可理解的场次状态；未知平台枚举不直接泄漏到界面。 */
 export function youtubeLifecycleLabel(value?: string): string {
   const labels: Record<string, string> = { created: "待开播", ready: "准备就绪", testing: "测试中", testStarting: "正在开始测试", liveStarting: "正在开播", live: "直播中", complete: "已结束", revoked: "已撤销", missing: "未找到场次" };

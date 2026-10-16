@@ -3,7 +3,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
+import { broadcastActionMode, canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import BroadcastSettings from "./components/broadcast-settings";
 import LiveChatPanel from "./components/live-chat-panel";
 import OAuthFeedback from "./oauth-feedback";
@@ -63,6 +63,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
   const [detailsBusy, setDetailsBusy] = useState(false);
   const [expanded, setExpanded] = useState(initiallyExpanded);
+  const [workflowTab, setWorkflowTab] = useState("media");
   const connectionsRef = useRef<HTMLDetailsElement>(null);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
@@ -125,11 +126,24 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
 
   const stoppable = canStopBroadcast(data);
+  const actionMode = broadcastActionMode(data, busy, stale, live);
+  /** 摘要入口只定位到当前实例的开播区，不在摘要栏发送开停播命令。 */
+  function showBroadcast() {
+    setExpanded(true);
+    setWorkflowTab("start");
+    requestAnimationFrame(() => {
+      const heading = document.getElementById(`step-4-${id}`);
+      heading?.focus({ preventScroll: true });
+      heading?.scrollIntoView({ block: "nearest" });
+    });
+  }
   const broadcastControls = <>
-          {!live && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
-            <PlayIcon /><span>{working === "start" ? "开播中…" : pending && !live ? "重试开播" : "开始直播"}</span>
+          {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
+          {actionMode === "check" && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void refresh()}><RefreshIcon />重新检查状态</button>}
+          {(actionMode === "start" || actionMode === "retry") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+            <PlayIcon /><span>{actionMode === "retry" ? "重试开播" : "开始直播"}</span>
           </button>}
-          {stoppable && <button type="button" className="btn-danger" disabled={busy || stale} onClick={() => void act("stop")}>
+          {stoppable && <button type="button" className="btn-danger" disabled={busy || stale || actionMode === "working"} onClick={() => void act("stop")}>
             <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
           </button>}
   </>;
@@ -146,7 +160,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           {live && data?.obs.streaming && <span className="compact-timer">{durationMs === null ? "—" : formatDuration(durationMs)}</span>}
         </div>
         <div className="compact-actions-col">
-          {stoppable && broadcastControls}
+          {(stoppable || busy) && <button type="button" className="btn-ghost" onClick={showBroadcast}>查看运行状态</button>}
           <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
             <span>{expanded ? "收起" : "配置直播"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
@@ -166,7 +180,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
       <p className={!expanded && blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
       <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
-        {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
+        {pending && !live && <p className="readiness-text">当前场次尚未结束，素材已锁定。请在「开播」查看运行状态并处理。</p>}
         <details ref={connectionsRef} className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
             <h3 className="visually-hidden" id={`step-1-${id}`}>设备与频道</h3>
@@ -185,7 +199,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>
 
           </div></details>
-          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onSelectionChange={select} onBusyChange={setDetailsBusy} media={suffix => <section className="workflow-step" aria-labelledby={`step-2-${id}-${suffix}`}>
+          <BroadcastSettings tab={workflowTab} onTabChange={setWorkflowTab} id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onSelectionChange={select} onBusyChange={setDetailsBusy} media={suffix => <section className="workflow-step" aria-labelledby={`step-2-${id}-${suffix}`}>
             <h3 className="visually-hidden" id={`step-2-${id}-${suffix}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">
@@ -211,18 +225,17 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
 
           </section>} controls={<div className="broadcast-control-row">
-          <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`} className="visually-hidden">开始直播</h3>
-            {blocker && !live && <p className="readiness-text">{readiness}</p>}
-            {!stoppable && <div className="broadcast-actions">{broadcastControls}</div>}
-          </section>
           <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
-            <h3 id={`step-4-${id}`}>运行状态</h3>
+            <h3 id={`step-4-${id}`} tabIndex={-1}>本场运行状态</h3>
             <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
+            <p role="status">{stale ? "状态已过期，请先重新检查。" : error || data?.state.error || data?.state.stage || "等待开始"}</p>
             <dl className="runtime-values">
               <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
               <div><dt>YouTube</dt><dd>{stale ? "未知" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
             </dl>
+            {blocker && !live && <p className="readiness-text">{readiness}</p>}
+            {actionMode === "check" && !stale && <p className="readiness-text">开播结果尚未确认，请先重新检查状态。</p>}
+            <div className="broadcast-actions">{broadcastControls}</div>
           </section>
         </div>} />
 

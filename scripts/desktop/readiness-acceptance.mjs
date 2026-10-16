@@ -22,7 +22,7 @@ try {
     window.liveNest = { session: async () => ({ authenticated: true, username: '模拟客户' }), logout: async () => {}, readState: async () => ({ ok: true, state }), updateState: async () => state,
       act: async (action, input) => { fixture.calls.push({ action, ...input }); await new Promise(resolve => setTimeout(resolve, 650));
         if (fixture.fail) return { ok: false, problem: { version: 1, source: 'desktop', code: 'OBS_PORT', domain: 'obs', target: { instanceId: input.id }, severity: 'error', stage: '启动 OBS 1', outcome: 'rejected', observedAt: Date.now(), actions: ['settings', 'refresh'], message: '模拟故障：OBS 1 端口被其他程序占用。' } };
-        if (action === 'launch-obs') { state.activity = { action, instanceId: input.id, step: 2, status: 'complete', stage: '指定 OBS 已启动并确认控制连接；未执行开播操作', startedAt: Date.now() }; Object.assign(state.checks.find(c => c.instanceId === input.id), { status: 'ready', controlReady: true, code: undefined, checkedAt: Date.now() }); }
+        if (['launch-obs', 'diagnose-obs'].includes(action)) { state.activity = { action, instanceId: input.id, step: 2, status: 'complete', stage: '指定 OBS 已确认控制连接；未执行开播操作', startedAt: Date.now(), endedAt: Date.now() }; Object.assign(state.checks.find(c => c.instanceId === input.id), { status: 'ready', controlReady: true, code: undefined, checkedAt: Date.now() }); }
         if (action === 'add') state.instances.push({ id: 'second', name: 'OBS 2', initialized: true, managed: true });
         return { ok: true, state };
       } };
@@ -54,9 +54,9 @@ try {
   assert.equal(await page.getByText('模拟：控制服务已响应，入站隔离待确认。',{exact:true}).isVisible(),false);
   await capture(page,'configuration-780');
   await page.setViewportSize({width:1280,height:900}); await capture(page,'configuration-1280');
-  await page.getByRole('button',{name:'启动并检查 OBS 2',exact:true}).click();
-  await page.getByText('指定 OBS 已启动并确认控制连接；未执行开播操作',{exact:true}).waitFor();
-  assert.deepEqual(await page.evaluate(()=>window.launchFixture.calls),[{action:'launch-obs',id:'second'}]);
+  await page.getByRole('button',{name:'重新检查 OBS 2',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('[aria-label="重新检查 OBS 2"]').disabled);
+  assert.deepEqual(await page.evaluate(()=>window.launchFixture.calls),[{action:'diagnose-obs',id:'second'}]);
   await page.getByRole('button',{name:'本机 OBS',exact:true}).click();
   await page.getByRole('button',{name:'配置 OBS 2',exact:true}).click();
   await page.waitForFunction(()=>document.activeElement?.id==='setup-obs-second');
@@ -76,7 +76,8 @@ try {
     s.snapshots=s.instances.map((instance,index)=>({instance,observedAt:Date.now(),dashboard:{busy:false,state:{phase:'idle',stage:'等待',updatedAt:new Date().toISOString()},obs:{ready:true,running:true,streaming:false},youtube:{connected:index===0,channel:index===0?'示例频道':''},media:{videos:index===0?['示例视频.mp4']:[],music:index===0?['示例音乐.mp3']:[]},configuration:{missing:[],privacy:'private',madeForKids:false}}}));
   });
   await page.locator('#setup-obs-main').getByText('准备完成',{exact:true}).waitFor();
-  for (const name of ['启动并检查 OBS 2', '重新检查 OBS 2']) assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name, exact: true }).isVisible(), true);
+  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '重新检查 OBS 2', exact: true }).isVisible(), true);
+  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '启动并检查 OBS 2', exact: true }).count(), 0);
   assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),0);
   await page.locator('#setup-obs-main').getByRole('button',{name:'查看配置',exact:true}).click();
   assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),1);

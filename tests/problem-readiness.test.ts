@@ -2,11 +2,23 @@
 import { expect, it } from "vitest";
 import { makeProblem } from "@/shared/problems";
 import { blocksStart, problemPresentation } from "@/shared/problem-policy";
-import { startBlocker, canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
+import { broadcastActionMode, startBlocker, canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import { obsReadiness } from "@/shared/obs-readiness";
 import type { Dashboard } from "@/shared/types";
 const dashboard: Dashboard = { busy: false, state: { phase: "idle", stage: "等待", updatedAt: "" }, obs: { ready: true, running: true, streaming: false }, youtube: { connected: true }, media: { videos: ["video.mp4"], music: ["music.mp3"] }, configuration: { missing: [], privacy: "private", madeForKids: false } };
 const selection = { video: "video.mp4", music: "music.mp3", videoAudio: false };
+it("keeps running, unknown and confirmed failed broadcasts distinct", () => {
+  const pending: Dashboard = { ...dashboard, state: { ...dashboard.state, broadcastTitle: "本场", broadcastId: "example", phase: "starting" } };
+  expect(broadcastActionMode(dashboard, false, false, false)).toBe("start");
+  expect(broadcastActionMode(pending, true, false, false)).toBe("working");
+  expect(broadcastActionMode(pending, false, false, false)).toBe("check");
+  const failed: Dashboard = { ...pending, state: { ...pending.state, phase: "error" } };
+  expect(broadcastActionMode(failed, false, false, false)).toBe("retry");
+  expect(broadcastActionMode(failed, true, false, false)).toBe("working");
+  expect(broadcastActionMode(failed, false, true, false)).toBe("check");
+  expect(broadcastActionMode(failed, false, false, true)).toBe("live");
+  expect(broadcastActionMode({ ...failed, state: { ...failed.state, broadcastId: undefined, broadcastIntent: true } }, false, false, false)).toBe("check");
+});
 it("does not let technical advice or update failures disable live controls", () => {
   const technical = makeProblem("FIREWALL_UNCONFIRMED", "技术检查");
   expect(problemPresentation(technical)).toBe("technical");

@@ -25,12 +25,14 @@ const ai = await import(pathToFileURL(aiBundle).href);
 const aiStore = new ai.Store(path.join(root, 'ai'));
 if (process.env.LIVENEST_PREVIEW_REAL_AI !== '1') delete process.env.DEEPSEEK_API_KEY;
 let aiBusy = false;
-const origin = 'http://127.0.0.1:3022';
+const basePort = Number(process.env.LIVENEST_PREVIEW_PORT || 3020);
+if (!Number.isInteger(basePort) || basePort < 1024 || basePort > 65532) throw new Error('Invalid preview base port');
+const origin = `http://127.0.0.1:${basePort + 2}`;
 const env = { ...process.env };
 for (const name of Object.keys(env)) if (/^(LIVEPILOT_|GOOGLE_)/.test(name)) delete env[name];
 Object.assign(env, { LIVEPILOT_MODE: 'cloud', LIVEPILOT_ORIGIN: origin, LIVEPILOT_DATA_ROOT: root, LIVEPILOT_ENCRYPTION_KEY: randomBytes(32).toString('hex'), NEXT_TELEMETRY_DISABLED: '1' });
 const log = await open(path.join(root, 'web.log'), 'a');
-const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', '3022'], { cwd: repo, env, windowsHide: true, stdio: ['ignore', log.fd, log.fd] });
+const child = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', String(basePort + 2)], { cwd: repo, env, windowsHide: true, stdio: ['ignore', log.fd, log.fd] });
 await log.close();
 const servers = [];
 let timer;
@@ -118,23 +120,24 @@ async function proxy(port, username) {
 /** 静态桌面页面仅注入此预览专用桥；路径约束阻止访问仓库与真实数据。 */
 async function staticPreview(request, response) {
   try {
-    const url = new URL(request.url, 'http://127.0.0.1:3020');
+    const url = new URL(request.url, `http://127.0.0.1:${basePort}`);
     if (request.method !== 'GET') return json(response, 405, { error: 'Read-only preview assets' });
     let file;
     if (url.pathname === '/') file = path.join(directory, 'index.html');
     else if (url.pathname === '/preview-bridge.js') file = path.join(directory, 'desktop-bridge.js');
     else { const output = path.join(repo, 'desktop/out'); file = path.resolve(output, url.pathname === '/desktop' ? 'index.html' : '.' + decodeURIComponent(url.pathname)); if (!file.startsWith(output + path.sep)) return json(response, 403, { error: 'Invalid preview asset' }); }
     let data = await readFile(file);
+    if (url.pathname === '/' || url.pathname === '/preview-bridge.js') data = Buffer.from(data.toString().replace(/127\.0\.0\.1:302([0-3])/g, (_, offset) => `127.0.0.1:${basePort + Number(offset)}`));
     if (url.pathname === '/desktop') data = Buffer.from(data.toString().replace('<head>', '<head><title>LiveNest App · 本地预览</title><script src="/preview-bridge.js"></script>'));
     const mime = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
     response.writeHead(200, { 'Content-Type': (mime[path.extname(file)] || 'application/octet-stream') + '; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(data);
   } catch { json(response, 404, { error: 'Preview asset not found' }); }
 }
 try {
-  await ready(); await proxy(3021, 'Liang'); await proxy(3023, 'ULiang');
-  const server = createServer(staticPreview); servers.push(server); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(3020, '127.0.0.1', resolve); });
+  await ready(); await proxy(basePort + 1, 'Liang'); await proxy(basePort + 3, 'ULiang');
+  const server = createServer(staticPreview); servers.push(server); await new Promise((resolve, reject) => { server.once('error', reject); server.listen(basePort, '127.0.0.1', resolve); });
   let refreshing = false;
   timer = setInterval(async () => { if (refreshing) return; refreshing = true; try { await refresh(root); } catch (error) { console.error(error.message); } finally { refreshing = false; } }, 3000);
-  await writeFile('.data/preview/current.json', JSON.stringify({ pid: process.pid, child: child.pid, root, url: 'http://127.0.0.1:3020' }));
-  console.log('Local preview ready: http://127.0.0.1:3020');
+  await writeFile('.data/preview/current.json', JSON.stringify({ pid: process.pid, child: child.pid, root, url: `http://127.0.0.1:${basePort}` }));
+  console.log(`Local preview ready: http://127.0.0.1:${basePort}`);
 } catch (error) { console.error(error.message); stop(); process.exitCode = 1; }

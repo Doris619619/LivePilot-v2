@@ -250,7 +250,7 @@ export class LiveChatRunner {
       await this.pause(100);
     }
   }
-  /** 发送前重读场次并检查取消代数；落盘 sending 后才调用不可回滚的外部发送。 */
+  /** 发送前重读场次并检查取消代数；只验证非空及长度，不强制 AI 标签。落盘 sending 后才发送。 */
   private async deliverOne(message: LiveChatMessage) {
     const epoch = this.epoch; const abort = new AbortController(); this.actionAbort = abort; let attempted = false;
     try {
@@ -261,7 +261,7 @@ export class LiveChatRunner {
       const identity = JSON.stringify([target.channelId, target.broadcastId, target.liveChatId || ""]);
       if (!target.live || target.available === false || identity !== this.checkpoint.target || message.publishedAt < this.now() - MAX_AGE_MS) { this.cancel(); await this.mutate(() => this.clearQueue("场次已结束或消息已过期，已跳过待回复。")); return; }
       const reply = content.trim();
-      if (!reply || reply.length > 200 || !reply.startsWith("[AI]")) throw new AppError("AI_OUTPUT", errorMessages.AI_OUTPUT);
+      if (!reply || reply.length > 200) throw new AppError("AI_OUTPUT", errorMessages.AI_OUTPUT);
       await this.mutate(() => {
         if (epoch !== this.epoch || !this.checkpoint.config.enabled || !this.checkpoint.queue.some(item => item.id === message.id)) return;
         this.checkpoint.sending = { message, reply, at: this.now() }; this.checkpoint.lastAttemptAt = this.now();

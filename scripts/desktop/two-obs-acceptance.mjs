@@ -47,8 +47,9 @@ try {
   // 关闭且重启本测试的第一个 OBS，第二个实例保持运行并验证 PID 未变化。
   closeTestObs(ready.instances[0]);
   assert.equal(testObsPid(ready.instances[0]), null);
+  await page.getByRole('button', { name: '重新检查 ' + ready.instances[0].name, exact: true }).click();
   await page.getByRole('button', { name: '启动并检查 ' + ready.instances[0].name, exact: true }).click();
-  await page.waitForFunction(id => { const target = document.querySelector('[data-instance-id="' + id + '"]'); return target?.textContent.includes('已启动并确认控制连接'); }, ready.instances[0].id, { timeout: 120000 });
+  await page.waitForFunction(id => document.querySelector('[data-instance-id="' + id + '"]')?.getAttribute('data-startup-state') === 'ready', ready.instances[0].id, { timeout: 120000 });
   const restartedPid = testObsPid(ready.instances[0]); assert.ok(restartedPid); assert.equal(testObsPid(ready.instances[1]), otherPid);
   const repeat = await page.evaluate(id => window.liveNest.act('launch-obs', { id }), ready.instances[0].id);
   assert.equal(repeat.ok, true); assert.equal(repeat.state.instances.length, 2); assert.equal(testObsPid(ready.instances[0]), restartedPid);

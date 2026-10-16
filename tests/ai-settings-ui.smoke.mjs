@@ -101,9 +101,11 @@ try {
   await expect(records).toHaveAttribute("aria-expanded", "true"); await records.press("Space"); await expect(records).toHaveAttribute("aria-expanded", "false");
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toHaveCount(0);
   broadcastMode = "live"; await page.reload();
+  await first.getByRole("button", { name: "查看运行状态", exact: true }).click();
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
   await expect(first.getByRole("button", { name: "开始直播", exact: true })).toHaveCount(0);
   broadcastMode = "pending"; await page.reload();
+  await first.getByRole("button", { name: "查看运行状态", exact: true }).click();
   await expect(first.getByRole("button", { name: "结束直播", exact: true })).toBeVisible();
   await expect(first.getByRole("button", { name: "重试开播", exact: true })).toBeVisible();
   broadcastMode = "idle"; missingChat = true; await page.reload();
