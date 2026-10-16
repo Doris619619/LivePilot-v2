@@ -1,14 +1,13 @@
-/** OBS 慢启动界面回归：真实静态页面配合模拟桥接，验证轮询期间无误报及最终失败可见。 */
+/** 合成桌面验收：阶段、慢等待、失联、超时恢复及状态下方的操作位置；不连接真实设备。 */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-
 const root = path.resolve('desktop/out');
 const output = path.resolve('docs/desktop/screenshots/startup-feedback');
 await mkdir(output, { recursive: true });
-/** 仅提供隔离静态页面；所有设备和连接观测来自下方合成夹具。 */
+/** 隔离静态服务只使用随机本机端口。 */
 const server = createServer(async (req, res) => {
   try {
     const file = path.resolve(root, '.' + new URL(req.url, 'http://localhost').pathname.replace(/\/$/, '/index.html'));
@@ -20,37 +19,36 @@ const server = createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 try {
-  for (const width of [780, 1280]) {
-    const page = await browser.newPage({ viewport: { width, height: 900 } });
-    const errors = []; page.on('pageerror', error => errors.push(error.message));
+  for (const width of [390, 780, 1280]) {
+    const page = await browser.newPage({ viewport: { width, height: 1000 }, reducedMotion: 'reduce' });
+    const errors = []; page.on('pageerror', error => { errors.push(error.message); console.error('Synthetic UI error:', error.message); });
     await page.addInitScript(() => {
-      /** 模拟启动期间 OBS 进程已存在、控制接口尚未监听的 Agent 快照。 */
-      const problem = (code, id, message) => ({ version: 1, source: 'desktop', domain: 'obs', code, target: { instanceId: id }, severity: 'error', stage: '读取 OBS 状态', outcome: 'unknown', observedAt: Date.now(), actions: ['refresh', 'settings'], message });
-      const transient = problem('OBS_NOT_LISTENING', 'main', '模拟：启动中端口尚未就绪');
-      const state = { version: '0.1.14 · 模拟验收', busy: false, dataRoot: 'D:/模拟数据', paired: true, online: true, agentRunning: true, autoStart: false,
-        instances: ['main', 'second'].map((id, index) => ({ id, name: 'OBS ' + (index + 1), initialized: true, managed: true })),
-        checks: [{ id: 'network-main', instanceId: 'main', label: 'OBS 1', status: 'error', code: 'not-listening', checkedAt: Date.now() - 1000 }, { id: 'network-second', instanceId: 'second', label: 'OBS 2', status: 'error', code: 'port-conflict', message: '模拟：另一个 OBS 端口冲突', checkedAt: Date.now() }],
-        snapshots: [{ instance: { id: 'main' }, observedAt: Date.now(), dashboard: { obs: { ready: false, running: true, problem: transient }, youtube: {}, media: { videos: [], music: [] }, configuration: { missing: [] } } }], update: { status: 'idle' } };
-      const fixture = window.startupFixture = { state, reads: 0, finish: null };
+      const state = { version: '0.1.15 · 模拟验收', busy: false, dataRoot: 'D:/模拟数据', paired: true, online: true, agentRunning: true, autoStart: false,
+        instances: ['main', 'second'].map((id, index) => ({ id, name: 'OBS ' + (index + 1), initialized: true, managed: true })), obsLaunches: [],
+        checks: [{ id: 'network-main', instanceId: 'main', label: 'OBS 1', status: 'pending', code: 'not-running', checkedAt: Date.now() }, { id: 'network-second', instanceId: 'second', label: 'OBS 2', status: 'error', code: 'port-conflict', message: '模拟：另一个 OBS 端口冲突', checkedAt: Date.now() }], snapshots: [], update: { status: 'idle' } };
+      const f = window.startupFixture = { state, reads: 0, starts: 0, disconnected: false, finish: null };
+      /** 保存本轮宿主状态，后续读取和复查不会覆盖历史。 */
+      const remember = () => { state.obsLaunches = [state.activity]; };
+      f.stage = (phase, stale = false) => {
+        state.activity = { ...state.activity, startedAt: Date.now() - 35_000, obsStartup: { phase, deadlineAt: Date.now() + 25_000, probeCount: 5, lastProbeAt: Date.now() - (stale ? 25_000 : 1000), observation: 'OBS 已运行，控制服务尚未就绪，正在继续检查。' } }; remember();
+      };
+      f.observe = ready => { Object.assign(state.checks[0], { status: ready ? 'ready' : 'pending', controlReady: ready, code: ready ? undefined : 'not-running', checkedAt: Date.now() }); };
       window.liveNest = {
         session: async () => ({ authenticated: true, username: '模拟验收' }), updateState: async () => state,
-        readState: async () => { fixture.reads++; return { ok: true, state }; },
+        readState: async () => { f.reads++; if (f.disconnected) throw Error('synthetic IPC failure'); if (f.hung) return new Promise(() => {}); return { ok: true, state }; },
         act: async (action, input) => {
-          state.busy = true;
-          state.activity = { action, instanceId: input.id, step: 2, status: 'running', stage: '正在启动并等待控制连接（最多约 60 秒）', startedAt: Date.now() };
+          if (action === 'diagnose-obs') { f.observe(true); state.activity = { action, instanceId: input.id, status: 'complete', step: 2, stage: '复查完成', startedAt: Date.now(), endedAt: Date.now() }; return { ok: true, state }; }
+          if (action !== 'launch-obs') return { ok: true, state };
+          f.starts++; state.busy = true;
+          state.activity = { action, instanceId: input.id, attemptId: 'fixture-' + f.starts, step: 2, status: 'running', stage: '正在检查并启动 OBS', startedAt: Date.now(), obsStartup: { phase: 'process', deadlineAt: Date.now() + 60_000, probeCount: 0 } }; remember();
           return new Promise(resolve => {
-            /** 由测试显式结束操作，使轮询与切页发生在同一次等待过程中。 */
-            fixture.finish = success => {
+            /** 失败响应刻意不返回 state，检验下一次轮询和失败记录的合并。 */
+            f.finish = success => {
               state.busy = false;
-              if (success) {
-                state.activity = { ...state.activity, status: 'complete', stage: '已启动并确认控制连接；未执行开播操作' };
-                Object.assign(state.checks[0], { status: 'ready', controlReady: true, code: undefined, checkedAt: Date.now() });
-                // 保留比最终检查旧的失败快照，检验完成后不会重新闪现警告。
-                resolve({ ok: true, state });
-              } else {
-                const failure = problem('OBS_READY', input.id, '模拟：OBS 连接检查超时，请检查对应 OBS。');
-                state.activity = { ...state.activity, status: 'failed', problem: failure };
-                resolve({ ok: false, problem: failure });
+              if (success) { f.observe(true); state.activity = { ...state.activity, status: 'complete', endedAt: Date.now(), obsStartup: { ...state.activity.obsStartup, phase: 'ready' } }; remember(); resolve({ ok: true, state }); }
+              else {
+                const failure = { version: 1, source: 'desktop', domain: 'obs', code: 'OBS_READY', target: { instanceId: input.id }, severity: 'error', stage: '检查 OBS', outcome: 'unknown', observedAt: Date.now(), attemptId: state.activity.attemptId, actions: ['refresh', 'settings'], message: '模拟：本轮连接检查已超时，OBS 可能仍在运行。请重新检查。' };
+                state.activity = { ...state.activity, status: 'failed', endedAt: Date.now(), problem: failure }; remember(); resolve({ ok: false, problem: failure });
               }
             };
           });
@@ -58,46 +56,74 @@ try {
       };
     });
     await page.goto('http://127.0.0.1:' + server.address().port);
-    await page.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).waitFor();
-    // 连接问题在没有启动操作时应可见，不能靠永久隐藏错误通过回归。
-    await page.locator('#setup-obs-main [role="alert"]').waitFor();
-    await page.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
+    const controls = page.locator('.obs-instance-controls[data-instance-id="main"]');
+    await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
     await page.waitForFunction(() => window.startupFixture.finish !== null);
-    const reads = await page.evaluate(() => window.startupFixture.reads);
-    await page.waitForFunction(count => window.startupFixture.reads >= count + 2, reads);
-    assert.equal(await page.locator('#setup-obs-main [role="alert"]').count(), 0);
-    await page.getByText('正在启动并连接…', { exact: true }).waitFor();
-    await page.getByRole('button', { name: '本机 OBS', exact: true }).click();
-    const main = page.locator('.desktop-instance').filter({ has: page.getByRole('heading', { name: 'OBS 1', exact: true }) });
-    const second = page.locator('.desktop-instance').filter({ has: page.getByRole('heading', { name: 'OBS 2', exact: true }) });
-    assert.equal(await main.getByRole('alert').count(), 0);
-    assert.equal(await second.getByRole('alert').count(), 1);
-    assert.equal(await main.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).isDisabled(), true);
+    await controls.getByRole('status').filter({ hasText: /^正在检查并启动 OBS$/ }).waitFor();
+    assert.equal(await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).count(), 0);
+    await page.evaluate(() => window.startupFixture.stage('control'));
+    await controls.locator('[aria-current="step"]').filter({ hasText: '连接控制服务' }).waitFor();
+    await controls.getByText('连接等待较久，检查仍在继续。', { exact: false }).waitFor();
     await capture(page, 'waiting-' + width);
-    await page.evaluate(() => window.startupFixture.finish(true));
-    await main.getByText('控制已连接（上次检查）', { exact: true }).waitFor();
-    assert.equal(await main.getByRole('alert').count(), 0);
-    // 新一轮失败保留最终超时，而不是吞掉全部错误或继续显示“正在启动”。
-    await main.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
-    await main.getByText('正在启动并连接…', { exact: true }).waitFor();
+    await controls.getByRole('button', { name: '连接帮助', exact: true }).click();
+    await navigate(page, '本机 OBS');
+    await controls.locator('[aria-current="step"]').filter({ hasText: '连接控制服务' }).waitFor();
+    assert.equal(await page.evaluate(() => window.startupFixture.starts), 1);
+    await page.evaluate(() => window.startupFixture.stage('control', true));
+    await controls.getByText('检查结果暂未更新', { exact: true }).waitFor();
+    const reads = await page.evaluate(() => window.startupFixture.reads);
+    await controls.getByRole('button', { name: '重新读取状态', exact: true }).click();
+    await page.waitForFunction(n => window.startupFixture.reads > n, reads);
+    await capture(page, 'unknown-' + width);
+    await page.evaluate(() => { window.startupFixture.disconnected = true; window.startupFixture.stage('verify'); });
+    await page.getByText('客户端暂时无法读取本机状态', { exact: false }).first().waitFor();
+    await page.evaluate(() => { window.startupFixture.disconnected = false; window.startupFixture.stage('verify'); });
+    await controls.getByText('控制服务已回应，正在确认 OBS 状态', { exact: true }).waitFor();
+    if (width === 390) {
+      await page.evaluate(() => { window.startupFixture.hung = true; });
+      await page.getByText('客户端暂时无法读取本机状态', { exact: false }).first().waitFor();
+      await page.evaluate(() => { window.startupFixture.hung = false; window.startupFixture.stage('verify'); });
+      await controls.getByText('控制服务已回应，正在确认 OBS 状态', { exact: true }).waitFor();
+    }
     await page.evaluate(() => window.startupFixture.finish(false));
-    await main.getByRole('alert').locator(':scope > p').filter({ hasText: '模拟：OBS 连接检查超时，请检查对应 OBS。' }).waitFor();
-    assert.equal(await main.getByRole('alert').count(), 1);
-    await main.getByText('本次控制连接未确认', { exact: true }).waitFor();
-    assert.equal(await main.getByText('正在启动并等待控制连接（最多约 60 秒）', { exact: true }).count(), 0);
+    await controls.getByText('本轮连接检查已超时', { exact: true }).waitFor();
+    assert.equal(await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).count(), 0);
     await page.waitForFunction(() => !document.querySelector('[aria-label="重新检查 OBS 1"]').disabled);
     await capture(page, 'timeout-' + width);
-    assert.deepEqual(errors, []);
-    await page.close();
+    await page.evaluate(() => window.startupFixture.observe(true));
+    await controls.getByText('控制连接已恢复', { exact: true }).waitFor();
+    assert.equal(await controls.getByRole('alert').count(), 0);
+    await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).click();
+    await controls.getByText('上次连接检查超时；刚刚重新检测到控制已连接。', { exact: true }).waitFor();
+    assert.equal(await controls.locator('button.btn-primary').count(), 0);
+    await capture(page, 'recovered-' + width);
+    await page.evaluate(() => window.startupFixture.observe(false));
+    await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
+    await page.waitForFunction(() => window.startupFixture.starts === 2);
+    await page.evaluate(() => window.startupFixture.finish(true));
+    await controls.getByText('控制已连接', { exact: true }).waitFor();
+    await navigate(page, '设备配置');
+    await controls.getByText('控制已连接', { exact: true }).waitFor();
+    const title = await controls.getByText('控制已连接', { exact: true }).boundingBox();
+    const button = await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).boundingBox();
+    assert.ok(button.y > title.y && Math.abs(button.x - title.x) < 40, 'recheck is under the status, aligned left');
+    assert.equal(await controls.locator('button.btn-primary').count(), 0);
+    await capture(page, 'success-' + width);
+    assert.deepEqual(errors, []); await page.close();
   }
-  console.log('PASS: startup polling, cross-page progress, other-instance failure, stale snapshot after success, final timeout, 780/1280px');
+  console.log('PASS: 390/780/1280px stages, slow/stale/IPC, cross-page history, timeout/recovery, success actions and placement');
 } finally { await browser.close(); server.close(); }
-
-/** 截图标记合成验收，核对窄窗口溢出及可操作按钮尺寸。 */
+/** 小窗口通过同一导航抽屉切换页面，验证真实响应式入口。 */
+async function navigate(page, name) {
+  const menu = page.getByRole('button', { name: '导航', exact: true });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole('button', { name, exact: true }).click();
+}
+/** 截图保留模拟账号标识，验证无横向溢出以及可操作尺寸。 */
 async function capture(page, name) {
-  await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.main-wrapper')?.scrollTo(0, 0); });
-  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.evaluate(() => { if (!document.getElementById('fixture-note')) { const note = document.createElement('div'); note.id = 'fixture-note'; note.textContent = '合成界面验收 · 未连接真实 OBS'; note.style.cssText = 'padding:8px;background:#254131;color:white'; document.body.prepend(note); } });
+  await page.locator('.obs-instance-controls[data-instance-id="main"]').scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  for (const button of await page.getByRole('button', { name: /^启动并检查 OBS/ }).all()) assert.ok((await button.boundingBox()).height >= 44);
+  for (const button of await page.locator('.obs-instance-controls button:visible').all()) assert.ok((await button.boundingBox()).height >= 44);
   await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled' });
 }

@@ -288,7 +288,7 @@ body { background: var(--bg-app); font-size: 16px; }
   .obs-step-status { grid-column: 2; }
   .obs-step-action { grid-column: 1 / -1; justify-content: flex-start; }
   .obs-detail .obs-control-step .setup-title { grid-template-columns: minmax(0, 1fr) 112px; }
-  .obs-connection-step .connection-heading { grid-template-columns: auto minmax(0, 1fr) 112px; }
+  .obs-connection-step .connection-heading { display: flex; }
   .advanced-settings-meta { grid-template-columns: 1fr; }
   .advanced-settings-body { padding: 14px; }
 }
@@ -307,6 +307,9 @@ body { background: var(--bg-app); font-size: 16px; }
   .obs-connection-step .connection-heading > .setup-state { position: static; grid-column: auto; margin-top: 3px; transform: none; }
 }
 
+/* OBS 控制动作属于状态内容，取消为右侧完成徽章预留的空列。 */
+.obs-detail .obs-control-step { display: block; padding-right: 0; }
+.obs-control-content { width: 100%; }
 /* 更新是登录的次要任务，统一提示、进度和操作的层级。 */
 .update-notice { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 16px; background: var(--bg-subtle, #f5f7fb); border: 1px solid var(--border-subtle); border-radius: 10px; }
 .update-notice-heading { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }

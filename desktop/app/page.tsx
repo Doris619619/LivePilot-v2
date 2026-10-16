@@ -15,6 +15,7 @@ import ObsPicker from "./obs-picker";
 import ObsSetupList from "./obs-setup-list";
 import ComputerConnection from "./computer-connection";
 import ObsInstanceControls from "./obs-instance-controls";
+import { obsLaunchFor } from "./obs-startup-state";
 import { obsInstanceProblems } from "./obs-instance-problems";
 import ManualConnection from "./manual-connection";
 import { UpdateProvider, useLocalUpdates } from "./local-updates";
@@ -31,13 +32,16 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   const [selectedObs, setSelectedObs] = useState<string>();
   const [error, setError] = useState(""); const [pending, setPending] = useState(false); const [invitation, setInvitation] = useState("");
 
-  const reading = useRef(false); const mounted = useRef(false); const revision = useRef(0); const seenAgent = useRef<string | undefined>(undefined);
+  const acting = useRef(false); const reading = useRef(false); const mounted = useRef(false); const revision = useRef(0); const seenAgent = useRef<string | undefined>(undefined);
   /** 只读重试不执行电脑诊断；迟到的旧快照不能覆盖新的操作结果。 */
   const load = useCallback(async () => {
     if (reading.current) return; reading.current = true; const started = revision.current;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       if (!window.liveNest) throw new Error();
-      const result = window.liveNest.readState ? await window.liveNest.readState() : { ok: true as const, state: await window.liveNest.state() };
+      const request = window.liveNest.readState ? window.liveNest.readState() : window.liveNest.state().then(state => ({ ok: true as const, state }));
+      // IPC 未返回也释放读取入口；迟到的旧请求不能覆盖后续刷新。
+      const result = await Promise.race([request, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("State read timed out")), 10_000); })]);
       if (!mounted.current || started !== revision.current) return;
       if (result.ok) {
         if (seenAgent.current && !result.state.paired) { setError(""); setProblem(undefined); setFailedActivity(undefined);  }
@@ -45,7 +49,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
       }
       else { setReadError(result.problem); if (["AUTH", "FORBIDDEN", "PAIR_IDENTITY"].includes(result.problem.code)) setState(undefined); }
     } catch { if (mounted.current && started === revision.current) setReadError(makeProblem("DESKTOP_IPC", "客户端暂时无法读取本机状态，请重新读取；当前无法确认设备连接状态。", { source: "desktop", stage: "读取本机状态", outcome: "rejected" })); }
-    finally { reading.current = false; }
+    finally { clearTimeout(timeout); reading.current = false; }
   }, []);
   useEffect(() => {
     mounted.current = true; const initial = setTimeout(() => void load(), 0);
@@ -55,11 +59,11 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   /** 写操作去重，失败保留表单，成功后采用宿主最新快照。 */
   async function act(action: DesktopAction, input?: Record<string, unknown>) {
     if (["update-check", "update-download", "update-install", "update-apply"].includes(action)) return localUpdates.act(action);
-    if (pending) return false; revision.current++; setProblem(undefined); setFailedActivity(undefined); setPending(true);   setError("");
-    if (action !== "web") setState(previous => previous && ({ ...previous, activity: { instanceId: typeof input?.id === "string" ? input.id : undefined, action, step: activityStep(action), status: "running", stage: "正在检查操作条件", startedAt: now } }));
-    try { if (!window.liveNest) throw new Error("桌面连接不可用。"); const result=await window.liveNest.act(action,input); if(!result.ok){const message=result.problem.message+(result.fields?" · "+Object.entries(result.fields).map(([key,value])=>({port:"端口",password:"密码",name:"名称"}[key]||key)+"："+value).join("；"):"");const failure={...result.problem,message};setFailedActivity({action,instanceId:failure.target.instanceId || (typeof input?.id==="string"?input.id:undefined),step:activityStep(action),status:"failed",stage:failure.stage,attemptId:failure.attemptId,startedAt:failure.observedAt,problem:failure,message});setProblem(failure);setError(message);const field=Object.keys(result.fields||{})[0];if(field)document.querySelector<HTMLInputElement>('[name="'+CSS.escape(field)+'"]')?.focus();return false;} setState(result.state);setReadError(undefined);setLastRead(Date.now());if(!result.cancelled && action==="pair")setInvitation("");return !result.cancelled; }
-    catch { const failure=makeProblem("DESKTOP_IPC","本机操作结果未确认，请先重新读取原对象状态。",{target:{instanceId:typeof input?.id==="string"?input.id:undefined}});setProblem(failure);setError(failure.message);setFailedActivity({action,instanceId:failure.target.instanceId,step:activityStep(action),status:"failed",stage:failure.stage,startedAt:failure.observedAt,problem:failure,message:failure.message});return false; }
-    finally { revision.current++; setPending(false);  }
+    if (acting.current) return false; acting.current = true; const startedAt = Date.now(); revision.current++; setProblem(undefined); setFailedActivity(undefined); setPending(true);   setError("");
+    if (action !== "web") setState(previous => previous && ({ ...previous, activity: { instanceId: typeof input?.id === "string" ? input.id : undefined, action, step: activityStep(action), status: "running", stage: "正在检查操作条件", startedAt } }));
+    try { if (!window.liveNest) throw new Error("桌面连接不可用。"); const result=await window.liveNest.act(action,input); if(!result.ok){const message=result.problem.message+(result.fields?" · "+Object.entries(result.fields).map(([key,value])=>({port:"端口",password:"密码",name:"名称"}[key]||key)+"："+value).join("；"):"");const failure={...result.problem,message};setFailedActivity({action,instanceId:failure.target.instanceId || (typeof input?.id==="string"?input.id:undefined),step:activityStep(action),status:"failed",stage:failure.stage,attemptId:failure.attemptId,startedAt,endedAt:failure.observedAt,problem:failure,message});setProblem(failure);setError(message);const field=Object.keys(result.fields||{})[0];if(field)document.querySelector<HTMLInputElement>('[name="'+CSS.escape(field)+'"]')?.focus();return false;} setState(result.state);setReadError(undefined);setLastRead(Date.now());if(!result.cancelled && action==="pair")setInvitation("");return !result.cancelled; }
+    catch { const failure=makeProblem("DESKTOP_IPC","本机操作结果未确认，请先重新读取原对象状态。",{target:{instanceId:typeof input?.id==="string"?input.id:undefined}});setProblem(failure);setError(failure.message);setFailedActivity({action,instanceId:failure.target.instanceId,step:activityStep(action),status:"failed",stage:failure.stage,startedAt,endedAt:failure.observedAt,problem:failure,message:failure.message});return false; }
+    finally { acting.current = false; revision.current++; setPending(false);  }
   }
   const reportedActivity: DesktopActivity | undefined = failedActivity || state?.activity;
   // 自动重连的真实心跳可以结算连接失败；仍有维护待恢复时不能隐藏错误。
@@ -75,7 +79,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   const feedback = !activity || activity.action === "launch-obs" ? null : activity.status === "failed" ? <ProblemCard problem={activity.problem || problem || makeProblem("DESKTOP",activity.message || "此步骤未完成",{target:{instanceId:activity.instanceId},stage:activity.stage,attemptId:activity.attemptId})} objectName={instances.concat(candidates).find(i=>i.id===activity.instanceId)?.name} disabled={!!busy} onRefresh={()=>void act(activity.instanceId ? "diagnose-obs" : "check",activity.instanceId ? {id:activity.instanceId} : undefined)} onHelp={()=>{setHelpTopic(activity.step===2?"obs":"recovery");setPage("帮助");}} /> : <SetupFeedback activity={activity} now={now} disabled={!!busy} help={()=>setPage("帮助")} />;
   /** 两处页面复用同一指定实例启动入口，失败和阶段保留在原目标旁。 */
   function controls(instance: DesktopState["instances"][number]) {
-    return <ObsInstanceControls instance={instance} check={state?.checks.find(c=>c.id==="network-"+instance.id)} snapshot={fresh.find(s=>s.instance.id===instance.id)} activity={activity} disabled={!!busy} act={act} help={()=>{setHelpTopic("obs");setPage("帮助");}} />;
+    return <ObsInstanceControls instance={instance} check={state?.checks.find(c=>c.id==="network-"+instance.id)} snapshot={fresh.find(s=>s.instance.id===instance.id)} activity={obsLaunchFor(instance.id, activity, state?.obsLaunches)} now={now} readFresh={!readError && now-lastRead<20_000} refresh={()=>void load()} disabled={!!busy} act={act} help={()=>{setHelpTopic("obs");setPage("帮助");}} />;
   }
   /** 跨页返回原实例配置，键盘焦点和滚动位置保持明确。 */
   function openConfiguration(id?: string) {
@@ -84,7 +88,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   }
   /** 两个页面采用同一连接证据，启动中保留进度，结束后再显示最新故障。 */
   function instanceChecks(id: string) {
-    return obsInstanceProblems(id, state?.checks || [], fresh.find(s=>s.instance.id===id), activity, now).map((item,index)=><ProblemCard key={item.code+index} problem={item} objectName={instances.find(i=>i.id===id)?.name} disabled={!!busy} onRefresh={()=>void act("diagnose-obs",{id})} onSettings={()=>{setHelpTopic("obs");setPage("帮助");}} />);
+    return obsInstanceProblems(id, state?.checks || [], fresh.find(s=>s.instance.id===id), obsLaunchFor(id, activity, state?.obsLaunches), now).map((item,index)=><ProblemCard key={item.code+index} problem={item} objectName={instances.find(i=>i.id===id)?.name} disabled={!!busy} onRefresh={()=>void act("diagnose-obs",{id})} onSettings={()=>{setHelpTopic("obs");setPage("帮助");}} />);
   }
   /** 配置入口集中在设备配置；日常启动页只提供返回该实例的链接。 */
   function instanceSettings(i: DesktopState["instances"][number]) {

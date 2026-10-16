@@ -36,8 +36,9 @@ export function listenerPid(output: string, port: number): number | null {
 export class ObsProcessManager {
   /** 注入所属实例的配置，所有检查和启动只针对该 exe。 */
   constructor(private readConfig = config) {}
-  /** 进程使用内核文件身份；端口使用 netstat，避免逻辑路径别名误认领。 */
-  async inspect(): Promise<ProcessStatus> {
+  /** 进程使用内核文件身份；可取消本轮只读系统查询，不结束 OBS。 */
+  async inspect(signal?: AbortSignal): Promise<ProcessStatus> {
+    signal?.throwIfAborted();
     const c = this.readConfig();
     if (process.platform !== "win32") throw new AppError("OBS_PROCESS", "OBS 启动器仅支持 Windows。");
     if (!c.obsExe || !path.isAbsolute(c.obsExe) || path.basename(c.obsExe).toLowerCase() !== "obs64.exe") throw new AppError("CONFIG", "请配置 Portable OBS 的绝对 obs64.exe 路径。");
@@ -47,20 +48,22 @@ export class ObsProcessManager {
     let processOutput: string; let networkOutput: string;
     try {
       const [processResult, networkResult] = await Promise.all([
-        exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", obsProcessQuery], { windowsHide: true, timeout: 15_000, env: { ...process.env, LIVEPILOT_TARGET_EXE: exe } }),
-        exec("netstat.exe", ["-ano"], { windowsHide: true, timeout: 10_000, maxBuffer: 4 * 1024 * 1024 }),
+        exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", obsProcessQuery], { windowsHide: true, timeout: 15_000, signal, env: { ...process.env, LIVEPILOT_TARGET_EXE: exe } }),
+        exec("netstat.exe", ["-ano"], { windowsHide: true, timeout: 10_000, signal, maxBuffer: 4 * 1024 * 1024 }),
       ]);
       processOutput = processResult.stdout; networkOutput = networkResult.stdout;
     } catch (error) {
+      signal?.throwIfAborted();
       if ((error as { killed?: boolean }).killed) throw new AppError("OBS_INSPECT_TIMEOUT", "Windows 进程或端口查询超时，尚未执行 OBS 启动。请稍后重试并检查系统负载。");
       throw new AppError("OBS_PROCESS", "无法检查指定 OBS。请确认只有一个该实例，并允许读取进程与端口信息。");
     }
     const pid = matchingObsPid(processOutput.trim());
     return { pid, portPid: listenerPid(networkOutput, c.wsPort) };
   }
-  /** 已运行则复用，端口属于其他进程时拒绝启动；启动程序与开始推流是不同操作。 */
-  async ensureRunning() {
-    const current = await this.inspect();
+  /** 已运行则复用；取消后的迟到检查不能再启动进程，已启动的 OBS 不随检查取消而关闭。 */
+  async ensureRunning(signal?: AbortSignal) {
+    const current = await this.inspect(signal);
+    signal?.throwIfAborted();
     if (current.portPid && current.portPid !== current.pid) throw new AppError("OBS_PORT", "WebSocket 端口被其他进程占用。请为这个 Portable OBS 配置独立端口。");
     if (current.pid) return;
     const c = this.readConfig();
