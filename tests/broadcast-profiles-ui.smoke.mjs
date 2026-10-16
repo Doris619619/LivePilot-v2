@@ -1,122 +1,122 @@
-/** 本地预览浏览器验收：配置 CRUD 使用真实隔离服务端持久化，其余业务为预览合成设备，不开播或授权。 */
+/** 三步开播验收：真实隔离配置 API、合成素材与拦截的开播请求，不执行真实直播。 */
 import { chromium } from "playwright";
 import { expect } from "playwright/test";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-
 const origin = process.env.LIVEPILOT_UI_ORIGIN || "http://127.0.0.1:3021";
 const output = path.resolve("docs/screenshots/live-profiles"); await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ channel: "msedge" });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-const page = await context.newPage(), errors = [], writes = [];
+const page = await context.newPage(), errors = [], starts = [];
 let failSave = false;
-page.on("pageerror", error => errors.push(error.message));
+const stamp = Date.now();
+page.on("pageerror", e => errors.push(e.message));
 await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-await context.route("**/api/broadcast-profiles", route => {
-  if (route.request().method() !== "POST") return route.continue();
-  writes.push(route.request().postDataJSON());
-  if (failSave) return route.fulfill({ status: 503, json: { error: "模拟保存失败，当前草稿已保留。" } });
-  return route.continue();
-});
-/** 所有测试配置均从 UI 创建；保存使用独立预览目录的真实 API。 */
-async function saveAs(panel, name) {
-  await panel.getByRole("button", { name: "另存为", exact: true }).click();
-  await panel.getByLabel("配置名称", { exact: true }).fill(name);
-  await panel.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(panel.getByRole("status")).toHaveText(`已保存「${name}」`);
+await context.route("**/api/control", route => { starts.push(route.request().postDataJSON()); return route.fulfill({ status: 409, json: { error: "验收已截获开播请求，未执行直播。" } }); });
+await context.route("**/api/broadcast-profiles", route => failSave && route.request().method() === "POST" ? route.fulfill({ status: 503, json: { error: "模拟保存失败" } }) : route.continue());
+/** 新建配置包通过设置表单保存，测试失败保持输入。 */
+async function saveAs(dialog, name) {
+  await dialog.getByRole("button", { name: "另存为", exact: true }).click();
+  await dialog.getByLabel("配置名称", { exact: true }).fill(name);
+  await dialog.getByRole("button", { name: "保存配置", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText(`已保存「${name}」`);
+}
+/** 捕获当前步骤；先回到页面顶部避免固定页头出现在全页截图中部。 */
+async function capture(name) {
+  await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo({ top: 0, behavior: "instant" }); });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.screenshot({ path: path.join(output, name), fullPage: true });
 }
 try {
   await page.goto(origin + "/workspace");
   const first = page.locator("#instance-preview_liang-main");
-  const toolbar = first.getByRole("region", { name: "直播配置", exact: true });
-  const picker = toolbar.getByLabel("直播配置", { exact: true });
-  const title = first.locator('[id^="broadcast-title-"]');
-  await expect(toolbar.getByRole("button", { name: "另存为", exact: true })).toBeEnabled();
-  await title.fill("Night Lofi | Study and Rest");
-  await first.getByRole("tab", { name: "直播选项", exact: true }).click();
-  await first.getByLabel("公开范围", { exact: true }).selectOption("private");
-  await saveAs(toolbar, "夜间 Lofi");
-  const nightId = await picker.inputValue();
-  await first.getByRole("tab", { name: "直播内容", exact: true }).click();
-  await title.fill("Morning Piano | A Quiet Start");
-  await first.getByRole("tab", { name: "直播选项", exact: true }).click();
-  await first.getByLabel("公开范围", { exact: true }).selectOption("unlisted");
-  await saveAs(toolbar, "晨间钢琴");
-  const morningId = await picker.inputValue();
-  await picker.selectOption(nightId);
-  await expect(toolbar.getByRole("button", { name: "使用配置", exact: true })).toBeVisible();
-  await expect(first.getByLabel("公开范围", { exact: true })).toHaveValue("unlisted");
-  await toolbar.getByRole("button", { name: "保留当前草稿", exact: true }).click();
-  await expect(picker).toHaveValue(morningId);
-  await picker.selectOption(nightId); await toolbar.getByRole("button", { name: "使用配置", exact: true }).click();
-  await expect(first.getByLabel("公开范围", { exact: true })).toHaveValue("private");
-  await toolbar.getByRole("button", { name: "撤销切换", exact: true }).click();
-  await expect(first.getByLabel("公开范围", { exact: true })).toHaveValue("unlisted");
-  await picker.selectOption(nightId); await toolbar.getByRole("button", { name: "使用配置", exact: true }).click();
-  await first.getByRole("tab", { name: "直播内容", exact: true }).click();
-  await title.fill("Late Night Lofi | Study and Rest");
-  failSave = true; await toolbar.getByRole("button", { name: "保存修改", exact: true }).click();
-  await expect(toolbar.getByRole("alert")).toContainText("模拟保存失败");
-  await expect(title).toHaveValue("Late Night Lofi | Study and Rest");
-  failSave = false; await toolbar.getByRole("button", { name: "保存修改", exact: true }).click();
-  await expect(toolbar.getByRole("status")).toHaveText("已保存「夜间 Lofi」");
-  await toolbar.getByLabel("管理直播配置", { exact: true }).click();
-  await toolbar.getByRole("button", { name: "重命名", exact: true }).click();
-  await toolbar.getByLabel("配置名称", { exact: true }).fill("夜间学习");
-  await toolbar.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(toolbar.getByRole("status")).toHaveText("已保存「夜间学习」");
-  await page.reload(); await expect(title).toHaveValue("Late Night Lofi | Study and Rest"); await expect(picker).toHaveValue(nightId);
-
-  // 新浏览器上下文没有原 sessionStorage，仍可从服务端选择已保存配置。
-  const other = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  const fresh = await other.newPage(); await fresh.goto(origin + "/workspace");
-  const freshPanel = fresh.locator("#instance-preview_liang-main");
-  const freshBar = freshPanel.getByRole("region", { name: "直播配置", exact: true });
-  await expect(freshBar.getByLabel("直播配置", { exact: true })).toBeEnabled();
-  await freshBar.getByLabel("直播配置", { exact: true }).selectOption(nightId); await freshBar.getByRole("button", { name: "使用配置", exact: true }).click();
-  await expect(freshPanel.locator('[id^="broadcast-title-"]')).toHaveValue("Late Night Lofi | Study and Rest");
-  await other.close();
-
-  // 第二标签页修订冲突不能覆盖，刷新列表后仍保留当前输入。
-  const query = new URLSearchParams({ agentId: "preview_liang", instanceId: "main", channelId: "demo_preview_liang_main" });
-  const saved = await (await context.request.get(origin + "/api/broadcast-profiles?" + query)).json();
-  const night = saved.profiles.find(profile => profile.id === nightId);
-  await context.request.post(origin + "/api/broadcast-profiles", { headers: { origin, "x-livepilot": "1" }, data: { action: "save", target: Object.fromEntries(query), id: night.id, revision: night.revision, name: night.name, selection: { ...night.selection, broadcast: { ...night.selection.broadcast, title: "Concurrent edit" } } } });
-  await title.fill("My preserved draft"); await toolbar.getByRole("button", { name: "保存修改", exact: true }).click();
-  await expect(toolbar.getByRole("alert")).toContainText("其他页面更新"); await expect(title).toHaveValue("My preserved draft");
-  await toolbar.getByRole("button", { name: "重新读取配置", exact: true }).click();
-  await expect(toolbar.getByRole("status")).toContainText("草稿已保留");
-  await title.fill("Late Night Lofi | Study and Rest"); await toolbar.getByRole("button", { name: "保存修改", exact: true }).click();
-  await expect(toolbar.getByRole("status")).toHaveText("已保存「夜间学习」");
-
-  // 临时配置删除后草稿保留；正式演示的两套配置留给本机预览。
-  await saveAs(toolbar, "待删除配置"); await toolbar.getByLabel("管理直播配置", { exact: true }).click();
-  await toolbar.getByRole("button", { name: "删除配置", exact: true }).click();
-  await toolbar.getByRole("button", { name: "确认删除", exact: true }).click();
-  await expect(toolbar.getByRole("status")).toContainText("当前草稿已保留"); await expect(title).toHaveValue("Late Night Lofi | Study and Rest");
-  await picker.selectOption(nightId);
-  await expect(picker).toHaveValue(nightId); // 内容相同，仅恢复选中标签。
-  await page.getByRole("navigation", { name: "工作空间", exact: true }).getByRole("link", { name: "视频发布", exact: true }).click();
-  await page.getByRole("button", { name: "视频发布配置", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "视频发布配置", exact: true })).toBeVisible();
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
-  await page.screenshot({ path: path.join(output, "video-profile-names.png"), fullPage: true });
-  await page.getByRole("navigation", { name: "工作空间", exact: true }).getByRole("link", { name: "直播工作台", exact: true }).click();
-  await expect(title).toHaveValue("Late Night Lofi | Study and Rest");
-  await expect(first.getByRole("tab", { name: "直播选项", exact: true })).toBeVisible();
+  await expect(first.getByRole("tab", { name: "素材选择", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(first.locator("video")).toHaveCount(0);
+  const video = first.locator('#video-preview_liang-main-primary');
+  const music = first.locator('#music-preview_liang-main-primary');
+  await expect(video).toBeEnabled(); await video.selectOption({ index: 1 }); await music.selectOption({ index: 1 });
+  const selectedVideo = await video.inputValue(), selectedMusic = await music.inputValue();
+  await capture("step-1-desktop.png");
+  await first.getByRole("button", { name: "下一步：完善内容", exact: true }).click();
+  await expect(first.locator("video")).toHaveCount(0);
+  const title = first.locator('#broadcast-title-preview_liang-main');
+  const description = first.locator('#broadcast-description-preview_liang-main');
+  await title.fill("Rainy Night · Live Session"); await description.fill("音乐与夜色，陪你安静地完成今天的工作。");
+  await first.locator('#broadcast-thumbnail-preview_liang-main-primary').setInputFiles({ name: "cover.png", mimeType: "image/png", buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", "base64") });
+  await expect(first.getByRole("button", { name: "移除封面", exact: true })).toBeEnabled();
+  const complete = first.locator(".workflow-complete"); await expect(complete).not.toHaveAttribute("open", "");
+  await complete.locator("summary").click();
+  const fullTitle = first.locator('#broadcast-title-preview_liang-main-complete');
+  await expect(fullTitle).toHaveValue("Rainy Night · Live Session");
+  await fullTitle.fill("Night Radio · Lofi for Focus"); await expect(title).toHaveValue("Night Radio · Lofi for Focus");
+  await first.locator('#broadcast-description-preview_liang-main-complete').fill("Edited in complete configuration"); await expect(description).toHaveValue("Edited in complete configuration");
+  await expect(first.locator('#video-preview_liang-main-complete')).toHaveValue(selectedVideo);
+  await first.locator('#privacy-preview_liang-main-complete').selectOption("private");
+  await first.locator('#audience-preview_liang-main-complete').selectOption("true");
+  await complete.getByLabel("保留视频原声").check();
+  await first.getByRole("button", { name: "选择播放列表", exact: true }).click(); await first.getByLabel("学习与专注", { exact: true }).check();
+  await complete.locator("summary").click();
+  await first.getByRole("button", { name: "管理配置包", exact: true }).click();
+  let dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await expect(dialog.getByLabel("公开范围", { exact: true })).toBeVisible();
+  await dialog.getByLabel("公开范围", { exact: true }).selectOption("private");
+  await dialog.getByLabel("保留视频原声").check();
+  const privateName = `私密测试 ${stamp}`, publicName = `公开音乐 ${stamp}`;
+  await saveAs(dialog, privateName);
+  await dialog.getByLabel("公开范围", { exact: true }).selectOption("public"); await dialog.getByLabel("保留视频原声").uncheck();
+  failSave = true;
+  await dialog.getByRole("button", { name: "另存为", exact: true }).click(); await dialog.getByLabel("配置名称", { exact: true }).fill(publicName);
+  await dialog.getByRole("button", { name: "保存配置", exact: true }).click(); await expect(dialog.getByRole("alert")).toContainText("模拟保存失败"); await expect(dialog.getByLabel("配置名称", { exact: true })).toHaveValue(publicName);
+  failSave = false; await dialog.getByRole("button", { name: "保存配置", exact: true }).click(); await expect(dialog.getByRole("status")).toHaveText(`已保存「${publicName}」`);
+  await page.screenshot({ path: path.join(output, "profile-settings-desktop.png") });
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  const picker = first.getByRole("combobox", { name: "直播配置包", exact: true });
+  await expect(picker.locator('option').filter({ hasText: privateName })).toHaveCount(1);
+  await picker.selectOption({ label: privateName }); await first.getByRole("button", { name: "使用配置", exact: true }).click();
+  await expect(title).toHaveValue("Night Radio · Lofi for Focus");
+  await picker.selectOption({ label: publicName }); await first.getByRole("button", { name: "保留当前草稿", exact: true }).click();
+  await picker.selectOption({ label: publicName }); await first.getByRole("button", { name: "使用配置", exact: true }).click();
+  await title.fill("Final title after package selection");
+  await first.getByRole("button", { name: "撤销切换", exact: true }).click(); await expect(title).toHaveValue("Final title after package selection");
+  await complete.locator("summary").click();
+  await expect(first.locator('#privacy-preview_liang-main-complete')).toHaveValue("private");
+  await expect(complete.getByLabel("保留视频原声")).toBeChecked();
+  await expect(first.locator('#video-preview_liang-main-complete')).toHaveValue(selectedVideo);
+  await first.getByRole("button", { name: "默认设置", exact: true }).click();
+  dialog = page.getByRole("dialog", { name: "设置", exact: true });
+  await dialog.getByLabel("公开范围", { exact: true }).selectOption("unlisted");
+  await dialog.getByRole("button", { name: "保存默认设置", exact: true }).click(); await expect(dialog.getByRole("status")).toContainText("默认设置已保存");
+  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(first.locator('#privacy-preview_liang-main-complete')).toHaveValue("private");
+  await complete.locator("summary").click();
   const measurements = [];
   for (const width of [1440, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
-    await first.getByRole("tab", { name: "直播内容", exact: true }).focus();
-    await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo({ top: 0, behavior: "instant" }); });
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await capture(`workspace-${width}.png`);
     const measured = await page.evaluate(() => ({ width: innerWidth, scrollWidth: document.documentElement.scrollWidth }));
-    assert.ok(measured.scrollWidth <= width + 1, "无横向溢出"); measurements.push(measured);
-    await page.screenshot({ path: path.join(output, `workspace-${width}.png`), fullPage: true });
+    assert.ok(measured.scrollWidth <= width + 1, `overflow at ${width}`); measurements.push(measured);
   }
-  assert.equal(errors.length, 0, errors.join("\n"));
-  assert.ok(writes.every(body => ["save", "delete"].includes(body.action)));
-  await writeFile(path.join(output, "measurements.json"), JSON.stringify({ measurements, pageErrors: errors, profileWrites: writes.length, persistence: "real isolated preview API", liveOperations: "none" }, null, 2));
-  console.log("PASS: two saved profiles, fresh-browser reuse, replace/cancel/undo, failed save, rename/delete, revision conflict, module draft retention, 1440/390/320 layouts");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await first.getByRole("tab", { name: "开播", exact: true }).click();
+  await expect(first.locator(".workflow-review-copy h4")).toHaveText("Final title after package selection");
+  await expect(first.locator(".workflow-review-values")).toContainText("cover.png");
+  await capture("step-3-desktop.png");
+  await first.getByRole("button", { name: "开始直播", exact: true }).click();
+  await expect.poll(() => starts.length).toBe(1);
+  assert.equal(starts[0].video, selectedVideo); assert.equal(starts[0].music, selectedMusic); assert.equal(starts[0].videoAudio, true);
+  assert.equal(starts[0].broadcast.title, "Final title after package selection"); assert.equal(starts[0].broadcast.description, "Edited in complete configuration"); assert.equal(starts[0].broadcast.privacy, "private"); assert.equal(starts[0].broadcast.thumbnail.name, "cover.png");
+  await page.reload(); await first.getByRole("tab", { name: "完善内容", exact: true }).click(); await expect(title).toHaveValue("Final title after package selection");
+  const fresh = await browser.newContext();
+  await fresh.route("**/api/status?**", async route => { const response = await route.fetch(); const body = await response.json(); delete body.state.selection; await route.fulfill({ response, json: body }); });
+  const freshPage = await fresh.newPage(); await freshPage.goto(origin + "/workspace");
+  const freshPanel = freshPage.locator("#instance-preview_liang-main");
+  await expect(freshPanel.locator('#video-preview_liang-main-primary')).toBeEnabled();
+  await freshPanel.getByRole("tab", { name: "完善内容", exact: true }).click();
+  await freshPanel.locator(".workflow-complete > summary").click();
+  await expect(freshPanel.locator('#privacy-preview_liang-main-complete')).toHaveValue("unlisted");
+  await fresh.close();
+  assert.deepEqual(errors, []);
+  await writeFile(path.join(output, "measurements.json"), JSON.stringify({ measurements, errors, checks: "three steps, bidirectional fields, rules-only package apply/undo, settings persistence, failed save, defaults preserve draft, exact final control payload", liveOperations: "none: start intercepted" }, null, 2));
+  console.log("PASS: three-step single configuration, cover/media/copy sync, settings packages, defaults, failure retry, exact intercepted payload, 1440/390/320 layouts");
 } finally { await browser.close(); }

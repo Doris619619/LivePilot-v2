@@ -136,7 +136,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           {live && data?.obs.streaming && <span className="compact-timer">{durationMs === null ? "—" : formatDuration(durationMs)}</span>}
         </div>
         <div className="compact-actions-col">
-          {(!expanded || stoppable) && broadcastControls}
+          {stoppable && broadcastControls}
           <button type="button" className="expand-toggle-btn" onClick={() => setExpanded(!expanded)} aria-label={expanded ? "收起详情" : "展开详情"} aria-expanded={expanded} aria-controls={`details-${id}`}>
             <span>{expanded ? "收起" : "配置直播"}</span><span className={`chevron-icon ${expanded ? "is-expanded" : ""}`}><ChevronDownIcon /></span>
           </button>
@@ -169,12 +169,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>
 
           </div></details>
-          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onSelectionChange={select} onBusyChange={setDetailsBusy} media={          <section className="workflow-step" aria-labelledby={`step-2-${id}`}>
-            <h3 className="visually-hidden" id={`step-2-${id}`}>音视频编排</h3>
+          <BroadcastSettings id={id} instance={instance} value={selection.broadcast} disabled={locked || stale || !data} channel={channel} channelId={data?.youtube.channelId} broadcastId={data?.state.broadcastId} videoName={selection.video} musicName={selection.music} videoAudio={selection.videoAudio} live={data?.state.phase === "live"} onChange={broadcast => select({ broadcast })} onSelectionChange={select} onBusyChange={setDetailsBusy} media={suffix => <section className="workflow-step" aria-labelledby={`step-2-${id}-${suffix}`}>
+            <h3 className="visually-hidden" id={`step-2-${id}-${suffix}`}>音视频编排</h3>
         <div className="form-row media-selection">
           <div className="field-group">
-            <label htmlFor={`video-${id}`} className="field-label">循环视频</label>
-            <select id={`video-${id}`} value={selection.video} disabled={locked || !data?.media.videos.length} onChange={e => select({ video: e.target.value })}>
+            <label htmlFor={`video-${id}-${suffix}`} className="field-label">循环视频</label>
+            <select id={`video-${id}-${suffix}`} value={selection.video} disabled={locked || !data?.media.videos.length} onChange={e => select({ video: e.target.value })}>
               <option value="">选择视频素材</option>
               {selection.video && !data?.media.videos.includes(selection.video) && <option value={selection.video}>{selection.video}（缺失）</option>}
               {data?.media.videos.map(item => <option key={item} value={item}>{item}</option>)}
@@ -182,8 +182,8 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
             {data && !stale && !data.media.error && !data.media.videos.length && <div className="media-empty"><p>还没有视频，添加后即可选择。</p><button type="button" className="btn-secondary" onClick={() => onUpload(key, "videos")}>添加视频</button></div>}
           </div>
           <div className="field-group">
-            <label htmlFor={`music-${id}`} className="field-label">背景音乐（必选）</label>
-            <select id={`music-${id}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
+            <label htmlFor={`music-${id}-${suffix}`} className="field-label">背景音乐（必选）</label>
+            <select id={`music-${id}-${suffix}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
               <option value="">选择背景音乐</option>
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}
@@ -191,20 +191,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
             {data && !stale && !data.media.error && !data.media.music.length && <div className="media-empty"><p>请添加背景音乐后开播。</p><button type="button" className="btn-ghost" onClick={() => onUpload(key, "music")}>添加音乐</button></div>}
           </div>
         </div>
-        <div className="media-options">
-          <div className="switch-row">
-            <span className="switch-label">视频原声</span>
-            <button id={`audio-${id}`} type="button" role="switch" aria-checked={selection.videoAudio} aria-label={`${title} 视频原声`} className={`switch-btn ${selection.videoAudio ? "active" : ""}`} disabled={locked} onClick={() => select({ videoAudio: !selection.videoAudio })}>
-              <span className="switch-track" aria-hidden="true"><span /></span><span>{selection.videoAudio ? "开启" : "关闭"}</span>
-            </button>
-          </div>
-          {data?.state.broadcastId && <a className="watch-link" href={`https://www.youtube.com/watch?v=${encodeURIComponent(data.state.broadcastId)}`} target="_blank" rel="noopener noreferrer">查看直播<ExternalLinkIcon /></a>}
-        </div>
+
 
 
           </section>} controls={<div className="broadcast-control-row">
           <section className="workflow-step" aria-labelledby={`step-3-${id}`}>
-            <h3 id={`step-3-${id}`}><span className="step-number">4</span>开始直播</h3>
+            <h3 id={`step-3-${id}`} className="visually-hidden">开始直播</h3>
             {blocker && !live && <p className="readiness-text">{readiness}</p>}
             {!stoppable && <div className="broadcast-actions">{broadcastControls}</div>}
           </section>
@@ -218,7 +210,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>
         </div>} />
 
-        <LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} />
+        <details className="instance-diagnostics" open={live}><summary>AI 观众互动</summary><LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} /></details>
 
         <details className="instance-diagnostics">
           <summary>连接与诊断</summary>

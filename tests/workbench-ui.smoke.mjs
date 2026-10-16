@@ -66,17 +66,13 @@ async function position(y) {
 }
 try {
   await page.goto(origin + "/workspace");
+  await live.getByRole("tab", { name: "完善内容", exact: true }).click();
   const title = live.getByRole("textbox", { name: "标题 必填", exact: true });
   await title.fill("跨工作区保留的直播草稿");
   await live.getByRole("textbox", { name: "说明", exact: true }).fill("切换后继续编辑这段说明。");
   await live.getByRole("textbox", { name: "文案主题" }).fill("jazz night");
   const titleNode = await title.elementHandle();
   const sidebarNode = await page.getByRole("complementary", { name: "工作台导航" }).elementHandle();
-  await live.locator('input[type="file"][accept="video/*,.mkv,.avi"]').setInputFiles(path.resolve("public/preview/normal.mp4"));
-  await live.getByRole("button", { name: "播放预览", exact: true }).click();
-  const video = await live.locator("video").elementHandle();
-  await page.waitForFunction(() => document.querySelector("video")?.currentTime > 0.1);
-  await live.getByRole("tab", { name: "音视频", exact: true }).click();
   const liveY = await position(650); assert.ok(liveY > 100);
   const initialSessions = sessions;
   await switchTo("视频发布");
@@ -94,7 +90,7 @@ try {
   assert.equal(await sidebarNode.evaluate(node => node.isConnected), true);
   const accountBounds = await page.getByRole("button", { name: "切换登录账号" }).boundingBox();
   assert.ok(accountBounds.y + accountBounds.height > page.viewportSize().height - 24, "账号始终置底");
-  assert.equal(await video.evaluate(node => node.paused && !node.getAttribute("src")), true);
+  await expect(live.locator("video")).toHaveCount(0);
   assert.equal(sessions, initialSessions, "切换不重新读取会话");
   await publish.getByRole("button", { name: "检测素材", exact: true }).click();
   await publish.getByRole("radio", { name: /十月音乐集/ }).check();
@@ -102,14 +98,13 @@ try {
   await publish.getByLabel("开始日期", { exact: true }).fill("2030-11-12");
   const publishY = await position(500); assert.ok(publishY > 100);
   await switchTo("直播工作台");
-  await expect(live.getByRole("tab", { name: "音视频", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(live.getByRole("tab", { name: "完善内容", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeCloseTo(liveY, 0);
-  await live.getByRole("tab", { name: "直播内容", exact: true }).click();
+  await live.getByRole("tab", { name: "完善内容", exact: true }).click();
   await expect(title).toHaveValue("跨工作区保留的直播草稿");
   await expect(live.getByRole("textbox", { name: "说明", exact: true })).toHaveValue("切换后继续编辑这段说明。");
   await expect(live.getByRole("textbox", { name: "文案主题" })).toHaveValue("jazz night");
-  await expect(live.locator("video")).toBeVisible();
-  assert.equal(await live.locator("video").evaluate(node => node.paused), true);
+  await expect(live.locator("video")).toHaveCount(0);
   await switchTo("视频发布");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeCloseTo(publishY, 0);
   await expect(publish.getByLabel("开始日期", { exact: true })).toHaveValue("2030-11-12");

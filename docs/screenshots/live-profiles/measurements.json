@@ -13,8 +13,7 @@
       "scrollWidth": 320
     }
   ],
-  "pageErrors": [],
-  "profileWrites": 9,
-  "persistence": "real isolated preview API",
-  "liveOperations": "none"
+  "errors": [],
+  "checks": "three steps, bidirectional fields, rules-only package apply/undo, settings persistence, failed save, defaults preserve draft, exact final control payload",
+  "liveOperations": "none: start intercepted"
 }

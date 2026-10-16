@@ -6,7 +6,7 @@
 .api-settings-label label, .api-key-form > label { font-size: 13px; font-weight: 600; }
 .api-settings-label span { font-size: 12px; color: var(--text-secondary); }
 .api-settings select, .api-key-form input { width: 100%; min-width: 0; }
-.api-settings .ui-tabs-list { gap: 24px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; }
+.api-settings .ui-tabs-list { gap: 16px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; flex-wrap: wrap; }
 .api-settings .ui-tabs-trigger { flex: none; min-height: 44px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 14px; }
 .api-settings .ui-tabs-trigger[data-state="active"] { border-bottom-color: var(--accent-primary); background: transparent; box-shadow: none; }
 .api-service-section { display: grid; gap: 12px; min-width: 0; }

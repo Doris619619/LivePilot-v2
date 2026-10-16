@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
 import { targetKey } from "@/shared/remote";
 import { api, requestProblem } from "./client-request";
+import type { BroadcastDefaults } from "@/shared/broadcast-options";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
@@ -44,7 +45,6 @@ export function useInstance(instance: InstanceDescriptor) {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
       setReadAt(Date.now()); synchronize(result);
       if (result.operation?.id === failedRequest.current && ["succeeded", "failed"].includes(result.operation?.status || "")) { setError(""); setProblem(undefined); failedRequest.current = undefined; }
-      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
         const key = "livepilot-request-" + id;
@@ -56,12 +56,14 @@ export function useInstance(instance: InstanceDescriptor) {
         setSelection(previous => JSON.stringify(previous) === JSON.stringify(actual) ? previous : actual);
       }
       if (!initialized.current) {
-        initialized.current = true;
         const active = result.state.phase !== "stopped" && result.state.phase !== "idle";
         const saved = (active ? result.state.selection : readDraft(id)) || result.state.selection;
-        const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: false };
-        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: initial.broadcast || defaultBroadcast() });
+        const defaults = !saved ? (await api<{ value: BroadcastDefaults }>("/api/broadcast-defaults")).value : undefined;
+        const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: defaults?.videoAudio ?? false };
+        initialized.current = true;
+        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: initial.broadcast || { ...defaultBroadcast(), ...(defaults ? { privacy: defaults.privacy, madeForKids: defaults.madeForKids } : {}) } });
       }
+      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
     } catch (e) { clearClock(); setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
     finally { fetching.current = false; }
   }, [id, instanceId, agentId, synchronize, clearClock]);
