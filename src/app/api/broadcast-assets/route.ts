@@ -1,4 +1,6 @@
 /** 已授权网页读取频道播放列表或向选定 Agent 上传开播封面。 */
+import { accountAiStatus } from "@/server/account-ai";
+import { snapshotFor } from "@/cloud/agents";
 import { z } from "zod";
 import { aiBriefSchema, aiKeySchema } from "@/shared/broadcast-ai";
 import { aiStatus, saveAiKey, generateCopy } from "@/core/broadcast-ai";
@@ -34,7 +36,16 @@ export async function POST(request: Request) {
     const body = parsed.data;
     let result: unknown;
     if (cloudMode()) {
-      const destination = target(body); await authorizeAgent(user, destination.agentId); await requireBroadcastDetails(destination);
+      const destination = target(body); const agent = await authorizeAgent(user, destination.agentId); await requireBroadcastDetails(destination);
+      if (body.action.startsWith("ai-") && agent?.owner) {
+        const settings = await accountAiStatus(agent.owner);
+        if (settings.managed) {
+          if (body.action === "ai-key") throw new AppError("CONFIG", "请在账号 AI 服务设置中更换统一 Key。", 409);
+          const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+          if (!snapshot?.dashboard.configuration.accountAi) throw new AppError("CONFIG", "请更新直播电脑客户端以使用账号 AI 服务。", 409);
+          if (body.action === "ai-generate" && !settings.uses.copy) throw new AppError("CONFIG", "账号已关闭文案生成，请在 AI 服务设置中开启。", 409);
+        }
+      }
       const payload: TaskPayload = body.action === "ai-status" ? { kind: "broadcast-ai-status" } : body.action === "ai-key" ? { kind: "broadcast-ai-key", apiKey: body.apiKey } : body.action === "ai-generate" ? { kind: "broadcast-ai-generate", brief: body.brief } : body.action === "playlists" ? { kind: "broadcast-playlists" } : { kind: "broadcast-thumbnail", input: body.input };
       result = await rpc(destination, user.username, payload);
     } else {

@@ -6,6 +6,7 @@ import type { Dashboard, Selection, InstanceDescriptor } from "@/shared/types";
 import { targetKey } from "@/shared/remote";
 import { api, requestProblem } from "./client-request";
 import type { BroadcastDefaults } from "@/shared/broadcast-options";
+import { defaultLiveChatConfig } from "@/shared/live-chat";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
@@ -61,7 +62,7 @@ export function useInstance(instance: InstanceDescriptor) {
         const defaults = !saved ? (await api<{ value: BroadcastDefaults }>("/api/broadcast-defaults")).value : undefined;
         const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: defaults?.videoAudio ?? false };
         initialized.current = true;
-        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: initial.broadcast || { ...defaultBroadcast(), ...(defaults ? { privacy: defaults.privacy, madeForKids: defaults.madeForKids } : {}) } });
+        setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: { ...(initial.broadcast || { ...defaultBroadcast(), ...(defaults ? { privacy: defaults.privacy, madeForKids: defaults.madeForKids } : {}) }), liveChat: initial.broadcast?.liveChat || result.liveChat?.config || { ...defaultLiveChatConfig } } });
       }
       setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
     } catch (e) { clearClock(); setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }

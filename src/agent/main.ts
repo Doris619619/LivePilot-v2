@@ -1,4 +1,5 @@
 /** Windows Agent 命令行入口；配置加载和任务运行均不依赖 Next.js。 */
+import { setAccountAiRuntime } from "@/core/account-ai-runtime";
 import { heartbeatFeedback, acknowledgeFeedback } from "./feedback";
 import { makeProblem, type Problem } from "../shared/problems";
 import path from "node:path";
@@ -43,7 +44,9 @@ async function main() {
   const worker = new Worker(new Store(path.join(credentials.dir, "tasks")), task => executor.execute(task), identity.agentId);
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
-  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values()), failed => {
+  let accountAiSupported = false;
+  let accountAiInitialized = false;
+  const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values(), accountAiSupported), failed => {
     if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
     else health.delete("chat-environment");
   });
@@ -66,8 +69,10 @@ async function main() {
       if (!connected) {
         const session = await connectSession(transport, { bootId, instances: instanceDescriptors() });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
+        accountAiSupported = !!session.capabilities?.includes("account-ai-v1");
+        if (accountAiSupported && !accountAiInitialized) { setAccountAiRuntime({ uses: { copy: false, chat: false } }); accountAiInitialized = true; }
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
-        void chatEnvironment.refresh();
+        await chatEnvironment.refresh();
         executor.startChat();
         executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
         executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));

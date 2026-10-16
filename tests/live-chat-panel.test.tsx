@@ -79,17 +79,17 @@ it("keeps chat settings operable while the broadcast console is live and its bro
   consoleModel.value = { data, durationMs: 1000, selection: { video: "", music: "", videoAudio: false }, working: "", error: "", stale: false, confirmed: false, setConfirmed: vi.fn(), refresh: vi.fn(), act: vi.fn(), busy: true, live: true, pending: false, locked: true, blocker: "直播中", select: vi.fn() };
   const html = renderToStaticMarkup(createElement(ApiSettingsProvider, null, createElement(InstanceConsole, { instance, onChannelChange: () => {}, onUpload: () => {} })));
   expect(html).toMatch(/<fieldset disabled="" class="broadcast-fields"/);
-  expect(html).toMatch(/<button type="button" class="btn-ghost">互动设置<\/button>/);
+  expect(html).toMatch(/<button type="button" class="btn-ghost">AI 服务设置<\/button>/);
   expect(html).not.toContain('id="chat-preset-agent-one-LIVE"');
   expect(html.match(/<button type="button" role="switch" aria-checked="true" aria-label="直播频道 AI 自动回复观众"[^>]*>/)?.[0]).not.toContain("disabled");
-  expect(html.indexOf("AI 观众互动")).toBeGreaterThan(html.indexOf("开始直播"));
+  expect(html.indexOf("chat-runtime-heading-agent-one-LIVE")).toBeGreaterThan(html.indexOf("开始直播"));
 });
 
-it("defaults to enabled, moves persona fields out of runtime and directs missing environment configuration to administrators", () => {
+it("defaults to enabled, moves persona fields out of runtime and directs missing credentials to account AI settings", () => {
   const html = render(fixture({ configured: false, state: "needs_key", message: "请保存 DeepSeek API Key" }));
   expect(html).toContain('role="switch" aria-checked="true"');
-  expect(html).toContain("互动设置"); expect(html).not.toContain("发送间隔（5–60 秒）");
-  expect(html).toContain("直播电脑的 DeepSeek 环境配置未就绪，请联系管理员");
+  expect(html).toContain("AI 服务设置"); expect(html).not.toContain("发送间隔（5–60 秒）");
+  expect(html).toContain("请在 AI 服务设置中配置账号 Key 并开启观众互动，等待设备同步后刷新。");
   expect(html).not.toContain('type="password"'); expect(html).not.toContain("DeepSeek API Key"); expect(html).not.toContain("保存 Key"); expect(html).not.toContain("检查密钥设置");
   expect(html).not.toContain("每日回复条数无上限");
   const settings = renderToStaticMarkup(mountedSettings().tree);
@@ -201,7 +201,7 @@ it("keeps recovery guidance before the settings entrance and never redirects AI 
   for (const recoveryAction of ["contact_admin", "check_storage", undefined] as const) {
     const html = render(fixture({ state: "needs_attention", recoveryAction, message: "合成故障：需要处理" }));
     expect(html).not.toContain("检查频道授权");
-    expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf(">互动设置</button>"));
+    expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf(">AI 服务设置</button>"));
     expect(html).toContain('aria-expanded="false" aria-controls="chat-records-agent-one-LIVE"');
     expect(html).toContain('id="chat-records-agent-one-LIVE" hidden=""');
     expect(html.indexOf("合成故障：需要处理")).toBeLessThan(html.indexOf('id="chat-records-agent-one-LIVE"'));

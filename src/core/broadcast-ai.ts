@@ -2,6 +2,7 @@
 import { aiBriefSchema, aiCopySchema, aiKeySchema } from "@/shared/broadcast-ai";
 import { Store, seal, unseal } from "./storage";
 import { AppError } from "./errors";
+import { accountAiRuntime } from "./account-ai-runtime";
 import { BROADCAST_COPY_PROMPT } from "./broadcast-copy-prompt";
 export const DEEPSEEK_MODEL = "deepseek-flash";
 
@@ -14,7 +15,8 @@ export async function saveAiKey(storage: Store, value: string) {
 }
 /** 只返回配置存在性，解密失败不默默覆盖原密钥。 */
 export async function aiStatus(storage: Store) {
-  return { configured: !!await storage.read<string>("deepseek.enc") || !!process.env.DEEPSEEK_API_KEY?.trim() };
+  const account = accountAiRuntime();
+  return { configured: account ? !!account.apiKey && account.uses.copy : !!await storage.read<string>("deepseek.enc") || !!process.env.DEEPSEEK_API_KEY?.trim() };
 }
 /** 固定官方地址、无自动重试；输出通过字段/长度校验后才进入网页草稿。 */
 export async function generateCopy(storage: Store, input: string) {
@@ -29,8 +31,11 @@ export type AiRequestOptions = { signal?: AbortSignal; maxTokens?: number; keySo
 /** 共用官方 DeepSeek 请求，Prompt 和结果校验各自负责；默认保留既有密钥优先级和限制。 */
 export async function requestAi(storage: Store, prompt: string, input: string, options: AiRequestOptions = {}) {
   const environmentOnly = options.keySource === "environment";
-  const encrypted = environmentOnly ? null : await storage.read<string>("deepseek.enc");
-  const value = encrypted ? unseal<{ apiKey: string }>(encrypted).apiKey : process.env.DEEPSEEK_API_KEY?.trim();
+  const account = accountAiRuntime();
+  if (account && !account.uses[environmentOnly ? "chat" : "copy"]) throw new AppError("CONFIG", environmentOnly ? "账号已关闭 AI 观众互动，请在设置中启用。" : "账号已关闭 AI 文案生成，请在设置中启用。", 409);
+  const encrypted = account || environmentOnly ? null : await storage.read<string>("deepseek.enc");
+  const value = account ? account.apiKey : encrypted ? unseal<{ apiKey: string }>(encrypted).apiKey : process.env.DEEPSEEK_API_KEY?.trim();
+  if (account && !value) throw new AppError("CONFIG", "账号尚未配置 AI 服务密钥，请在设置中保存 API Key。", 409);
   if (!value) throw new AppError("CONFIG", environmentOnly ? "AI 互动服务未配置，请联系管理员设置 Agent 的 DEEPSEEK_API_KEY 环境变量。" : "请先配置 DEEPSEEK_API_KEY 或在 DeepSeek 设置中保存 API Key。");
   const key = aiKeySchema.safeParse(value);
   if (!key.success) throw new AppError("CONFIG", environmentOnly ? "AI 互动环境配置无效，请联系管理员检查 Agent 的 DEEPSEEK_API_KEY。" : "DeepSeek 密钥配置无效，请重新保存。");

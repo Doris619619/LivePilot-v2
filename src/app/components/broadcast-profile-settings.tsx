@@ -5,12 +5,14 @@ import type { Dashboard, InstanceDescriptor, Selection } from "@/shared/types";
 import { defaultBroadcast, type Playlist } from "@/shared/broadcast";
 import { api } from "../client-request";
 import BroadcastProfiles from "./broadcast-profiles";
+import LiveChatFields from "./live-chat-fields";
+import { defaultLiveChatConfig } from "@/shared/live-chat";
 import BroadcastRuleFields from "./broadcast-rule-fields";
 
 /** 配置对象切换时父级通过 key 隔离全部状态，读取不修改工作台的草稿。 */
 export default function BroadcastProfileSettings({ instance, onSaving }: { instance: InstanceDescriptor; onSaving(value: boolean): void }) {
   const [channel, setChannel] = useState<string>();
-  const [value, setValue] = useState<Selection>({ video: "", music: "", videoAudio: false, broadcast: defaultBroadcast() });
+  const [value, setValue] = useState<Selection>({ video: "", music: "", videoAudio: false, broadcast: { ...defaultBroadcast(), liveChat: { ...defaultLiveChatConfig } } });
   const [playlists, setPlaylists] = useState<Playlist[]>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -32,6 +34,7 @@ export default function BroadcastProfileSettings({ instance, onSaving }: { insta
   return <section className="api-service-section" aria-label="管理直播配置包">
     {channel && <><BroadcastProfiles management instance={instance} target={{ instanceId: instance.id, channelId: channel, ...(instance.agentId ? { agentId: instance.agentId } : {}) }} value={value} disabled={busy} onApply={setValue} onBusyChange={saving => { setBusy(saving); onSaving(saving); }} />
       <BroadcastRuleFields id="profile-editor" value={{ privacy: details.privacy, madeForKids: details.madeForKids, videoAudio: value.videoAudio }} disabled={busy} onChange={rules => setValue({ ...value, videoAudio: rules.videoAudio, broadcast: { ...details, privacy: rules.privacy, madeForKids: rules.madeForKids } })} />
+      <h3>AI 观众互动</h3><LiveChatFields id="profile-editor" value={details.liveChat || defaultLiveChatConfig} disabled={busy} onChange={liveChat => setValue({ ...value, broadcast: { ...details, liveChat } })} />
       <div className="api-settings-actions"><span>播放列表 · {details.playlistIds.length} 个已选</span><button type="button" disabled={busy} onClick={() => void loadPlaylists()}>读取播放列表</button></div>
       {playlists && <div className="playlist-options">{playlists.length ? playlists.map(item => <label key={item.id}><input type="checkbox" disabled={busy} checked={details.playlistIds.includes(item.id)} onChange={event => setValue({ ...value, broadcast: { ...details, playlistIds: event.target.checked ? [...details.playlistIds, item.id] : details.playlistIds.filter(id => id !== item.id) } })} />{item.title}</label>) : <p>当前频道没有播放列表。</p>}</div>}
     </>}

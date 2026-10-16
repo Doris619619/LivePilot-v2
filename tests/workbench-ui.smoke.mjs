@@ -66,7 +66,7 @@ async function position(y) {
 }
 try {
   await page.goto(origin + "/workspace");
-  await live.getByRole("tab", { name: "完善内容", exact: true }).click();
+  await live.getByRole("tab", { name: "直播编排", exact: true }).click();
   const title = live.getByRole("textbox", { name: "标题 必填", exact: true });
   await title.fill("跨工作区保留的直播草稿");
   await live.getByRole("textbox", { name: "说明", exact: true }).fill("切换后继续编辑这段说明。");
@@ -98,9 +98,9 @@ try {
   await publish.getByLabel("开始日期", { exact: true }).fill("2030-11-12");
   const publishY = await position(500); assert.ok(publishY > 100);
   await switchTo("直播工作台");
-  await expect(live.getByRole("tab", { name: "完善内容", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(live.getByRole("tab", { name: "直播编排", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBeCloseTo(liveY, 0);
-  await live.getByRole("tab", { name: "完善内容", exact: true }).click();
+  await live.getByRole("tab", { name: "直播编排", exact: true }).click();
   await expect(title).toHaveValue("跨工作区保留的直播草稿");
   await expect(live.getByRole("textbox", { name: "说明", exact: true })).toHaveValue("切换后继续编辑这段说明。");
   await expect(live.getByRole("textbox", { name: "文案主题" })).toHaveValue("jazz night");

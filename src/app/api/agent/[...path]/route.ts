@@ -1,4 +1,5 @@
 /** 专用设备接口：独立 Bearer 认证，不接受浏览器会话或任意业务调用。 */
+import { accountAiEnvironment } from "@/server/account-ai";
 import { authenticate } from "@/server/access";
 import { problemSchema } from "@/shared/problems";
 import { z } from "zod";
@@ -61,6 +62,11 @@ export async function POST(request: Request, context: Context) {
     }
     const agent = await authenticateAgent(request, route !== "session");
     // 部署环境的 AI Key 仅交给已配对且持有有效会话的 Agent，不接受浏览器或缓存。
+    if (route === "account-ai-environment") {
+      z.object({}).strict().parse(raw);
+      if (!agent.owner) throw new AppError("OWNER", "设备尚未分配账号。", 403);
+      return Response.json(await accountAiEnvironment(agent.owner), { headers: { "Cache-Control": "no-store" } });
+    }
     if (route === "live-chat-environment") {
       z.object({}).strict().parse(raw);
       const apiKey = aiKeySchema.safeParse(process.env.DEEPSEEK_API_KEY?.trim());
@@ -90,7 +96,7 @@ export async function POST(request: Request, context: Context) {
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       const session = await openSession(agent.id, value.bootId, value.instances); await agentStore(agent.id).write("capabilities.json", value.capabilities || []);
-      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1"] });
+      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1", "account-ai-v1"] });
     }
     if (route === "heartbeat") {
       const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);

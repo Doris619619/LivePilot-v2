@@ -38,7 +38,7 @@ try {
   await expect(video).toBeEnabled(); await video.selectOption({ index: 1 }); await music.selectOption({ index: 1 });
   const selectedVideo = await video.inputValue(), selectedMusic = await music.inputValue();
   await capture("step-1-desktop.png");
-  await first.getByRole("button", { name: "下一步：完善内容", exact: true }).click();
+  await first.getByRole("button", { name: "下一步：直播编排", exact: true }).click();
   await expect(first.locator("video")).toHaveCount(0);
   const title = first.locator('#broadcast-title-preview_liang-main');
   const description = first.locator('#broadcast-description-preview_liang-main');
@@ -106,13 +106,13 @@ try {
   await expect.poll(() => starts.length).toBe(1);
   assert.equal(starts[0].video, selectedVideo); assert.equal(starts[0].music, selectedMusic); assert.equal(starts[0].videoAudio, true);
   assert.equal(starts[0].broadcast.title, "Final title after package selection"); assert.equal(starts[0].broadcast.description, "Edited in complete configuration"); assert.equal(starts[0].broadcast.privacy, "private"); assert.equal(starts[0].broadcast.thumbnail.name, "cover.png");
-  await page.reload(); await first.getByRole("tab", { name: "完善内容", exact: true }).click(); await expect(title).toHaveValue("Final title after package selection");
+  await page.reload(); await first.getByRole("tab", { name: "直播编排", exact: true }).click(); await expect(title).toHaveValue("Final title after package selection");
   const fresh = await browser.newContext();
   await fresh.route("**/api/status?**", async route => { const response = await route.fetch(); const body = await response.json(); delete body.state.selection; await route.fulfill({ response, json: body }); });
   const freshPage = await fresh.newPage(); await freshPage.goto(origin + "/workspace");
   const freshPanel = freshPage.locator("#instance-preview_liang-main");
   await expect(freshPanel.locator('#video-preview_liang-main-primary')).toBeEnabled();
-  await freshPanel.getByRole("tab", { name: "完善内容", exact: true }).click();
+  await freshPanel.getByRole("tab", { name: "直播编排", exact: true }).click();
   await freshPanel.locator(".workflow-complete > summary").click();
   await expect(freshPanel.locator('#privacy-preview_liang-main-complete')).toHaveValue("unlisted");
   await fresh.close();

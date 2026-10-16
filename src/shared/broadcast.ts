@@ -1,8 +1,10 @@
 /** 开播详情的共享校验；仅包含公开元数据和实例内封面标识。 */
 import { z } from "zod";
+import { liveChatConfigSchema } from "./live-chat";
 import { videoTitleSchema, videoDescriptionSchema } from "./video-metadata";
 
 export const broadcastSchema = z.object({
+  liveChat: liveChatConfigSchema.optional(),
   title: videoTitleSchema,
   description: videoDescriptionSchema,
   privacy: z.enum(["public", "unlisted", "private"]),

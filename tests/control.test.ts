@@ -261,3 +261,16 @@ it("applies frozen metadata before streaming and retries the same broadcast", as
   expect(f.yt.prepareBroadcast).toHaveBeenLastCalledWith("b1", broadcast);
   expect((await f.control.state()).detailsApplied).toBe(true);
 });
+
+
+it("applies the authoritative chat config before OBS and refuses to start on config failure", async () => {
+  const f = await fixture();
+  const apply = vi.fn(async () => { f.events.push("chat-config"); });
+  const control = new Control(f.obs, f.yt, f.storage, f.media, f.fastWait, apply);
+  await control.start(selection);
+  expect(apply).toHaveBeenCalledWith(selection); expect(f.events.indexOf("chat-config")).toBeLessThan(f.events.indexOf("ready"));
+  const other = await fixture();
+  const failed = new Control(other.obs, other.yt, other.storage, other.media, other.fastWait, async () => { throw new AppError("STORAGE", "synthetic config write failure"); });
+  await expect(failed.start(selection)).rejects.toMatchObject({ code: "STORAGE" });
+  expect(other.obs.ensureReady).not.toHaveBeenCalled(); expect(other.yt.createBroadcast).not.toHaveBeenCalled();
+});

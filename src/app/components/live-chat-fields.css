@@ -1,0 +1,6 @@
+/* 本场和配置包共用的互动表单，保持参数紧凑、关闭后不丢失输入。 */
+.live-chat-enable { display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; }
+.live-chat-enable input { margin: 0; flex-shrink: 0; }
+.live-chat-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.live-chat-fields textarea { min-height: 88px; }
+@media (max-width: 600px) { .live-chat-field-grid { grid-template-columns: 1fr; } }

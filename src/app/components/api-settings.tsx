@@ -8,7 +8,6 @@ import { SurfaceDialog } from "./ui/primitives";
 import ApiKeySettings from "./api-key-settings";
 import BroadcastDefaultSettings from "./broadcast-default-settings";
 import BroadcastProfileSettings from "./broadcast-profile-settings";
-import LiveChatSettings from "./live-chat-settings";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/primitives";
 import "./api-settings.css";
 
@@ -35,7 +34,7 @@ export function ApiSettingsButton({ instance, section = "ai", children = "设置
 
 /** 每次打开重新读取当前用户可见设备；目录读取失败时不回退到另一目标。 */
 function SettingsContent({ initial, initialSection, onSaving, saving }: { initial?: InstanceDescriptor; initialSection: SettingsSection; onSaving: (value: boolean) => void; saving: boolean }) {
-  const [section, setSection] = useState<string>(initialSection);
+  const [section, setSection] = useState<string>(initialSection === "chat" ? "ai" : initialSection);
   const [inventory, setInventory] = useState<Inventory>();
   const [selected, setSelected] = useState(initial ? targetKey(initial) : "");
   const [error, setError] = useState("");
@@ -51,19 +50,17 @@ function SettingsContent({ initial, initialSection, onSaving, saving }: { initia
     return () => abort.abort();
   }, [revision]);
   const instance = inventory?.instances.find(item => targetKey(item) === selected);
-  const agent = inventory?.agents?.find(item => item.id === instance?.agentId);
   return <Tabs value={section} onValueChange={setSection} asChild><div className="api-settings">
-    {error && <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新读取设备</button></div>}
-    {!inventory && !error && <p role="status">正在读取设备…</p>}
-    {inventory && section !== "defaults" && <>
+    {section === "profiles" && error && <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新读取设备</button></div>}
+    {section === "profiles" && !inventory && !error && <p role="status">正在读取设备…</p>}
+    {inventory && section === "profiles" && <>
       <div className="api-settings-target"><div className="api-settings-label"><label htmlFor="api-settings-target">配置对象</label><span>仅作用于所选实例</span></div><select id="api-settings-target" value={selected} disabled={saving || !inventory.instances.length} onChange={event => setSelected(event.target.value)}><option value="">选择直播电脑 / OBS 实例</option>{inventory.instances.map(item => <option key={targetKey(item)} value={targetKey(item)}>{inventory.agents?.find(device => device.id === item.agentId)?.name || "本机电脑"} / {item.name}</option>)}</select></div>
       {!inventory.instances.length && <p role="status">还没有可配置的实例，请先接入直播电脑。</p>}
       {selected && !instance && <p role="status">此实例已不可用，请重新选择配置对象。</p>}
     </>}
-    <TabsList aria-label="设置分类"><TabsTrigger value="defaults" disabled={saving}>直播默认</TabsTrigger><TabsTrigger value="profiles" disabled={saving}>直播配置包</TabsTrigger><TabsTrigger value="ai" disabled={saving}>文案生成</TabsTrigger><TabsTrigger value="chat" disabled={saving}>观众互动</TabsTrigger></TabsList>
+    <TabsList aria-label="设置分类"><TabsTrigger value="defaults" disabled={saving}>直播默认</TabsTrigger><TabsTrigger value="profiles" disabled={saving}>直播配置包</TabsTrigger><TabsTrigger value="ai" disabled={saving}>AI 服务</TabsTrigger></TabsList>
     <TabsContent value="defaults">{section === "defaults" && <BroadcastDefaultSettings onSaving={onSaving} />}</TabsContent>
     <TabsContent value="profiles">{instance && section === "profiles" && <BroadcastProfileSettings key={targetKey(instance)} instance={instance} onSaving={onSaving} />}</TabsContent>
-    <TabsContent value="ai">{instance && section === "ai" && <ApiKeySettings key={targetKey(instance)} instance={instance} offline={!!agent && !agent.online} onSaving={onSaving} />}</TabsContent>
-    <TabsContent value="chat">{instance && section === "chat" && <LiveChatSettings key={targetKey(instance)} instance={instance} offline={!!agent && !agent.online} onSaving={onSaving} />}</TabsContent>
+    <TabsContent value="ai">{section === "ai" && <ApiKeySettings onSaving={onSaving} />}</TabsContent>
   </div></Tabs>;
 }

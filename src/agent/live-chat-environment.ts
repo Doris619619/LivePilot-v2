@@ -1,4 +1,6 @@
 /** 已配对 Agent 从受认证控制端同步聊天环境密钥；只注入本进程，不回传 IPC 或写入实例密钥文件。 */
+import { aiUsesSchema } from "@/shared/account-ai";
+import { accountAiRuntime, setAccountAiRuntime } from "@/core/account-ai-runtime";
 import { z } from "zod";
 import { aiKeySchema } from "@/shared/broadcast-ai";
 import { AppError } from "@/core/errors";
@@ -6,6 +8,7 @@ import type { Service } from "@/core/service";
 import type { Transport } from "./transport";
 
 const environmentSchema = z.object({ apiKey: aiKeySchema.optional() }).strict();
+const accountSchema = z.discriminatedUnion("managed", [z.object({ managed: z.literal(false) }).strict(), z.object({ managed: z.literal(true), apiKey: aiKeySchema.optional(), uses: aiUsesSchema }).strict()]);
 const unavailable = "AI互动环境暂时不可用，请稍后重试。";
 const environments = new WeakMap<Pick<Transport, "post">, { original?: string; cloudProvided: boolean; pendingRefresh: Set<Service> }>();
 
@@ -35,10 +38,18 @@ export class LiveChatEnvironmentSync {
 }
 
 /** 调用方先核对 Cloud 能力；记录首次本机环境，Cloud 撤销后恢复它，同 Key 不取消聊天。 */
-export async function syncLiveChatEnvironment(transport: Pick<Transport, "post">, services: Iterable<Service>): Promise<void> {
+export async function syncLiveChatEnvironment(transport: Pick<Transport, "post">, services: Iterable<Service>, accountSupported = false): Promise<void> {
   try {
     let environment = environments.get(transport);
     if (!environment) { environment = { original: process.env.DEEPSEEK_API_KEY, cloudProvided: false, pendingRefresh: new Set() }; environments.set(transport, environment); }
+    if (accountSupported) {
+      const account = accountSchema.parse(await transport.post<unknown>("/api/agent/account-ai-environment", {}));
+      const next = account.managed ? { apiKey: account.apiKey, uses: account.uses } : undefined;
+      if (JSON.stringify(next) !== JSON.stringify(accountAiRuntime())) {
+        setAccountAiRuntime(next);
+        for (const service of services) environment.pendingRefresh.add(service);
+      }
+    }
     const parsed = environmentSchema.safeParse(await transport.post<unknown>("/api/agent/live-chat-environment", {}));
     if (!parsed.success) throw new AppError("CHAT_ENVIRONMENT", unavailable, 503);
     const key = parsed.data.apiKey;

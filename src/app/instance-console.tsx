@@ -226,7 +226,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </section>
         </div>} />
 
-        <details className="instance-diagnostics" open={live}><summary>AI 观众互动</summary><LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} /></details>
+        {(live || pending) && <LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} />}
 
       </div></Reveal>
     </article>

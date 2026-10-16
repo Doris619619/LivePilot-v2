@@ -47,6 +47,10 @@ export async function requireLiveChat(destination: Target) {
 /** 控制接口只持久化完整任务，核心执行在 Agent，不使用 Next after 编排直播。 */
 export async function remoteControl(destination: Target, actor: string, payload: Extract<TaskPayload, { kind: "control" }>, requestId: string) {
   if (payload.input.action === "start" && payload.input.broadcast) await requireBroadcastDetails(destination);
+  if (payload.input.action === "start" && payload.input.broadcast?.liveChat) {
+    const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+    if (!snapshot?.dashboard.configuration.liveChatSelection) throw new AppError("CONFIG", "请更新直播电脑的 LiveNest 客户端，以便按本场配置启动观众互动。", 409);
+  }
   return { operation: operation(await enqueue(destination, actor, payload, requestId)) };
 }
 /** 上传记录仍由目标 Agent 所有，云端补上明确的设备归属。 */

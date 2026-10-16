@@ -18,7 +18,7 @@ import { LiveChatRunner } from "./live-chat/runner";
 import { YouTubeLiveChat } from "./youtube/live-chat";
 import { generateLiveChatReply, liveChatAiConfigured } from "./live-chat-ai";
 import type { Broadcast } from "./youtube/api";
-import type { LiveChatTarget } from "@/shared/live-chat";
+import type { LiveChatConfig, LiveChatTarget } from "@/shared/live-chat";
 export class Service {
   readonly auth: YouTubeAuth;
   readonly youtube: YouTubeApi;
@@ -37,7 +37,7 @@ export class Service {
     this.control = new Control(this.obs, this.youtube, storage, async selection => ({
       video: await resolveMedia(readConfig().mediaRoot, "videos", selection.video),
       music: await resolveMedia(readConfig().mediaRoot, "music", selection.music),
-    }));
+    }), undefined, async selection => { if (selection.broadcast?.liveChat) await this.chat.configure(selection.broadcast.liveChat); });
     this.commands = new Commands(new Store(path.join(storage.dir, "commands")), this.control, id, () => this.invalidate());
     const chatApi = new YouTubeLiveChat(this.auth);
     this.chat = new LiveChatRunner(storage, {
@@ -46,6 +46,18 @@ export class Service {
       stream: (chatId, pageToken, signal) => chatApi.stream(chatId, pageToken, signal),
       send: (chatId, text, signal) => chatApi.send(chatId, text, signal),
       generate: (settings, message, context, signal) => generateLiveChatReply(storage, settings, message, context, signal),
+    });
+  }
+  /** 运行中调整互动时同步本场完整配置，避免恢复直播时重新启用旧参数。 */
+  async configureChat(settings: LiveChatConfig) {
+    return this.control.exclusive(async () => {
+      const state = await this.control.state();
+      if (state.selection?.broadcast) {
+        state.selection.broadcast.liveChat = settings;
+        state.updatedAt = new Date().toISOString();
+        await this.control.storage.write("control.json", state);
+      }
+      return this.chat.configure(settings);
     });
   }
   private broadcastCache?: { key: string; at: number; value: Broadcast | null };
@@ -113,7 +125,7 @@ export class Service {
       }
     } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
-    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, liveChatSelection: true, accountAi: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

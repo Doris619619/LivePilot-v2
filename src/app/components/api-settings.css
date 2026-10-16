@@ -26,3 +26,10 @@
   .api-settings-actions button { min-height: 44px; }
   .api-settings input, .api-settings select { font-size: 16px; }
 }
+
+/* 账号 AI 用途：两行原生复选框，解释紧随对应选项。 */
+.ai-usage-fields { border: 0; padding: 0; margin: 12px 0; display: grid; gap: 16px; }
+.ai-usage-fields legend { font-weight: 600; margin-bottom: 14px; }
+.ai-usage-fields label { display: flex; align-items: flex-start; gap: 12px; cursor: pointer; }
+.ai-usage-fields input[type="checkbox"] { width: 18px; height: 18px; margin: 2px 0 0; flex-shrink: 0; }
+.ai-usage-fields small { display: block; font-size: 13px; font-weight: 400; color: var(--text-secondary); margin-top: 4px; }

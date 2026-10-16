@@ -10,6 +10,8 @@ import type { InstanceDescriptor, Selection } from "@/shared/types";
 import BroadcastProfiles from "./broadcast-profiles";
 import { ExternalLinkIcon } from "./icons";
 import MediaPreview from "./media-preview/media-preview";
+import LiveChatFields from "./live-chat-fields";
+import { defaultLiveChatConfig } from "@/shared/live-chat";
 import BroadcastCopyFields from "./broadcast-copy-fields";
 import BroadcastRuleFields from "./broadcast-rule-fields";
 import { ApiSettingsButton } from "./api-settings";
@@ -23,7 +25,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
   onChange: (value: BroadcastDetails) => void; onSelectionChange: (value: Selection) => void; onBusyChange: (busy: boolean) => void;
 }) {
   const [tab, setTab] = useState("media");
-  const tabs = [{ id: "media", label: "素材选择" }, { id: "content", label: "完善内容" }, { id: "start", label: "开播" }];
+  const tabs = [{ id: "media", label: "素材选择" }, { id: "content", label: "直播编排" }, { id: "start", label: "开播" }];
   const details = value || defaultBroadcast();
   const [working, setWorking] = useState("");
   const [error, setError] = useState("");
@@ -82,6 +84,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
         <BroadcastCopyFields id={id} value={details} disabled={locked} onChange={onChange} />
         {cover("primary")}
       </section>
+      <section className="workflow-section" aria-labelledby={`chat-heading-${id}`}><div className="field-label-row"><h3 id={`chat-heading-${id}`}>AI 观众互动</h3><ApiSettingsButton disabled={locked}>AI 服务设置</ApiSettingsButton></div><LiveChatFields id={id} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} /></section>
       <details className="workflow-complete"><summary><span>完整配置</span><span className="workflow-summary">{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</span></summary>
         <div className="workflow-complete-body">
           <p className="field-hint">本场开播使用以下配置，修改会同步到前面的输入。</p>
@@ -93,6 +96,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
               {playlists && <div className="playlist-options" role="group" aria-label="播放列表">{playlists.length ? playlists.map(item => <label key={item.id}><input type="checkbox" checked={details.playlistIds.includes(item.id)} onChange={e => onChange({ ...details, playlistIds: e.target.checked ? [...details.playlistIds, item.id] : details.playlistIds.filter(key => key !== item.id) })} />{item.title}</label>) : <p className="field-hint">当前频道没有播放列表。</p>}</div>}
             </div></fieldset>
           </section>
+          <section className="workflow-section"><h4>AI 观众互动</h4><LiveChatFields id={`${id}-complete`} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} /></section>
           <a href={studio} target="_blank" rel="noopener noreferrer">在 YouTube Studio 管理其他平台设置<ExternalLinkIcon /></a>
         </div>
       </details>
@@ -100,7 +104,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
     <TabsContent className="studio-panel" value="start" aria-labelledby={`studio-tab-${id}-start`}>
       <h3 className="workflow-heading">确认本场直播</h3>
       <div className="workflow-review">
-        <div className="workflow-review-copy"><h4>{details.title || "尚未填写标题"}</h4><p className="workflow-description">{details.description || "未填写说明"}</p><dl className="workflow-review-values"><div><dt>视频</dt><dd>{videoName || "未选择"}</dd></div><div><dt>音乐</dt><dd>{musicName || "未选择"}</dd></div><div><dt>封面</dt><dd>{details.thumbnail?.name || "未设置"}</dd></div><div><dt>直播规则</dt><dd>{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</dd></div><div><dt>播放列表</dt><dd>{details.playlistIds.length ? `${details.playlistIds.length} 个` : "未选择"}</dd></div></dl><button type="button" className="btn-secondary" onClick={() => navigate("content")}>返回修改</button></div>
+        <div className="workflow-review-copy"><h4>{details.title || "尚未填写标题"}</h4><p className="workflow-description">{details.description || "未填写说明"}</p><dl className="workflow-review-values"><div><dt>视频</dt><dd>{videoName || "未选择"}</dd></div><div><dt>音乐</dt><dd>{musicName || "未选择"}</dd></div><div><dt>封面</dt><dd>{details.thumbnail?.name || "未设置"}</dd></div><div><dt>直播规则</dt><dd>{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</dd></div><div><dt>AI 自动回复</dt><dd>{(details.liveChat || defaultLiveChatConfig).enabled ? "开启" : "关闭"}</dd></div><div><dt>播放列表</dt><dd>{details.playlistIds.length ? `${details.playlistIds.length} 个` : "未选择"}</dd></div></dl><button type="button" className="btn-secondary" onClick={() => navigate("content")}>返回修改</button></div>
         {tab === "start" && <MediaPreview key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} selection={instance.agentId && videoName ? { agentId: instance.agentId, instanceId: instance.id, ...(channelId ? { channelId } : {}), source: { kind: "live", video: videoName, ...(musicName ? { music: musicName } : {}), ...(details.thumbnail?.id ? { coverId: details.thumbnail.id } : {}) } } : undefined} mode="live" receiver={{ id: broadcastId, privacy: details.privacy }} title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} />}
       </div>
       <div className="workflow-launch">{controls}</div>
