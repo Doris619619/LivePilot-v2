@@ -15,6 +15,7 @@ import ObsPicker from "./obs-picker";
 import ObsSetupList from "./obs-setup-list";
 import ComputerConnection from "./computer-connection";
 import ObsInstanceControls from "./obs-instance-controls";
+import { obsInstanceProblems } from "./obs-instance-problems";
 import ManualConnection from "./manual-connection";
 import { UpdateProvider, useLocalUpdates } from "./local-updates";
 declare global { interface Window { liveNest?: DesktopBridge } }
@@ -81,9 +82,9 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
     setPage("设备配置"); setSelectedObs(id);
     requestAnimationFrame(()=>{const target=document.getElementById(id?"setup-obs-"+id:"obs-setup");target?.scrollIntoView({block:"start"});target?.focus();});
   }
-  /** 检查结果紧贴所属 OBS，不把多个实例的故障堆在列表底部。 */
+  /** 两个页面采用同一连接证据，启动中保留进度，结束后再显示最新故障。 */
   function instanceChecks(id: string) {
-    return state?.checks.filter(c=>c.instanceId===id && c.status!=="ready" && c.code!=="not-running" && (c.code==="firewall-unconfirmed" || !c.checkedAt || now-c.checkedAt<20_000) && !(activity?.action==="launch-obs" && activity.instanceId===id && activity.status==="failed" && (c.checkedAt || 0)<=activity.startedAt)).map(c=><ProblemCard key={c.id} problem={{...makeProblem(({"not-listening":"OBS_NOT_LISTENING","not-running":"OBS_NOT_RUNNING","port-conflict":"OBS_PORT"}[c.code || ""] || c.code?.toUpperCase().replaceAll("-","_") || "OBS_CONFIG"),c.message||"OBS 待检查",{domain:"obs",target:{instanceId:id},stage:c.label}),...(c.checkedAt ? {observedAt:c.checkedAt} : {})}} objectName={instances.find(i=>i.id===id)?.name} onRefresh={()=>void act("diagnose-obs",{id})} onSettings={()=>{setHelpTopic("obs");setPage("帮助");}} />);
+    return obsInstanceProblems(id, state?.checks || [], fresh.find(s=>s.instance.id===id), activity, now).map((item,index)=><ProblemCard key={item.code+index} problem={item} objectName={instances.find(i=>i.id===id)?.name} disabled={!!busy} onRefresh={()=>void act("diagnose-obs",{id})} onSettings={()=>{setHelpTopic("obs");setPage("帮助");}} />);
   }
   /** 配置入口集中在设备配置；日常启动页只提供返回该实例的链接。 */
   function instanceSettings(i: DesktopState["instances"][number]) {
@@ -107,7 +108,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
       {state.checks.filter(c=>!c.instanceId && ["directory","node","system"].includes(c.id) && ["missing","error"].includes(c.status)).map(c=><ProblemCard key={c.id} problem={makeProblem("CONFIG",c.message || "本机配置需要检查",{source:"desktop",stage:c.label})} onRefresh={()=>void act("check")} onHelp={()=>setPage("帮助")} />)}
       <details className="technical-report"><summary>电脑技术报告</summary><p className="desktop-path">数据位置：{state.dataRoot}</p>{state.checks.filter(c=>!c.instanceId).map(c=><p key={c.id}>{c.label} · {c.status === "ready" ? "正常" : "待核对"} {c.message}</p>)}<button disabled={busy} onClick={()=>void act("check")}>重新检查电脑</button><button disabled={busy} onClick={()=>void act("firewall")}>自动配置 OBS 本机保护</button>{activity?.step === 1 && feedback}</details>
     </>}
-    {state && page === "本机 OBS" && <><div className="obs-config-row"><p>在这里启动和查看 OBS；添加、命名与连接配置统一在“设备配置”。</p><button onClick={()=>openConfiguration()}>添加或配置 OBS</button></div>{!state.paired && <p>尚未连接网页，可以先启动并检查本机 OBS。</p>}{!instances.length && <p>尚未添加 OBS，请点击“添加或配置 OBS”开始。</p>}{activity?.step === 2 && feedback}{instances.map(i => <section className="desktop-instance" key={i.id}><div className="setup-title"><h2>{i.name}</h2><button onClick={()=>openConfiguration(i.id)}>配置 {i.name}</button></div>{controls(i)}{instanceChecks(i.id)}{fresh.filter(s=>s.instance.id===i.id&&s.dashboard.obs.problem).map(s=><ProblemCard key={i.id} problem={s.dashboard.obs.problem!} objectName={i.name} onRefresh={()=>void act("diagnose-obs",{id:i.id})} onSettings={()=>openConfiguration(i.id)} />)}</section>)}</>}
+    {state && page === "本机 OBS" && <><div className="obs-config-row"><p>在这里启动和查看 OBS；添加、命名与连接配置统一在“设备配置”。</p><button onClick={()=>openConfiguration()}>添加或配置 OBS</button></div>{!state.paired && <p>尚未连接网页，可以先启动并检查本机 OBS。</p>}{!instances.length && <p>尚未添加 OBS，请点击“添加或配置 OBS”开始。</p>}{activity?.step === 2 && feedback}{instances.map(i => <section className="desktop-instance" key={i.id}><div className="setup-title"><h2>{i.name}</h2><button onClick={()=>openConfiguration(i.id)}>配置 {i.name}</button></div>{controls(i)}{instanceChecks(i.id)}</section>)}</>}
     {page === "帮助" && <Help key={helpTopic} initialTopic={helpTopic} />}
     {state && page === "设置" && <><SettingsPanel state={{...state, update: localUpdates.state?.update || state.update}} busy={!!busy || localUpdates.pending || !!localUpdates.state?.busy} act={act} />{localUpdates.error && <p role="alert">{localUpdates.error}</p>}</>}
     </main></div></>;
