@@ -18,13 +18,13 @@ import { ApiSettingsButton } from "./api-settings";
 import "./broadcast-workflow.css";
 
 /** 配置只作用于当前实例；上传中锁定表单，防止异步完成覆盖新草稿。 */
-export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onSelectionChange, onBusyChange, media, controls }: {
+export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onSelectionChange, onBusyChange, media, controls, tab, onTabChange: setTab }: {
+  tab: string; onTabChange: (tab: string) => void;
   videoName?: string; musicName?: string; videoAudio?: boolean; live?: boolean;
   media: (suffix: string) => ReactNode; controls: ReactNode;
   id: string; instance: InstanceDescriptor; value?: BroadcastDetails; disabled: boolean; channel: string; channelId?: string; broadcastId?: string;
   onChange: (value: BroadcastDetails) => void; onSelectionChange: (value: Selection) => void; onBusyChange: (busy: boolean) => void;
 }) {
-  const [tab, setTab] = useState("media");
   const tabs = [{ id: "media", label: "素材选择" }, { id: "content", label: "直播编排" }, { id: "start", label: "开播" }];
   const details = value || defaultBroadcast();
   const [working, setWorking] = useState("");
@@ -102,12 +102,12 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       </details>
     </TabsContent>
     <TabsContent className="studio-panel" value="start" aria-labelledby={`studio-tab-${id}-start`}>
+      <div className="workflow-launch">{controls}</div>
       <h3 className="workflow-heading">确认本场直播</h3>
       <div className="workflow-review">
         <div className="workflow-review-copy"><h4>{details.title || "尚未填写标题"}</h4><p className="workflow-description">{details.description || "未填写说明"}</p><dl className="workflow-review-values"><div><dt>视频</dt><dd>{videoName || "未选择"}</dd></div><div><dt>音乐</dt><dd>{musicName || "未选择"}</dd></div><div><dt>封面</dt><dd>{details.thumbnail?.name || "未设置"}</dd></div><div><dt>直播规则</dt><dd>{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</dd></div><div><dt>AI 自动回复</dt><dd>{(details.liveChat || defaultLiveChatConfig).enabled ? "开启" : "关闭"}</dd></div><div><dt>播放列表</dt><dd>{details.playlistIds.length ? `${details.playlistIds.length} 个` : "未选择"}</dd></div></dl><button type="button" className="btn-secondary" onClick={() => navigate("content")}>返回修改</button></div>
         {tab === "start" && <MediaPreview key={[instance.agentId, instance.id, channel, videoName, musicName].join(":")} selection={instance.agentId && videoName ? { agentId: instance.agentId, instanceId: instance.id, ...(channelId ? { channelId } : {}), source: { kind: "live", video: videoName, ...(musicName ? { music: musicName } : {}), ...(details.thumbnail?.id ? { coverId: details.thumbnail.id } : {}) } } : undefined} mode="live" receiver={{ id: broadcastId, privacy: details.privacy }} title={details.title} channel={channel} videoName={videoName} musicName={musicName} videoAudio={videoAudio} live={live} coverName={details.thumbnail?.name} cover={preview && details.thumbnail?.id === preview.id ? preview.url : undefined} />}
       </div>
-      <div className="workflow-launch">{controls}</div>
     </TabsContent>
     {error && <p role="alert" className="broadcast-error">{error}</p>}
     <div className="studio-step-footer"><span>第 {tabs.findIndex(item => item.id === tab) + 1} 步 / 共 3 步</span><div className="workflow-navigation">{tab !== "media" && <button type="button" className="btn-secondary" onClick={() => navigate(tabs[tabs.findIndex(item => item.id === tab) - 1].id)}>上一步</button>}{tab !== "start" && <button type="button" className="btn-primary" onClick={() => navigate(tabs[tabs.findIndex(item => item.id === tab) + 1].id)}>下一步：{tabs[tabs.findIndex(item => item.id === tab) + 1].label}</button>}</div></div>

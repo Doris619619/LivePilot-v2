@@ -34,7 +34,11 @@
 .workflow-review-values div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
 .workflow-review-values dt { color: var(--text-secondary); }
 .workflow-review-values dd { margin: 0; overflow-wrap: anywhere; }
-.workflow-launch { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border-subtle); }
+.workflow-launch { margin-bottom: 28px; padding-bottom: 24px; border-bottom: 1px solid var(--border-subtle); }
+.workflow-launch .broadcast-control-row { display: block; }
+.workflow-launch .broadcast-actions { margin-top: 20px; align-items: center; }
+.workflow-launch .broadcast-actions .btn-danger { margin-left: auto; }
+.workflow-launch .runtime-values { flex-wrap: wrap; }
 .workflow-navigation { display: flex; flex-wrap: wrap; gap: 12px; }
 .broadcast-workflow .studio-step-footer { margin-top: 24px; }
 .broadcast-workflow .media-selection { gap: 24px; }
