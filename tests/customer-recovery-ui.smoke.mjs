@@ -46,7 +46,7 @@ try {
   await card.getByRole('button', { name: '查看设备与频道' }).click();
   await expect(card.locator('.studio-connections')).toHaveAttribute('open', '');
   await expect(card.locator('.studio-connections summary')).toBeFocused();
-  await expect(card.locator('.instance-diagnostics')).not.toHaveAttribute('open', '');
+  await expect(card.locator('.instance-diagnostics')).toHaveCount(0);
   const before = reads;
   await card.getByRole('button', { name: '重新检查', exact: true }).click();
   await expect.poll(() => reads).toBeGreaterThan(before);
