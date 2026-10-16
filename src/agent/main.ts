@@ -1,5 +1,4 @@
 /** Windows Agent 命令行入口；配置加载和任务运行均不依赖 Next.js。 */
-import { setAccountAiRuntime } from "@/core/account-ai-runtime";
 import { heartbeatFeedback, acknowledgeFeedback } from "./feedback";
 import { makeProblem, type Problem } from "../shared/problems";
 import path from "node:path";
@@ -14,7 +13,7 @@ import { HEARTBEAT_MS, PROTOCOL, taskSchema, type AgentSnapshot } from "@/shared
 import { Transport, controllerOrigin } from "./transport";
 import { connectSession } from "./session";
 import { Executor } from "./executor";
-import { syncLiveChatEnvironment, LiveChatEnvironmentSync } from "./live-chat-environment";
+import { syncLiveChatEnvironment, LiveChatEnvironmentSync, resetAccountAiEnvironment } from "./live-chat-environment";
 import { Worker } from "./worker";
 /** 在启动阶段读取专用配置；不覆盖已存在环境，不在日志输出配置值。 */
 function loadEnvironment() { const file = process.env.LIVEPILOT_ENV_FILE || ".env.agent"; if (existsSync(file)) process.loadEnvFile(file); }
@@ -45,7 +44,6 @@ async function main() {
   executor.purgeYouTubeTasks = (id, accountId) => worker.purgeYouTube(id, accountId);
   const health = new Map<string, Problem>();
   let accountAiSupported = false;
-  let accountAiInitialized = false;
   const chatEnvironment = new LiveChatEnvironmentSync(() => syncLiveChatEnvironment(transport, executor.services.values(), accountAiSupported), failed => {
     if (failed) health.set("chat-environment", makeProblem("CHAT_ENVIRONMENT", "AI 互动配置同步失败，客户端正在自动重试。", { source: "agent", stage: "同步 AI 互动配置", outcome: "not-sent" }));
     else health.delete("chat-environment");
@@ -70,7 +68,8 @@ async function main() {
         const session = await connectSession(transport, { bootId, instances: instanceDescriptors() });
         transport.session = session.session; transport.structuredProblems = !!session.capabilities?.includes("problem-v1"); await executor.registerChannels(); connected = true;
         accountAiSupported = !!session.capabilities?.includes("account-ai-v1");
-        if (accountAiSupported && !accountAiInitialized) { setAccountAiRuntime({ uses: { copy: false, chat: false } }); accountAiInitialized = true; }
+        await chatEnvironment.stop();
+        if (accountAiSupported) await resetAccountAiEnvironment(executor.services.values());
         chatEnvironment.connect(!!session.capabilities?.includes("live-chat-v1"));
         await chatEnvironment.refresh();
         executor.startChat();

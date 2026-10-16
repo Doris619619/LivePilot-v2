@@ -241,10 +241,15 @@ export async function confirmPublishingReschedule(user: Member, id: string, revi
   });
   await audit(user.username, "publishing-plan-reschedule", old.profile.instanceId, "accepted"); return result;
 }
+/** 新确认版本只能交给可解析它的客户端，历史任务仍按原同意快照执行。 */
+async function requireCurrentPublishingConsent(agentId: string) {
+  if (!(await agentStore(agentId).read<string[]>("capabilities.json"))?.includes("publishing-consent-v2")) throw new AppError("AGENT_VERSION", "请将这台电脑的 LiveNest 升级到 0.1.15 或更新版本，再确认发布。当前草稿已保留。", 409);
+}
 /** 确认重扫输入和频道 Slot；再次发布只豁免明确选择的已完成旧任务，重试同一计划不创建第二组上传。 */
 export async function confirmPublishingPlan(user: Member, id: string, revision: number, ai: boolean, temporaryPrivateTitle: boolean, replaceJobIds: string[] = [], republishJobIds: string[] = []) {
   const before = await readState(); const old = before.plans.find(plan => plan.id === id); if (!old) throw new AppError("PLAN", "计划不存在。", 404); await authorizePlan(user, old);
   if (old.confirmedAt) return edit(async state => { const plan = state.plans.find(value => value.id === id); if (!plan) throw new AppError("PLAN", "计划已清理，请刷新。", 404); await authorizePublishingWrite(user, plan.profile, plan.owner, state); assertRemovalControl(state.removals, id); return state.jobs.filter(job => job.spec.batchId === id); });
+  await requireCurrentPublishingConsent(old.profile.agentId);
   if (old.archivedAt) throw new AppError("ARCHIVE", "批次已归档，未确认草稿不能再上传。", 409);
   if (!temporaryPrivateTitle || old.profile.ai.enabled && !ai) throw new AppError("CONSENT", "请同意临时私密上传和已开启的 AI 文案规则。");
   const scanned = await publishingPackages(user, old.profile.agentId, old.profile.instanceId, old.profile.accountId);
@@ -338,6 +343,7 @@ export async function confirmPublishingBatch(user: Member, id: string, ai: boole
     const saved = state.batches.find(b => b.id === id); if (!saved) throw new AppError("BATCH", "排期预览已清理，请重新预览。", 404); await authorizePublishingWrite(user, saved.profile, saved.owner, state);
     assertRemovalControl(state.removals, id);
     if (saved.confirmedAt) return state.jobs.filter(j => j.spec.batchId === id);
+    await requireCurrentPublishingConsent(saved.profile.agentId);
     if (saved.profile.accountId) await requirePublishingAccount(saved.profile.agentId, saved.profile.instanceId, saved.profile.accountId, saved.profile.channelId);
     else if (state.cleanups.some(c => c.agentId === saved.profile.agentId && c.instanceId === saved.profile.instanceId && c.state === "pending")) throw new AppError("CLEANUP", "设备授权清理尚未完成。");
     if (overrides.some(v => !saved.assets.some(a => a.id === v.assetId)) || new Set(overrides.map(v => v.assetId)).size !== overrides.length) throw new AppError("INPUT", "逐项覆盖必须对应本批次的不重复素材。");
@@ -468,6 +474,7 @@ export async function publishingTick() {
     if (!agent || agent.revoked || agent.owner && agent.owner !== job.spec.owner || !agent.online || agent.maintenance) continue;
     if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
     const capabilities = await agentStore(p.agentId).read<string[]>("capabilities.json");
+    if (job.spec.consent.version === PRIVACY_VERSION && !capabilities?.includes("publishing-consent-v2")) continue;
     if (p.accountId) { if (!capabilities?.includes("publishing-accounts-v1")) continue; try { await requirePublishingAccount(p.agentId, p.instanceId, p.accountId, p.channelId); } catch { continue; } }
     if (!capabilities?.includes(job.spec.contentPackage ? "publishing-v2" : "publishing-v1")) continue;
     if (job.observed?.revision === job.spec.revision) continue;

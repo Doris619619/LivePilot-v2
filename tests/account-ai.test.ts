@@ -7,7 +7,7 @@ import { GET, POST } from "@/app/api/account-ai/route";
 import { authenticate } from "@/server/access";
 import { accountAiEnvironment } from "@/server/account-ai";
 import { setAccountAiRuntime, accountAiRuntime } from "@/core/account-ai-runtime";
-import { syncLiveChatEnvironment } from "@/agent/live-chat-environment";
+import { syncLiveChatEnvironment, resetAccountAiEnvironment } from "@/agent/live-chat-environment";
 import { requestAi, saveAiKey } from "@/core/broadcast-ai";
 import { liveChatAiConfigured, generateLiveChatReply } from "@/core/live-chat-ai";
 import { Store } from "@/core/storage";
@@ -82,4 +82,15 @@ it("reuses all four chat fields without replacing this broadcast's copy and medi
   const applied = applyBroadcastOptions(selection, preset);
   expect(applied.broadcast?.liveChat).toEqual(config); expect(applied.video).toBe(selection.video); expect(applied.broadcast?.title).toBe("Current");
   expect(broadcastOptionsSignature(applied)).not.toBe(broadcastOptionsSignature(selection));
+});
+
+it("revokes the previous session key before syncing a reassigned account, even if the new sync fails", async () => {
+  setAccountAiRuntime({ apiKey: key, uses: { copy: true, chat: true } });
+  const refreshChatCredentials = vi.fn().mockResolvedValue(undefined);
+  await resetAccountAiEnvironment([{ refreshChatCredentials } as unknown as Service]);
+  expect(refreshChatCredentials).toHaveBeenCalledOnce();
+  expect(accountAiRuntime()).toEqual({ uses: { copy: false, chat: false } });
+  await expect(syncLiveChatEnvironment({ post: vi.fn().mockRejectedValue(new Error("offline")) }, [], true)).rejects.toMatchObject({ code: "CHAT_ENVIRONMENT" });
+  expect(liveChatAiConfigured()).toBe(false);
+  await expect(requestAi(new Store(root), "copy", "subject")).rejects.toMatchObject({ code: "CONFIG" });
 });

@@ -34,7 +34,7 @@ it("requires planned publication for a new public package batch without changing
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "publishing-plans-")); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-01T00:00:00Z")); vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_INSTANCES", "main");
   const access = emptyAccess(); access.users.push(...[alice, admin].map(user => ({ ...user, salt: "synthetic", hash: "synthetic", revision: randomUUID(), disabled: false }))); await accessStore().write("access.json", access);
-  const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]);
   await cloudStore().write("bindings.json", [{ agentId: "pc", instanceId: "main", channelId: "channel_one", confirmed: true }]); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, publicVerified: true, privacyContact: "synthetic@example.invalid", verificationNote: "Synthetic fixture only" }); await acceptPublishingPrivacy(alice, PRIVACY_VERSION);
   const account = await createPublishingAccount(alice, "pc", "main", "Package fixture"); await claimPublishingAccount("pc", account.id, "main", "channel_one", "Test", true, Date.now());
   batch = packageBatch(); profile = { ...fixtureJob().profile, accountId: account.id, privacy: "public", scheduled: true, titleTemplate: "{{packageName}}" }; await savePublishingProfile(alice, profile);
@@ -99,7 +99,7 @@ it("fixes final output size before progress and ignores stale pre-preparation re
 });
 it("dispatches package jobs only to v2 and respects the plan window instead of the old Profile window", async () => {
   const plan = await preview(); const changed = await updatePublishingPlan(alice, plan.id, 1, plan.items, { ...rule, startDate: "2026-10-08", preuploadDays: 2 }); await confirmPublishingPlan(alice, changed.id, changed.revision, false, true); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();
-  await agentStore("pc").write("capabilities.json", ["publishing-v1"]); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull(); await agentStore("pc").write("capabilities.json", ["publishing-v2", "publishing-accounts-v1"]);
+  await agentStore("pc").write("capabilities.json", ["publishing-v1"]); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull(); await agentStore("pc").write("capabilities.json", ["publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]);
   await updateToDueWindow(); await publishingTick(); expect((await agentStore("pc").read<{ records: unknown[] }>("tasks.json"))?.records).toHaveLength(2);
 });
 /** 修改测试存储中的窗口，只用于验证调度能力，不替代真实 API 验收。 */
@@ -428,7 +428,7 @@ it("reuses an account template on another channel and rechecks runtime ownership
   const pairing = await createPairing("second_pc", "Second", "alice"); await pairAgent("second_pc", pairing.code, "c".repeat(64));
   const secondSession = await openSession("second_pc", randomUUID(), [{ id: "main", name: "Main" }]);
   await heartbeatAgent("second_pc", secondSession.session, []);
-  await agentStore("second_pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  await agentStore("second_pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]);
   const account = await createPublishingAccount(alice, "second_pc", "main", "Second channel");
   await claimPublishingAccount("second_pc", account.id, "main", "channel_two", "Second channel", true);
   remote.rpc.mockResolvedValue({ root: "Synthetic", batches: [batch], thumbnails: [], channelId: "channel_two" });
@@ -457,4 +457,22 @@ it("uses batch copy choices without changing the reusable template or existing p
   const second = await previewPublishingPlan(alice, template.id, batch.id, rule, undefined, use, { ...options, enabled: false, language: "French" });
   expect(second.profile.ai).toMatchObject({ enabled: false, language: "French" });
   expect((await publishingView(alice)).plans.find(item => item.id === plan.id)?.profile.ai).toMatchObject(options);
+});
+
+it("keeps a new draft intact on an old client and does not deliver new consent jobs after downgrade", async () => {
+  const plan = await preview();
+  await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  await expect(confirmPublishingPlan(alice, plan.id, plan.revision, false, true)).rejects.toMatchObject({ code: "AGENT_VERSION" });
+  expect((await publishingView(alice)).jobs).toHaveLength(0);
+  expect((await publishingView(alice)).plans.find(item => item.id === plan.id)?.confirmedAt).toBeUndefined();
+  await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]);
+  await confirmPublishingPlan(alice, plan.id, plan.revision, false, true);
+  await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  await publishingTick();
+  expect(await agentStore("pc").read("tasks.json")).toBeNull();
+  const state = (await publishingStore().read<{ jobs: VideoJob[] }>("state.json"))!;
+  for (const job of state.jobs) job.spec.consent.version = "2026-10-01";
+  await publishingStore().write("state.json", state);
+  await publishingTick();
+  expect(await agentStore("pc").read("tasks.json")).not.toBeNull();
 });

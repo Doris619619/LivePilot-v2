@@ -68,3 +68,9 @@ export async function syncLiveChatEnvironment(transport: Pick<Transport, "post">
     throw new AppError("CHAT_ENVIRONMENT", unavailable, 503);
   }
 }
+
+/** 新会话先撤下上个会话的账号密钥并取消旧回复；同步失败时不能沿用旧账号计费。 */
+export async function resetAccountAiEnvironment(services: Iterable<Service>): Promise<void> {
+  setAccountAiRuntime({ uses: { copy: false, chat: false } });
+  await Promise.all([...services].map(service => service.refreshChatCredentials()));
+}

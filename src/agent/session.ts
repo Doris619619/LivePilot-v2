@@ -4,13 +4,17 @@ import { PROTOCOL } from "@/shared/remote";
 import type { Transport } from "./transport";
 type SessionInput = { bootId: string; instances: { id: string; name: string }[]; maintenance?: string };
 type SessionResult = { session: string; protocol?: number; capabilities?: string[] };
-/** 仅对明确的 400 协议拒绝回退一次；认证、网络和服务器错误仍交给原重连流程。 */
+/** 仅对明确的 400 协议拒绝按已知 Cloud 代际回退；认证、网络和服务器错误仍交给原重连流程。 */
 export async function connectSession(transport: Transport, input: SessionInput): Promise<SessionResult> {
   const legacy = ["publishing-v1", "publishing-v2", "publishing-accounts-v1"];
   const body = { protocol: PROTOCOL, ...input };
-  try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1"] }); }
+  try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2"] }); }
   catch (error) {
     if (!(error instanceof AppError) || error.status !== 400) throw error;
-    return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy });
+    try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1"] }); }
+    catch (fallback) {
+      if (!(fallback instanceof AppError) || fallback.status !== 400) throw fallback;
+      return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy });
+    }
   }
 }
