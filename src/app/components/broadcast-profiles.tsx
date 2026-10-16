@@ -8,6 +8,7 @@ import { applyBroadcastOptions, broadcastOptionsSnapshot, broadcastOptionsSignat
 import { ApiSettingsButton } from "./api-settings";
 import type { InstanceDescriptor, Selection } from "@/shared/types";
 import styles from "./broadcast-profiles.module.css";
+import { useSettingsDraft } from "./settings-drafts";
 
 type Mode = { kind: "new"; id: string } | { kind: "rename" | "delete" } | { kind: "apply"; profile: BroadcastProfile };
 type Props = { management?: boolean; instance?: InstanceDescriptor; target: BroadcastProfileTarget; value: Selection; disabled: boolean; onApply(value: Selection): void; onBusyChange(busy: boolean): void };
@@ -29,7 +30,9 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
   const inFlight = useRef(false);
   const editorWasOpen = useRef(false);
   const selected = profiles?.find(profile => profile.id === activeId);
+  const [initialSignature] = useState(() => broadcastOptionsSignature(current));
   const dirty = !!selected && broadcastOptionsSignature(selected.selection) !== broadcastOptionsSignature(current);
+  useSettingsDraft(`profile-${target.agentId || "local"}-${target.instanceId}`, management && (dirty || !selected && initialSignature !== broadcastOptionsSignature(current) || (mode?.kind === "new" || mode?.kind === "rename") && !!name.trim()));
   const locked = disabled || busy;
   const prefix = `live-profile-${target.agentId || "local"}-${target.instanceId}`;
 

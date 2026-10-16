@@ -4,6 +4,8 @@ import { useEffect, useState, type FormEvent } from "react";
 import { aiKeySchema } from "@/shared/broadcast-ai";
 import type { AccountAiStatus, AiUses } from "@/shared/account-ai";
 import { api } from "../client-request";
+import { useSettingsDraft } from "./settings-drafts";
+import { SettingsActions } from "./settings-panel";
 /** 关闭时销毁输入；保存失败保留输入，可重新读取确认结果。 */
 export default function ApiKeySettings({ onSaving }: { onSaving: (value: boolean) => void }) {
   const [status, setStatus] = useState<AccountAiStatus>();
@@ -14,6 +16,7 @@ export default function ApiKeySettings({ onSaving }: { onSaving: (value: boolean
   const [revision, setRevision] = useState(0);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  useSettingsDraft("account-ai", !!key || !!status && (uses.copy !== status.uses.copy || uses.chat !== status.uses.chat));
   useEffect(() => {
     const abort = new AbortController();
     api<AccountAiStatus>("/api/account-ai", { signal: abort.signal }).then(value => {
@@ -42,7 +45,7 @@ export default function ApiKeySettings({ onSaving }: { onSaving: (value: boolean
   const locked = loading || saving || !status;
   return <section className="api-service-section" aria-labelledby="api-service-title" aria-busy={loading || saving}>
     <div className="api-service-heading"><div><h3 id="api-service-title">DeepSeek</h3><p>当前账号的直播与视频发布共用一个 Key。</p></div><span className="api-config-state">{loading ? "读取中…" : status?.configured ? "已保存" : status ? "未配置" : "读取失败"}</span></div>
-    <form onSubmit={event => void save(event)} className="api-key-form">
+    <form id="account-ai-form" onSubmit={event => void save(event)} className="api-key-form">
       <label htmlFor="service-api-key">{status?.configured ? "更换 API Key" : "API Key"}</label>
       <input id="service-api-key" type="password" autoComplete="new-password" spellCheck={false} autoCapitalize="none" maxLength={256} value={key} onChange={event => setKey(event.target.value)} disabled={locked} placeholder={status?.configured ? "留空保留已保存的 Key" : "粘贴 DeepSeek API Key"} aria-describedby="api-key-privacy" />
       <p id="api-key-privacy" className="api-settings-hint">密钥加密保存，仅下发到本账号的直播电脑，不会回显。</p>
@@ -50,7 +53,7 @@ export default function ApiKeySettings({ onSaving }: { onSaving: (value: boolean
         <label><input type="checkbox" checked={uses.copy} onChange={event => setUses(value => ({ ...value, copy: event.target.checked }))} /><span>文案生成<small>生成直播和视频发布的标题、说明</small></span></label>
         <label><input type="checkbox" checked={uses.chat} onChange={event => setUses(value => ({ ...value, chat: event.target.checked }))} /><span>观众互动<small>允许自动回复；每场直播在「直播编排」中开启</small></span></label>
       </fieldset>
-      <div className="api-settings-actions"><button type="submit" className="btn-primary" disabled={locked}>{saving ? "保存中…" : "保存设置"}</button><button type="button" className="btn-ghost" disabled={loading || saving} onClick={refresh}>重新读取</button></div>
+      <SettingsActions><button type="submit" form="account-ai-form" className="btn-primary" disabled={locked}>{saving ? "保存中…" : "保存设置"}</button><button type="button" className="btn-ghost" disabled={loading || saving} onClick={refresh}>重新读取</button></SettingsActions>
     </form>
     {message && <p role="status" className="api-settings-success">{message}</p>}{error && <p role="alert" className="broadcast-error">{error}</p>}
     <details className="api-settings-help"><summary>配置说明</summary><ul><li>需要支持账号 AI 服务的新版客户端。旧密钥和频道授权不会被删除。</li><li>保存表示配置已记录；连接和额度在实际使用时验证。</li></ul></details>

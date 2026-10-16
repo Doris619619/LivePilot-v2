@@ -1,14 +1,29 @@
-/* 设置使用单层表单；目标只显示一次，操作同排，低频说明按需展开。 */
-.ui-dialog-center:has(.api-settings) { width: min(600px, calc(100vw - 32px)); padding: 24px; }
-.api-settings { display: grid; gap: 16px; min-width: 0; margin-top: 12px; }
+/* 设置中心：稳定外框、固定分类与标题；正文独立滚动，手机使用分类/详情两级视图。 */
+.ui-dialog-center:has(.api-settings) { width: min(900px, calc(100vw - 48px)); height: min(680px, calc(100dvh - 48px)); max-height: none; padding: 0; overflow: clip; display: flex; flex-direction: column; border-radius: 12px; }
+.ui-dialog:has(.api-settings) > .ui-dialog-heading { flex: none; margin: 0; padding: 16px 24px; border-bottom: 1px solid var(--border-subtle); }
+.api-settings { display: grid; grid-template-columns: 192px minmax(0, 1fr); flex: 1; min-height: 0; min-width: 0; }
+.settings-detail { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.settings-page-heading { flex: none; padding: 24px 28px 16px; }
+.settings-page-heading h3 { margin: 0; font-size: 18px; font-weight: 600; }
+.settings-back { display: none; }
+.api-settings .ui-tabs-content { display: flex; flex-direction: column; min-height: 0; flex: 1; overflow: hidden; animation: none; }
+.settings-panel-body { position: relative; min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 28px 28px; }
+.settings-panel-footer { flex: none; padding: 16px 28px; border-top: 1px solid var(--border-subtle); }
+.settings-panel-footer:empty { display: none; }
+.api-settings .ui-tabs-content[data-state="inactive"] { display: none; }
+.api-settings-target { margin-bottom: 24px; }
 .api-settings-target, .api-key-form { display: grid; gap: 8px; }
 .api-settings-label { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
 .api-settings-label label, .api-key-form > label { font-size: 13px; font-weight: 600; }
 .api-settings-label span { font-size: 12px; color: var(--text-secondary); }
 .api-settings select, .api-key-form input { width: 100%; min-width: 0; }
-.api-settings .ui-tabs-list { gap: 16px; padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; flex-wrap: wrap; }
-.api-settings .ui-tabs-trigger { flex: none; min-height: 44px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 14px; }
-.api-settings .ui-tabs-trigger[data-state="active"] { border-bottom-color: var(--accent-primary); background: transparent; box-shadow: none; }
+.api-settings .ui-tabs-list { display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; padding: 16px 12px; background: var(--surface-subtle, #f7f8fa); border: 0; border-right: 1px solid var(--border-subtle); border-radius: 0; overflow-y: auto; }
+.api-settings .ui-tabs-trigger { flex: none; flex-direction: row; justify-content: flex-start; text-align: left; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 6px; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.api-settings .ui-tabs-trigger:hover { background: var(--surface-hover, #e9edf2); }
+.api-settings .ui-tabs-trigger[data-state="active"] { background: var(--accent-subtle); color: var(--accent-primary); font-weight: 600; box-shadow: none; }
+.settings-close-confirm { flex: none; padding: 12px 24px; border-top: 1px solid var(--border-default); background: var(--surface-base); }
+.settings-close-confirm p { margin: 0 0 8px; }
+.settings-close-confirm > div { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .api-service-section { display: grid; gap: 12px; min-width: 0; }
 .api-settings .api-chat-form { gap: 12px; }
 .api-service-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
@@ -22,7 +37,18 @@
 .api-settings-help summary { cursor: pointer; padding-block: 12px; min-height: 44px; }
 .api-settings-help ul { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
 @media (max-width: 600px) {
-  .ui-dialog-center:has(.api-settings) { padding: 20px; }
+  .ui-dialog-center:has(.api-settings) { width: 100%; height: 100dvh; max-height: 100dvh; border: 0; border-radius: 0; }
+  .ui-dialog:has(.api-settings) > .ui-dialog-heading { padding: 12px 20px; padding-top: max(12px, env(safe-area-inset-top)); }
+  .api-settings { grid-template-columns: minmax(0, 1fr); }
+  .api-settings[data-mobile-detail="true"] > .ui-tabs-list { display: none; }
+  .api-settings[data-mobile-detail="false"] > .settings-detail { display: none; }
+  .api-settings .ui-tabs-list { border: 0; padding: 16px; }
+  .api-settings .ui-tabs-trigger { min-height: 48px; font-size: 16px; }
+  .settings-page-heading { padding: 12px 20px 16px; }
+  .settings-back { display: inline-flex; padding: 8px 0; min-height: 44px; margin-bottom: 8px; }
+  .settings-panel-body { padding: 0 20px 20px; scrollbar-gutter: auto; }
+  .settings-panel-footer { padding: 12px 20px max(12px, env(safe-area-inset-bottom)); }
+  .settings-close-confirm { padding: 12px 20px max(12px, env(safe-area-inset-bottom)); }
   .api-settings-actions button { min-height: 44px; }
   .api-settings input, .api-settings select { font-size: 16px; }
 }
