@@ -54,6 +54,6 @@ export default function LiveChatSettings({ instance, offline, onSaving }: { inst
     </form>}
     {error && <div role="alert"><p>{error}</p>{!offline && <button type="button" disabled={saving || loading} onClick={() => { setError(""); setLoading(true); setRevision(value => value + 1); }}>重新读取互动设置</button>}</div>}
     {message && <p role="status" className="api-settings-success">{message}</p>}
-    <details className="api-settings-help"><summary>互动说明</summary><ul><li>在工作台启停，关闭网页后继续运行；偏好按频道保存，直播期间修改立即生效。</li><li>回复跟随观众语言，包含 [AI] 和观众称呼。</li><li>使用管理员配置的独立服务，受服务余额和 YouTube 共享配额限制。</li><li>队列最多 100 条；超过 2 分钟或溢出的旧留言会跳过。<a href="https://developers.google.com/youtube/v3/determine_quota_cost" target="_blank" rel="noopener noreferrer">查看配额说明</a></li></ul></details>
+    <details className="api-settings-help"><summary>互动说明</summary><ul><li>在工作台启停，关闭网页后继续运行；偏好按频道保存，直播期间修改立即生效。</li><li>回复跟随观众语言并称呼观众，不强制添加 [AI] 前缀。</li><li>使用管理员配置的独立服务，受服务余额和 YouTube 共享配额限制。</li><li>队列最多 100 条；超过 2 分钟或溢出的旧留言会跳过。<a href="https://developers.google.com/youtube/v3/determine_quota_cost" target="_blank" rel="noopener noreferrer">查看配额说明</a></li></ul></details>
   </section>;
 }

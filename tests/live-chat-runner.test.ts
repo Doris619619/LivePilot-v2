@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Store, seal, unseal } from "@/core/storage";
 import { AppError } from "@/core/errors";
 import { LiveChatRunner } from "@/core/live-chat/runner";
+import { generateLiveChatReply } from "@/core/live-chat-ai";
 import { nextQuotaMidnight } from "@/core/live-chat/policy";
 import type { Checkpoint } from "@/core/live-chat/checkpoint";
 import { defaultLiveChatConfig, type LiveChatBatch, type LiveChatMessage, type LiveChatPorts, type LiveChatTarget } from "@/shared/live-chat";
@@ -46,7 +47,7 @@ function fixture(store = new MemoryStore("synthetic")) {
   const ports: LiveChatPorts = {
     observe: vi.fn(async () => structuredClone(target)), configured: vi.fn(async () => configured),
     stream: vi.fn((_id, _cursor, signal) => { const feed = new Feed(); feeds.push(feed); return feed.stream(signal); }),
-    generate: vi.fn(async (_config, message) => "[AI] @" + message.author + " Welcome!"),
+    generate: vi.fn(async (_config, message) => "@" + message.author + " Welcome!"),
     send: vi.fn(async () => ({ id: "sent" })), now: () => Date.now(),
   };
   const runner = new LiveChatRunner(store, ports); runners.push(runner);
@@ -60,9 +61,30 @@ async function advance(ms = 600) { await vi.advanceTimersByTimeAsync(ms); }
 async function checkpoint(store: MemoryStore) { return unseal<Checkpoint>((await store.read<string>("live-chat.enc"))!); }
 
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-08T12:00:00Z")); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_ORIGIN", "http://127.0.0.1:3010"); vi.stubEnv("LIVEPILOT_INSTANCES", "main"); });
-afterEach(async () => { for (const runner of runners.splice(0)) await runner.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); });
+afterEach(async () => { for (const runner of runners.splice(0)) await runner.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("LiveChatRunner", () => {
+  it("sends real generator replies without an AI prefix through the runner", async () => {
+    vi.stubEnv("DEEPSEEK_API_KEY", "sk-synthetic-chat-integration");
+    const fetcher = vi.fn(async () => Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ reply: "谢谢你，听得开心！" }) } }] }));
+    vi.stubGlobal("fetch", fetcher);
+    const f = fixture();
+    vi.mocked(f.ports.generate).mockImplementation((config, input, context, signal) => generateLiveChatReply(f.store, config, input, context, signal));
+    f.runner.start(); await advance();
+    for (const [index, text] of ["你好", "好好听呀", "不错"].entries()) {
+      f.feeds[0].push({ messages: [message("greeting-" + index, { author: "小梁", text })] });
+      await advance(5100);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(f.ports.send).toHaveBeenCalledTimes(3);
+    for (const call of vi.mocked(f.ports.send).mock.calls) expect(call[1]).toBe("@小梁 谢谢你，听得开心！");
+    expect(await f.runner.status()).toMatchObject({ sent: 3, skipped: 0 });
+  });
+  it.each(["   ", "x".repeat(201)])("still rejects empty or oversized generated replies", async reply => {
+    const f = fixture(); vi.mocked(f.ports.generate).mockResolvedValue(reply);
+    f.runner.start(); await advance(); f.feeds[0].push({ messages: [message("invalid")] }); await advance();
+    expect(f.ports.send).not.toHaveBeenCalled(); expect(await f.runner.status()).toMatchObject({ skipped: 1, sent: 0 });
+  });
   it("reports enabled waiting-for-key defaults without an encryption key, disk writes or YouTube calls", async () => {
     vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", ""); const f = fixture(); f.setConfigured(false);
     expect(await f.runner.status()).toMatchObject({ config: { enabled: true }, configured: false, state: "needs_key", queued: 0 });
