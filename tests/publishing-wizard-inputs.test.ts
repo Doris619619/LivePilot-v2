@@ -31,6 +31,9 @@ it("matches the exact current material, target, profile revision, rule and exclu
     { ...inputs, profile: { ...inputs.profile!, revision: 2 } },
     { ...inputs, profile: { ...inputs.profile!, playlistIds: ["PL_new"] } },
     { ...inputs, profile: { ...inputs.profile!, thumbnailFilename: "new.jpg" } },
+    { ...inputs, profile: { ...inputs.profile!, ai: { ...inputs.profile!.ai, enabled: !inputs.profile!.ai.enabled } } },
+    { ...inputs, profile: { ...inputs.profile!, ai: { ...inputs.profile!.ai, language: "French" } } },
+    { ...inputs, profile: { ...inputs.profile!, ai: { ...inputs.profile!.ai, prompt: "New batch direction" } } },
     { ...inputs, rule: { ...inputs.rule, timezone: "Asia/Shanghai" } },
     { ...inputs, excluded: [plan.items[0].packageId] },
   ];

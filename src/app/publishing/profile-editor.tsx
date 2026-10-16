@@ -4,7 +4,6 @@ import { useEffect, useId, useState, type FormEvent } from "react";
 import type { PublishingTemplate } from "@/shared/publishing-template";
 import { useSettingsDraft } from "../components/settings-drafts";
 import { ConfigurationStepTitle } from "../components/configuration-step";
-import { ApiSettingsButton } from "../components/api-settings";
 export type PublishingTarget = { agentId: string; instanceId: string; name: string; accountId?: string; channelId?: string; channel?: string };
 type Props = { initial?: PublishingTemplate; save(profile: PublishingTemplate): Promise<void>; cancel(): void; busy: boolean; numbered?: boolean; onDirtyChange?(dirty: boolean): void };
 /** 默认值可编辑；儿童内容仍须在表单中明确选择。 */
@@ -31,24 +30,12 @@ export default function ProfileEditor({ initial, save, cancel, busy, numbered = 
     event.preventDefault(); if (busy) return; await save({ ...value, revision: initial ? initial.revision + 1 : 1, madeForKids: childrenChoice === "true" });
   }
   return <form className="publishing-form" onSubmit={e => void submit(e)}>
-    <label>配置名称<input disabled={busy} required value={value.name} maxLength={80} onChange={e => setValue({ ...value, name: e.target.value })} /></label>
-    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={2}>视频文案</ConfigurationStepTitle> : "视频文案"}</legend>
-      <label>标题模板<input disabled={busy} required value={value.titleTemplate} onChange={e => setValue({ ...value, titleTemplate: e.target.value })} /></label>
-      <label>说明模板<textarea disabled={busy} rows={3} value={value.descriptionTemplate} onChange={e => setValue({ ...value, descriptionTemplate: e.target.value })} /></label>
-      <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{packageName}} 发布包 · {{batchName}} 批次 · {{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期"}</p></details>
-      <label className="publishing-check"><input disabled={busy} type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
-      {value.ai.enabled && <div className="publishing-ai-fields">
-        <p className="publishing-hint">使用账号统一的 AI 服务，批次确认时授权生成。</p><ApiSettingsButton disabled={busy}>API 设置</ApiSettingsButton>
-        <div className="publishing-fields"><label>生成语言<input disabled={busy} required value={value.ai.language} onChange={e => setValue({ ...value, ai: { ...value.ai, language: e.target.value } })} /></label><label>失败兜底标题<input disabled={busy} required value={value.ai.fallbackTitle} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackTitle: e.target.value } })} /></label></div>
-        <label>生成要求<textarea disabled={busy} required rows={3} value={value.ai.prompt} onChange={e => setValue({ ...value, ai: { ...value.ai, prompt: e.target.value } })} /></label>
-        <label>失败兜底说明<textarea disabled={busy} rows={3} value={value.ai.fallbackDescription} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackDescription: e.target.value } })} /></label>
-      </div>}
-    </fieldset>
-    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={3}>发布方式</ConfigurationStepTitle> : "发布方式"}</legend>
+    <label><span className={numbered ? "visually-hidden" : undefined}>配置名称</span><input disabled={busy} required value={value.name} maxLength={80} onChange={e => setValue({ ...value, name: e.target.value })} /></label>
+    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={2}>发布方式</ConfigurationStepTitle> : "发布方式"}</legend>
       <div className="publishing-fields"><label>可见性<select disabled={busy} value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingTemplate["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select disabled={busy} required value={childrenChoice} onChange={e => { setChildrenChoice(e.target.value); setValue({ ...value, madeForKids: e.target.value === "true" }); }}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
       <div className="publishing-fields"><label>封面<select disabled={busy} value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingTemplate["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label></div>
     </fieldset>
-    {numbered && <h4 className="configuration-step-title"><ConfigurationStepTitle number={4}>补充设置</ConfigurationStepTitle></h4>}
+    {numbered && <h4 className="configuration-step-title"><ConfigurationStepTitle number={3}>补充设置</ConfigurationStepTitle></h4>}
     <label>标签 · 逗号分隔<input disabled={busy} value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
     <details className="publishing-details"><summary>高级设置</summary>
       <div className="publishing-fields"><label>分类<select disabled={busy} value={value.categoryId} onChange={e => setValue({ ...value, categoryId: e.target.value })}><option value="10">音乐</option><option value="22">人物与博客</option><option value="24">娱乐</option><option value="27">教育</option><option value="28">科学与技术</option><option value="20">游戏</option><option value="1">电影与动画</option></select></label><label>授权许可<select disabled={busy} value={value.license} onChange={e => setValue({ ...value, license: e.target.value as PublishingTemplate["license"] })}><option value="youtube">标准 YouTube 许可</option><option value="creativeCommon">Creative Commons</option></select></label></div>

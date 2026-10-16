@@ -445,3 +445,16 @@ it("reuses an account template on another channel and rechecks runtime ownership
   await expect(previewPublishingPlan(alice, template.id, batch.id, rule, undefined, { ...use, templateRevision: 2 })).rejects.toMatchObject({ code: "FORBIDDEN" });
   expect((await readPublishingTemplates(alice)).some(item => item.id === template.id)).toBe(true);
 });
+
+/** 发布阶段选择 AI 不写回配置包；旧任务保持固定快照。 */
+it("uses batch copy choices without changing the reusable template or existing plan", async () => {
+  const template = await savePublishingTemplate(alice, { ...publishingTemplate(profile), id: randomUUID(), name: "Rules only", revision: 1 });
+  const use = { agentId: profile.agentId, instanceId: profile.instanceId, accountId: profile.accountId!, channelId: profile.channelId, playlistIds: [], templateRevision: 1 };
+  const options = { enabled: true, language: "简体中文", prompt: "本批视频使用简洁中文" };
+  const plan = await previewPublishingPlan(alice, template.id, batch.id, rule, undefined, use, options);
+  expect(plan.profile.ai).toMatchObject(options);
+  expect((await readPublishingTemplates(alice)).find(item => item.id === template.id)).toEqual(template);
+  const second = await previewPublishingPlan(alice, template.id, batch.id, rule, undefined, use, { ...options, enabled: false, language: "French" });
+  expect(second.profile.ai).toMatchObject({ enabled: false, language: "French" });
+  expect((await publishingView(alice)).plans.find(item => item.id === plan.id)?.profile.ai).toMatchObject(options);
+});

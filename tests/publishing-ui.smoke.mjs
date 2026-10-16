@@ -98,6 +98,7 @@ async function mock(route) {
         if (holdPreview) await new Promise(resolve => { releasePreview = resolve; });
         const selected = body.use ? { ...templates.find(value => value.id === body.profileId), ...body.use } : view.profiles.find(value => value.id === body.profileId);
         if (body.use) { assert.equal(selected.revision, body.use.templateRevision); delete selected.templateRevision; }
+        if (body.copy) selected.ai = { ...body.copy, fallbackTitle: "{{packageName}}", fallbackDescription: "" };
         latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(selected), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
         view.plans.push(latestPlan); result = latestPlan;
       }
@@ -214,6 +215,18 @@ try {
   await page.getByLabel("设备", { exact: true }).selectOption("pc:main"); await page.getByRole("button", { name: "检测素材", exact: true }).click(); await page.getByText("缺少 video", { exact: true }).waitFor();
   assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true);
   await page.getByRole("button", { name: "下一步", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor();
+  await page.getByLabel("AI 自动生成标题和说明", { exact: true }).check();
+  await page.getByLabel("生成语言", { exact: true }).fill("简体中文");
+  await page.getByLabel("生成要求", { exact: true }).fill("围绕本批视频主题生成简洁文案");
+  await page.getByLabel("视频发布配置", { exact: true }).selectOption(thirdProfile.id);
+  assert.equal(await page.getByLabel("生成语言", { exact: true }).inputValue(), "简体中文");
+  await page.getByLabel("视频发布配置", { exact: true }).selectOption(profile.id);
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.getByLabel("生成语言", { exact: true }).scrollIntoViewIfNeeded();
+    await capture(page, "copy-options-" + width + ".png");
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   // 侧栏直接进入配置/账号，返回发布流程保留原步骤与所选设备，不重复走设置子菜单。
   await page.getByRole("button", { name: "视频发布配置包", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
@@ -221,12 +234,13 @@ try {
   await page.getByRole("button", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
   await page.getByRole("button", { name: "管理配置包", exact: true }).click(); await page.getByRole("button", { name: "新建视频发布配置包", exact: true }).click();
-  assert.equal(await page.getByLabel("标题模板").inputValue(), "{{packageName}}"); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("标题模板").count(), 0); assert.equal(await page.getByLabel("说明模板").count(), 0); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
+  assert.equal(await page.getByRole("dialog").getByLabel("AI 自动生成标题和说明").count(), 0);
   assert.equal(await page.getByRole("dialog").getByText(/播放列表/).count(), 0, "通用配置包不绑定频道播放列表");
   let releaseSettings; settingsSave = new Promise(resolve => { releaseSettings = resolve; });
   await page.getByLabel("是否专为儿童制作").selectOption("false"); failNextRead = true; await page.getByRole("button", { name: "保存配置包", exact: true }).click();
   await page.getByRole("button", { name: "保存中…", exact: true }).waitFor();
-  assert.equal(await page.getByLabel("标题模板").isDisabled(), true); assert.equal(await page.getByLabel("说明模板").isDisabled(), true);
+  assert.equal(await page.getByLabel("配置名称", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("标签 · 逗号分隔", { exact: true }).isDisabled(), true);
   assert.equal(await page.getByLabel("是否专为儿童制作").isDisabled(), true); assert.equal(await page.getByRole("button", { name: "返回", exact: true }).isDisabled(), true);
   releaseSettings(); settingsSave = undefined;
   await page.getByRole("dialog").getByText(/已保存「/).waitFor(); await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("视频发布配置", { exact: true }).selectOption(templates.at(-1).id); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
@@ -256,9 +270,13 @@ try {
   assert.equal(await page.getByLabel("发布频道", { exact: true }).inputValue(), "第三频道"); await page.getByLabel("开始日期", { exact: true }).fill("2030-11-01"); await page.getByLabel("周三发布时间", { exact: true }).fill("09:00");
   await page.getByLabel("发布账号", { exact: true }).selectOption(accountOne); await expectStep(page, "配置与排期"); assert.equal(await page.getByLabel("开始日期", { exact: true }).inputValue(), "2030-10-01"); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).inputValue(), "20:00"); await assertTimezone(page, "Asia/Shanghai");
   await stepButton(page, "准备素材").click(); await expectStep(page, "准备素材"); assert.equal(await page.getByRole("checkbox", { name: /暂不发布.*003/ }).isChecked(), true); await stepButton(page, "配置与排期").click(); await expectStep(page, "配置与排期");
+  assert.equal(await page.getByLabel("生成语言", { exact: true }).inputValue(), "简体中文");
+  assert.equal(await page.getByLabel("生成要求", { exact: true }).inputValue(), "围绕本批视频主题生成简洁文案");
+  await page.getByLabel("AI 自动生成标题和说明", { exact: true }).uncheck();
   holdPreview = true; const pendingPreview = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/api/publishing" && request.postDataJSON().action === "plan-preview");
   await page.getByRole("button", { name: "生成排期", exact: true }).click(); await pendingPreview; assert.equal(await page.getByLabel("视频发布配置", { exact: true }).isDisabled(), true); assert.equal(await page.getByLabel("开始日期", { exact: true }).isDisabled(), true); assert.equal(await page.getByRole("button", { name: /^时区/ }).isDisabled(), true); assert.equal(await page.getByLabel("周三发布时间", { exact: true }).isDisabled(), true); holdPreview = false; releasePreview();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
+  assert.deepEqual(latestPlan.profile.ai, { enabled: false, language: "简体中文", prompt: "围绕本批视频主题生成简洁文案", fallbackTitle: "{{packageName}}", fallbackDescription: "" });
   assert.equal(latestPlan.profile.accountId, accountOne); assert.equal(latestPlan.items.filter(item => !item.excluded).length, 98); assert.equal(latestPlan.skippedOccupied, 6); assert.equal(latestPlan.rule.weeklySlots.find(slot => slot.weekday === 3).time, "20:00");
   assert.equal(await page.getByRole("button", { name: "日历", exact: true }).getAttribute("aria-pressed"), "true"); await page.locator('[aria-label="发布排期日历"]').waitFor();
   await page.getByRole("button", { name: "下个月", exact: true }).click(); assert.equal(await page.getByRole("button", { name: "编辑发布包 001", exact: true }).count(), 0);

@@ -49,3 +49,16 @@ it("requires device-specific fixed artwork only when binding an execution snapsh
   expect(() => bindPublishingTemplate(template, use)).toThrow();
   expect(bindPublishingTemplate(template, { ...use, thumbnailFilename: "new.jpg" })).toMatchObject({ agentId: "second_pc", instanceId: "second", channelId: "second_channel", playlistIds: ["PL_selected"], thumbnailFilename: "new.jpg" });
 });
+
+it("keeps old copy data but does not apply shared title or description to new videos", () => {
+  const template = publishingTemplate(fixtureJob().profile);
+  template.titleTemplate = "Old shared title"; template.descriptionTemplate = "Old shared description";
+  template.ai.enabled = true; template.ai.language = "Old language";
+  template.ai.fallbackTitle = "Old fallback"; template.ai.fallbackDescription = "Old description";
+  const original = structuredClone(template);
+  const bound = bindPublishingTemplate(template, { agentId: "pc", instanceId: "main", accountId: randomUUID(), channelId: "channel_one", playlistIds: [], templateRevision: template.revision });
+  expect(bound.ai.enabled).toBe(false); expect(bound.ai.language).toBe("English");
+  expect(bound.titleTemplate).toBe("{{packageName}}"); expect(bound.descriptionTemplate).toBe("");
+  expect(bound.ai.fallbackTitle).toBe("{{packageName}}"); expect(bound.ai.fallbackDescription).toBe("");
+  expect(template).toEqual(original);
+});

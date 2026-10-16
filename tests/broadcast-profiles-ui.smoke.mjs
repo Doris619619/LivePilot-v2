@@ -15,13 +15,6 @@ page.on("pageerror", e => errors.push(e.message));
 await context.route("**/*", route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
 await context.route("**/api/control", route => { starts.push(route.request().postDataJSON()); return route.fulfill({ status: 409, json: { error: "验收已截获开播请求，未执行直播。" } }); });
 await context.route("**/api/broadcast-profiles", route => failSave && route.request().method() === "POST" ? route.fulfill({ status: 503, json: { error: "模拟保存失败" } }) : route.continue());
-/** 新建配置包通过设置表单保存，测试失败保持输入。 */
-async function saveAs(dialog, name) {
-  await dialog.getByRole("button", { name: "另存为", exact: true }).click();
-  await dialog.getByLabel("配置名称", { exact: true }).fill(name);
-  await dialog.getByRole("button", { name: "保存配置", exact: true }).click();
-  await expect(dialog.getByRole("status")).toHaveText(`已保存「${name}」`);
-}
 /** 捕获当前步骤；先回到页面顶部避免固定页头出现在全页截图中部。 */
 async function capture(name) {
   await page.evaluate(() => { document.activeElement?.blur(); window.scrollTo({ top: 0, behavior: "instant" }); });
@@ -59,16 +52,19 @@ try {
   await complete.locator("summary").click();
   await first.getByRole("button", { name: "管理配置包", exact: true }).click();
   let dialog = page.getByRole("dialog", { name: "设置", exact: true });
-  await expect(dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "新建直播配置包", exact: true }).click();
   await dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true }).selectOption("private");
   await dialog.getByLabel("保留视频原声").filter({ visible: true }).check();
   const privateName = `私密测试 ${stamp}`, publicName = `公开音乐 ${stamp}`;
-  await saveAs(dialog, privateName);
+  await dialog.getByLabel("配置名称", { exact: true }).fill(privateName);
+  await dialog.getByRole("button", { name: "保存配置包", exact: true }).click();
+  await expect(dialog.getByRole("status")).toHaveText(`已保存「${privateName}」`);
+  await dialog.getByRole("button", { name: "新建直播配置包", exact: true }).click();
   await dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true }).selectOption("public"); await dialog.getByLabel("保留视频原声").filter({ visible: true }).uncheck();
   failSave = true;
-  await dialog.getByRole("button", { name: "另存为", exact: true }).click(); await dialog.getByLabel("配置名称", { exact: true }).fill(publicName);
-  await dialog.getByRole("button", { name: "保存配置", exact: true }).click(); await expect(dialog.getByRole("alert")).toContainText("模拟保存失败"); await expect(dialog.getByLabel("配置名称", { exact: true })).toHaveValue(publicName);
-  failSave = false; await dialog.getByRole("button", { name: "保存配置", exact: true }).click(); await expect(dialog.getByRole("status")).toHaveText(`已保存「${publicName}」`);
+  await dialog.getByLabel("配置名称", { exact: true }).fill(publicName);
+  await dialog.getByRole("button", { name: "保存配置包", exact: true }).click(); await expect(dialog.getByRole("alert")).toContainText("模拟保存失败"); await expect(dialog.getByLabel("配置名称", { exact: true })).toHaveValue(publicName);
+  failSave = false; await dialog.getByRole("button", { name: "保存配置包", exact: true }).click(); await expect(dialog.getByRole("status")).toHaveText(`已保存「${publicName}」`);
   await page.screenshot({ path: path.join(output, "profile-settings-desktop.png") });
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   const picker = first.getByRole("combobox", { name: "直播配置包", exact: true });

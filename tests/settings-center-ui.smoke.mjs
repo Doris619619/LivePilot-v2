@@ -57,6 +57,7 @@ try {
   assert.deepEqual(await measure('desktop-defaults'), initial);
   await capture('desktop-defaults');
   await dialog.getByRole('tab', { name: '发布配置', exact: true }).click();
+  await dialog.getByRole('button', { name: '新建直播配置包', exact: true }).click();
   await expect(dialog.locator('#privacy-profile-editor')).toBeVisible();
   await dialog.getByLabel('自动回复观众', { exact: true }).check();
   const prompt = dialog.locator('#chat-prompt-profile-editor');

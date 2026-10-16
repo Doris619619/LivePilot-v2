@@ -20,6 +20,7 @@ import { publishingTaskAccountId, type TaskPayload } from "@/shared/remote";
 import { authorizePublishingAccount, beginPublishingAccountCleanup, completePublishingAccountCleanup, createPublishingAccount as newPublishingAccount, expirePublishingAccountData, publishingAccountCleanups, publishingAccounts, requestPublishingAccountCleanup as accountCleanup, requirePublishingAccount, requirePublishingAccountsCapability } from "./publishing-accounts";
 import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, canRepublishPublishingJob, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport } from "@/shared/publishing";
 import { readPublishingTemplates } from "@/server/publishing-templates";
+import { publishingCopyForUse, type PublishingCopyOptions } from "@/shared/publishing-copy-options";
 import { bindPublishingTemplate, type PublishingUse } from "@/shared/publishing-template";
 type Profile = { owner: string; value: PublishingProfile };
 type Batch = { id: string; owner: string; actor: string; profile: PublishingProfile; assets: MediaAsset[]; thumbnails: string[]; copies: { title: string; description: string }[]; slots: { publishAt: string; local: string; overlapping: boolean }[]; skipped: string[]; confirmedAt?: number; createdAt: number };
@@ -176,7 +177,7 @@ async function authorizePlan(user: Member, plan: PublishingPlan) {
   return agent;
 }
 /** 创建持久草稿，Profile 和包列表均固定快照；异常包须在检查步骤显式排除。 */
-export async function previewPublishingPlan(user: Member, profileId: string, batchId: string, rawRule: unknown, rawItems?: PublishingPlanItem[], use?: PublishingUse) {
+export async function previewPublishingPlan(user: Member, profileId: string, batchId: string, rawRule: unknown, rawItems?: PublishingPlanItem[], use?: PublishingUse, copy?: PublishingCopyOptions) {
   const state = await readState(); const record = state.profiles.find(p => p.value.id === profileId);
   let profile: PublishingProfile;
   if (use) {
@@ -192,6 +193,7 @@ export async function previewPublishingPlan(user: Member, profileId: string, bat
     if (user.role !== "admin" && record.owner !== user.username) throw new AppError("FORBIDDEN", "配置不属于当前客户。", 403);
     profile = structuredClone(record.value);
   }
+  if (copy) profile = { ...profile, titleTemplate: "{{packageName}}", descriptionTemplate: "", ai: publishingCopyForUse(copy) };
   if (!profile.accountId) throw new AppError("ACCOUNT", "请选择独立发布账号。", 409);
   const agent = await authorizeAgent(user, profile.agentId);
   const result = await publishingPackages(user, profile.agentId, profile.instanceId, profile.accountId);

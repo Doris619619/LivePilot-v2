@@ -85,3 +85,23 @@
 .api-service-section > section[aria-label="直播配置包"] { margin-bottom: 0; padding-bottom: 16px; }
 .api-service-section > .configuration-step-title { margin-top: 12px; }
 .settings-panel-body:has(.publishing-profile-settings) { scroll-padding-block: 80px; }
+
+/* 配置包目录与编辑器：新建为主操作，每行显式编辑；短名称和长名称均保留操作位置。 */
+.profile-library { min-width: 0; }
+.profile-library-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.profile-library-toolbar h4, .profile-library-row h4 { margin: 0; font-size: 15px; font-weight: 600; }
+.profile-library-toolbar button { flex-shrink: 0; }
+.profile-library-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0; border-bottom: 1px solid var(--border-subtle); }
+.profile-library-row > div:first-child { min-width: 0; overflow-wrap: anywhere; }
+.profile-library-row p { margin: 6px 0 0; font-size: 13px; color: var(--text-secondary); }
+.profile-row-actions { display: flex; gap: 4px; flex-shrink: 0; }
+.profile-row-actions button { min-height: 40px; padding-inline: 12px; }
+.profile-editor-heading { margin: 0 0 24px; font-size: 16px; font-weight: 600; }
+.profile-editor > input { width: 100%; min-width: 0; }
+.profile-editor-actions { display: flex; flex-wrap: wrap; gap: 10px; position: sticky; bottom: -28px; background: var(--surface-base); border-top: 1px solid var(--border-subtle); padding: 16px 0; margin-top: 24px; }
+@media (max-width: 600px) {
+  .profile-library-toolbar { align-items: stretch; flex-direction: column; gap: 12px; margin-bottom: 8px; }
+  .profile-library-row { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .profile-row-actions button { min-height: 44px; }
+  .profile-editor-actions { bottom: -20px; }
+}

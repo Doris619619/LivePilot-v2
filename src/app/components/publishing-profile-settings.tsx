@@ -42,13 +42,13 @@ export default function PublishingProfileSettings({ onSaving }: { onSaving(value
   /** 返回列表前确认丢弃；分类和类型切换不经过这里，始终保留编辑器。 */
   function back() { if (dirty) setConfirmBack(true); else setEditing(undefined); }
 
-  return <section className="publishing-profile-settings publishing-shell" aria-label="管理视频发布配置包">
+  return <section className="publishing-profile-settings publishing-shell profile-library" aria-label="管理视频发布配置包">
     {!catalog && !error && <p role="status">读取视频发布配置包…</p>}
-    {catalog && <><h4 className="configuration-step-title"><ConfigurationStepTitle number={1}>{editing ? "命名配置包" : "选择或创建配置包"}</ConfigurationStepTitle></h4>
+    {catalog && <>{editing && <><h4 className="profile-editor-heading">{editing === "new" ? "新建视频发布配置包" : "编辑视频发布配置包"}</h4><h4 className="configuration-step-title"><ConfigurationStepTitle number={1}>配置名称</ConfigurationStepTitle></h4></>}
       {editing ? <ProfileEditor key={editing === "new" ? "new" : editing.id} initial={editing === "new" ? undefined : editing} save={save} cancel={back} busy={busy} onDirtyChange={setDirty} numbered /> : <>
-        <div className="api-settings-actions"><button type="button" disabled={busy} onClick={() => { setEditing("new"); setNotice(""); }}>新建视频发布配置包</button></div>
-        {profiles.length === 0 && <p className="field-hint">还没有配置包。保存后可在发布视频时重复使用。</p>}
-        {profiles.map(profile => <article className="publishing-profile-row" key={profile.id}><div><h4>{profile.name}</h4><p>{visibilityLabel(profile)}</p></div><button type="button" disabled={busy} onClick={() => { setEditing(profile); setNotice(""); }}>编辑<span className="visually-hidden"> {profile.name}</span></button></article>)}
+        <div className="profile-library-toolbar"><h4>已保存的配置包</h4><button type="button" className="btn-primary" disabled={busy} onClick={() => { setEditing("new"); setNotice(""); }}>新建视频发布配置包</button></div>
+        {profiles.length === 0 && <p className="field-hint">还没有视频发布配置包</p>}
+        {profiles.map(profile => <article className="profile-library-row" key={profile.id}><div><h4>{profile.name}</h4><p>{visibilityLabel(profile)}</p></div><div className="profile-row-actions"><button type="button" disabled={busy} onClick={() => { setEditing(profile); setNotice(""); }}>编辑<span className="visually-hidden"> {profile.name}</span></button></div></article>)}
       </>}
     </>}
     {confirmBack && <div role="alert"><p>放弃未保存的修改并返回配置包列表？</p><div className="api-settings-actions"><button type="button" onClick={() => setConfirmBack(false)}>继续编辑配置包</button><button type="button" onClick={() => { setEditing(undefined); setDirty(false); setConfirmBack(false); setError(""); }}>放弃修改并返回</button></div></div>}

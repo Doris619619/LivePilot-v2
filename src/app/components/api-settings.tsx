@@ -77,7 +77,6 @@ function SettingsContent({ initialSection, onSaving, saving, onSectionChange }: 
     <SettingsPanel value="defaults"><BroadcastDefaultSettings onSaving={onSaving} /></SettingsPanel>
     <SettingsPanel value="profiles">
     <div className="publication-type" role="group" aria-label="配置包类型"><button type="button" aria-pressed={packageType === "live"} disabled={saving} onClick={() => choosePackageType("live")}>直播配置包</button><button type="button" aria-pressed={packageType === "video"} disabled={saving} onClick={() => choosePackageType("video")}>视频发布配置包</button></div>
-    <p className="field-hint">当前账号通用；设备和频道在使用时选择。</p>
     <div hidden={packageType !== "live"}><BroadcastProfileSettings onSaving={onSaving} /></div>
     <div hidden={packageType !== "video"}><PublishingProfileSettings onSaving={onSaving} /></div></SettingsPanel>
     <SettingsPanel value="ai"><ApiKeySettings onSaving={onSaving} /></SettingsPanel>
