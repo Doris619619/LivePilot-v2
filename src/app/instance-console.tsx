@@ -1,8 +1,8 @@
-/* 文件用途：按内容、素材、直播选项与控制区组织直播操作，明确电脑、OBS 实例与授权频道的对应关系。 */
+/* 文件用途：组织三步开播与就地故障恢复；技术状态保留在后台，不在客户工作台展示诊断字段。 */
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
 import BroadcastSettings from "./components/broadcast-settings";
 import LiveChatPanel from "./components/live-chat-panel";
@@ -63,6 +63,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
   const [detailsBusy, setDetailsBusy] = useState(false);
   const [expanded, setExpanded] = useState(initiallyExpanded);
+  const connectionsRef = useRef<HTMLDetailsElement>(null);
   const channel = data?.youtube.channel?.trim() || "";
   const title = channel || name;
   const key = targetKey(instance);
@@ -103,16 +104,25 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
     ? "待机"
     : blocker ? "待配置" : "就绪";
 
-  const privacyText = {
-    unlisted: "不公开列出",
-    private: "私密",
-    public: "公开",
-  }[selection.broadcast?.privacy || data?.configuration.privacy || "public"];
-
   const issues: Problem[] = [model.problem, data?.obs.problem, data?.youtube.problem, ...(data?.media.problems || []), ...(data?.problems || [])].filter((p): p is NonNullable<typeof p>=>!!p).map(p=>({...p,target:{...p.target,agentId:instance.agentId,instanceId:instance.id}}));
+  // 兼容尚未返回结构化问题的设备，移除诊断区后仍保留真实失败原因。
+  if (!stale && data?.obs.ready === false && data.obs.message && !issues.some(p => p.domain === "obs")) issues.push(makeProblem("OBS_READ", data.obs.message, { target: { agentId: instance.agentId, instanceId: instance.id }, outcome: "rejected", stage: "检查 OBS 连接" }));
+  if (!stale && data?.youtube.error && !issues.some(p => p.domain === "youtube")) issues.push(makeProblem("YOUTUBE_READ", data.youtube.error, { target: { agentId: instance.agentId, instanceId: instance.id }, outcome: "rejected", stage: "读取频道状态" }));
   if (!issues.length && (error || data?.state.error)) issues.push(makeProblem("CONTROL",error || data!.state.error!,{target:{agentId:instance.agentId,instanceId:instance.id},attemptId:data?.operation?.id,stage:"直播操作"}));
   if(data?.configuration.missing.length)issues.push(makeProblem("CONFIG",[...new Set(data.configuration.missing.map(configurationLabel))].join("；"),{target:{agentId:instance.agentId,instanceId:instance.id},outcome:"rejected",stage:"检查开播配置"}));
-  const readiness = data?.configuration.missing.length ? "设备配置未完成，请查看连接与诊断。" : blocker;
+  const readiness = data?.configuration.missing.length ? "设备配置未完成，请按上方提示在直播电脑补齐。" : blocker;
+
+  /** 将恢复入口定位到设备与频道，并移动焦点；不依赖其他折叠区的排列顺序。 */
+  function showConnections() {
+    setExpanded(true);
+    requestAnimationFrame(() => {
+      const connections = connectionsRef.current;
+      if (!connections) return;
+      connections.open = true;
+      connections.querySelector("summary")?.focus({ preventScroll: true });
+      connections.scrollIntoView({ block: "nearest" });
+    });
+  }
 
   const stoppable = canStopBroadcast(data);
   const broadcastControls = <>
@@ -145,13 +155,19 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
       <OAuthFeedback instance={instance} />
       {/* 只把异常和阻塞原因放在主列表，正常状态不重复解释。 */}
-      {issues.filter(problem => !(deviceOffline && problem.code === "CLOUD_UNAVAILABLE" && problem.stage === "读取实例状态" && !problem.attemptId)).map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} onRefresh={()=>void refresh()} onSettings={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onHelp={()=>{setExpanded(true);requestAnimationFrame(()=>{const details=document.querySelector<HTMLDetailsElement>("#instance-"+id+" .instance-diagnostics");if(details){details.open=true;details.scrollIntoView({block:"nearest"});}});}} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
+      {issues.filter(problem => !(deviceOffline && problem.code === "CLOUD_UNAVAILABLE" && problem.stage === "读取实例状态" && !problem.attemptId)).map((problem,index)=><ProblemCard key={problem.code+index} problem={problem} objectName={(instance.agentName || "本机")+" · "+name} showGuidance settingsLabel="查看设备与频道" onRefresh={()=>void refresh()} onSettings={showConnections} onAuthorize={problem.actions.includes("authorize") && !busy && !stale ? ()=>void act("connect") : undefined} />)}
+      {!data?.state.broadcastId && data?.state.broadcastIntent && <section className="problem-card error" role="alert" aria-label="核对未确认场次">
+        <strong>上次开播结果尚未确认</strong>
+        <p>先在原频道 YouTube Studio 核对场次。确认没有创建直播后，才能清理本地记录并重新准备。</p>
+        <div className="problem-actions"><a className="btn-secondary" href="https://studio.youtube.com" target="_blank" rel="noopener noreferrer">打开 YouTube Studio<ExternalLinkIcon /></a><button type="button" className="btn-secondary" disabled={busy} onClick={()=>void refresh()}><RefreshIcon />重新检查</button></div>
+        <div className="recovery-controls"><label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />已核对原频道没有此场次</label><button type="button" className="btn-secondary" disabled={busy || stale || !confirmed} onClick={() => void act("clear-uncertain")}>清理未确认状态</button></div>
+      </section>}
       {data?.operation && data.operation.status !== "succeeded" && <p className="instance-feedback" role="status">最近操作：{data.operation.actor} · {operationLabel}</p>}
       <p className={!expanded && blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
       <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
         {pending && !live && <p className="readiness-text">当前场次尚未结束，重试或结束直播后可更换素材。</p>}
-        <details className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
+        <details ref={connectionsRef} className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
             <h3 className="visually-hidden" id={`step-1-${id}`}>设备与频道</h3>
             <div className="connections-grid">
@@ -212,27 +228,6 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
         <details className="instance-diagnostics" open={live}><summary>AI 观众互动</summary><LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} /></details>
 
-        <details className="instance-diagnostics">
-          <summary>连接与诊断</summary>
-          <div className="diagnostics-content">
-            {!!data?.configuration.missing.length && <div className="banner error"><span>请在直播电脑补齐：{[...new Set(data.configuration.missing.map(configurationLabel))].join("、")}</span></div>}
-            {data?.obs.message && <p className="readiness-text">{data.obs.message}</p>}
-            {data?.youtube.error && <p className="readiness-text">{data.youtube.error}</p>}
-            <dl className="diagnostic-values">
-              <div><dt>频道 ID</dt><dd>{data?.youtube.channelId || "—"}</dd></div>
-              <div><dt>当前步骤</dt><dd>{stale ? "离线重连中" : working === "launch" ? "等待 OBS 响应" : data?.state.stage || "读取中…"}</dd></div>
-              <div><dt>可见范围</dt><dd>{privacyText} · {(selection.broadcast?.madeForKids ?? data?.configuration.madeForKids) ? "面向儿童" : "常规内容"}</dd></div>
-              <div><dt>实例</dt><dd>{instance.agentName || "本机"} / {instance.id}</dd></div>
-              <div><dt>Broadcast ID</dt><dd>{data?.state.broadcastId || "—"}</dd></div>
-              <div><dt>Stream ID</dt><dd>{data?.state.streamId || "—"}</dd></div>
-            </dl>
-            {!data?.state.broadcastId && data?.state.broadcastIntent && <div className="recovery-controls">
-              <label><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />已核对 Studio 无此场次</label>
-              <button type="button" className="btn-secondary" disabled={busy || stale || !confirmed} onClick={() => void act("clear-uncertain")}>清理未确认状态</button>
-            </div>}
-            <button type="button" className="btn-ghost" onClick={() => void refresh()}><RefreshIcon />刷新状态</button>
-          </div>
-        </details>
       </div></Reveal>
     </article>
   );
