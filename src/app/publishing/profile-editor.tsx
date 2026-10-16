@@ -1,77 +1,59 @@
 /** 发布方式配置表单；发布时间归属计划，封面和高级设置按需展开。 */
 "use client";
 import { useEffect, useId, useState, type FormEvent } from "react";
-import type { PublishingProfile } from "@/shared/publishing";
-import { api } from "../client-request";
-import type { Playlist } from "@/shared/broadcast";
+import type { PublishingTemplate } from "@/shared/publishing-template";
 import { useSettingsDraft } from "../components/settings-drafts";
 import { ConfigurationStepTitle } from "../components/configuration-step";
 import { ApiSettingsButton } from "../components/api-settings";
 export type PublishingTarget = { agentId: string; instanceId: string; name: string; accountId?: string; channelId?: string; channel?: string };
-type Props = { initial?: PublishingProfile; target: PublishingTarget; thumbnails: string[]; save(profile: PublishingProfile): Promise<void>; cancel(): void; busy: boolean; numbered?: boolean; onDirtyChange?(dirty: boolean): void };
+type Props = { initial?: PublishingTemplate; save(profile: PublishingTemplate): Promise<void>; cancel(): void; busy: boolean; numbered?: boolean; onDirtyChange?(dirty: boolean): void };
 /** 默认值可编辑；儿童内容仍须在表单中明确选择。 */
-export function newProfile(target: PublishingTarget): PublishingProfile {
+export function newProfile(): PublishingTemplate {
   return {
-    id: crypto.randomUUID(), revision: 1, name: "常规发布", agentId: target.agentId, instanceId: target.instanceId, ...(target.accountId ? { accountId: target.accountId } : {}), channelId: target.channelId || "",
-    titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false,
+    id: crypto.randomUUID(), revision: 1, name: "常规发布",
+    titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", privacy: "public", scheduled: true, madeForKids: false,
     license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching",
     ai: { enabled: false, language: "English", prompt: "根据素材主题生成准确、自然的视频标题和说明。", fallbackTitle: "{{packageName}}", fallbackDescription: "" },
     schedule: { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", weekdays: [1, 3, 5, 7], localTime: "20:00", startDate: new Date().toLocaleDateString("en-CA"), preuploadDays: 28 },
   };
 }
 /** 编辑只保存新版本，不修改已确认的批次快照。 */
-export default function ProfileEditor({ initial, target, thumbnails, save, cancel, busy, numbered = false, onDirtyChange }: Props) {
-  const [value, setValue] = useState(() => initial || newProfile(target));
+export default function ProfileEditor({ initial, save, cancel, busy, numbered = false, onDirtyChange }: Props) {
+  const [value, setValue] = useState(() => initial || newProfile());
   const id = useId();
   const [childrenChoice, setChildrenChoice] = useState(initial ? String(initial.madeForKids) : "");
   const [original] = useState(() => JSON.stringify(value));
   const dirty = JSON.stringify(value) !== original || childrenChoice !== (initial ? String(initial.madeForKids) : "");
   useSettingsDraft("publishing-profile-" + id, dirty);
   useEffect(() => { onDirtyChange?.(dirty); }, [dirty, onDirtyChange]);
-  const [playlists, setPlaylists] = useState<Playlist[]>(); const [reading, setReading] = useState(false); const [playlistError, setPlaylistError] = useState("");
-  /** 读取频道列表名称；Agent 执行时仍核对归属与成员关系。 */
-  async function loadPlaylists() {
-    setReading(true); setPlaylistError("");
-    try {
-      const data = await api<{ playlists: Playlist[] }>(target.accountId ? "/api/publishing" : "/api/broadcast-assets", { method: "POST", timeoutMs: 60000, headers: { "Content-Type": "application/json", "X-LivePilot": "1" }, body: JSON.stringify(target.accountId ? { action: "account-playlists", accountId: target.accountId } : { action: "playlists", agentId: target.agentId, instanceId: target.instanceId }) });
-      setPlaylists(data.playlists);
-    } catch (e) { setPlaylistError((e as Error).message); } finally { setReading(false); }
-  }
   /** 原生表单校验后提交完整 Profile，儿童内容不由 AI 推断。 */
   async function submit(event: FormEvent) {
-    event.preventDefault(); if (busy || reading) return; await save({ ...value, revision: initial ? initial.revision + 1 : 1, madeForKids: childrenChoice === "true" });
+    event.preventDefault(); if (busy) return; await save({ ...value, revision: initial ? initial.revision + 1 : 1, madeForKids: childrenChoice === "true" });
   }
   return <form className="publishing-form" onSubmit={e => void submit(e)}>
-    {!numbered && <p className="publishing-editor-target">{target.channel || target.name}</p>}
     <label>配置名称<input disabled={busy} required value={value.name} maxLength={80} onChange={e => setValue({ ...value, name: e.target.value })} /></label>
-    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={3}>视频文案</ConfigurationStepTitle> : "视频文案"}</legend>
+    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={2}>视频文案</ConfigurationStepTitle> : "视频文案"}</legend>
       <label>标题模板<input disabled={busy} required value={value.titleTemplate} onChange={e => setValue({ ...value, titleTemplate: e.target.value })} /></label>
       <label>说明模板<textarea disabled={busy} rows={3} value={value.descriptionTemplate} onChange={e => setValue({ ...value, descriptionTemplate: e.target.value })} /></label>
       <details className="publishing-details publishing-template-help"><summary>模板变量</summary><p>{"{{packageName}} 发布包 · {{batchName}} 批次 · {{filenameStem}} 文件名 · {{index}} 顺序 · {{publishDate}} 发布日期"}</p></details>
       <label className="publishing-check"><input disabled={busy} type="checkbox" checked={value.ai.enabled} onChange={e => setValue({ ...value, ai: { ...value.ai, enabled: e.target.checked } })} />AI 自动生成标题和说明</label>
       {value.ai.enabled && <div className="publishing-ai-fields">
-        <p className="publishing-hint">使用账号统一的 AI 服务，批次确认时授权生成。</p><ApiSettingsButton instance={{ id: target.instanceId, agentId: target.agentId, name: target.name }} disabled={busy}>API 设置</ApiSettingsButton>
+        <p className="publishing-hint">使用账号统一的 AI 服务，批次确认时授权生成。</p><ApiSettingsButton disabled={busy}>API 设置</ApiSettingsButton>
         <div className="publishing-fields"><label>生成语言<input disabled={busy} required value={value.ai.language} onChange={e => setValue({ ...value, ai: { ...value.ai, language: e.target.value } })} /></label><label>失败兜底标题<input disabled={busy} required value={value.ai.fallbackTitle} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackTitle: e.target.value } })} /></label></div>
         <label>生成要求<textarea disabled={busy} required rows={3} value={value.ai.prompt} onChange={e => setValue({ ...value, ai: { ...value.ai, prompt: e.target.value } })} /></label>
         <label>失败兜底说明<textarea disabled={busy} rows={3} value={value.ai.fallbackDescription} onChange={e => setValue({ ...value, ai: { ...value.ai, fallbackDescription: e.target.value } })} /></label>
       </div>}
     </fieldset>
-    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={4}>发布方式</ConfigurationStepTitle> : "发布方式"}</legend>
-      <div className="publishing-fields"><label>可见性<select disabled={busy} value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingProfile["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select disabled={busy} required value={childrenChoice} onChange={e => { setChildrenChoice(e.target.value); setValue({ ...value, madeForKids: e.target.value === "true" }); }}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
-      <div className="publishing-fields"><label>封面<select disabled={busy} value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingProfile["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label>{value.thumbnailMode === "fixed" && <label>固定图片<input disabled={busy} required list={"publishing-thumbnails-" + id} value={value.thumbnailFilename || ""} onChange={e => setValue({ ...value, thumbnailFilename: e.target.value })} /><datalist id={"publishing-thumbnails-" + id}>{thumbnails.map(name => <option key={name}>{name}</option>)}</datalist></label>}</div>
+    <fieldset><legend>{numbered ? <ConfigurationStepTitle number={3}>发布方式</ConfigurationStepTitle> : "发布方式"}</legend>
+      <div className="publishing-fields"><label>可见性<select disabled={busy} value={value.privacy} onChange={e => setValue({ ...value, privacy: e.target.value as PublishingTemplate["privacy"], scheduled: e.target.value === "public" })}><option value="public">公开</option><option value="private">私密</option><option value="unlisted">不公开</option></select></label><label>是否专为儿童制作<select disabled={busy} required value={childrenChoice} onChange={e => { setChildrenChoice(e.target.value); setValue({ ...value, madeForKids: e.target.value === "true" }); }}><option value="">请选择</option><option value="false">否</option><option value="true">是</option></select></label></div>
+      <div className="publishing-fields"><label>封面<select disabled={busy} value={value.thumbnailMode} onChange={e => setValue({ ...value, thumbnailMode: e.target.value as PublishingTemplate["thumbnailMode"] })}><option value="matching">使用发布包封面</option><option value="fixed">固定图片</option><option value="none">YouTube 自动选择</option></select></label></div>
     </fieldset>
-    {numbered && <h4 className="configuration-step-title"><ConfigurationStepTitle number={5}>补充设置</ConfigurationStepTitle></h4>}
-    <details className="publishing-details"><summary>标签与播放列表{value.playlistIds.length > 0 ? " · " + value.playlistIds.length + " 个已选" : ""}</summary>
-      <label>标签 · 逗号分隔<input disabled={busy} value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
-      <div className="publishing-section-heading"><span>播放列表</span><button type="button" disabled={busy || reading} onClick={() => void loadPlaylists()}>{reading ? "读取中…" : "读取播放列表"}</button></div>
-      {playlistError && <p className="publishing-validation" role="alert">{playlistError}</p>}
-      {playlists?.length === 0 && <p className="publishing-hint">这个频道还没有播放列表。</p>}
-      {playlists?.map(item => <label className="publishing-check" key={item.id}><input disabled={busy} type="checkbox" checked={value.playlistIds.includes(item.id)} onChange={e => setValue({ ...value, playlistIds: e.target.checked ? [...value.playlistIds, item.id] : value.playlistIds.filter(id => id !== item.id) })} />{item.title}</label>)}
-    </details>
+    {numbered && <h4 className="configuration-step-title"><ConfigurationStepTitle number={4}>补充设置</ConfigurationStepTitle></h4>}
+    <label>标签 · 逗号分隔<input disabled={busy} value={value.tags.join(",")} onChange={e => setValue({ ...value, tags: e.target.value.split(",").filter(Boolean) })} /></label>
     <details className="publishing-details"><summary>高级设置</summary>
-      <div className="publishing-fields"><label>分类<select disabled={busy} value={value.categoryId} onChange={e => setValue({ ...value, categoryId: e.target.value })}><option value="10">音乐</option><option value="22">人物与博客</option><option value="24">娱乐</option><option value="27">教育</option><option value="28">科学与技术</option><option value="20">游戏</option><option value="1">电影与动画</option></select></label><label>授权许可<select disabled={busy} value={value.license} onChange={e => setValue({ ...value, license: e.target.value as PublishingProfile["license"] })}><option value="youtube">标准 YouTube 许可</option><option value="creativeCommon">Creative Commons</option></select></label></div>
+      <div className="publishing-fields"><label>分类<select disabled={busy} value={value.categoryId} onChange={e => setValue({ ...value, categoryId: e.target.value })}><option value="10">音乐</option><option value="22">人物与博客</option><option value="24">娱乐</option><option value="27">教育</option><option value="28">科学与技术</option><option value="20">游戏</option><option value="1">电影与动画</option></select></label><label>授权许可<select disabled={busy} value={value.license} onChange={e => setValue({ ...value, license: e.target.value as PublishingTemplate["license"] })}><option value="youtube">标准 YouTube 许可</option><option value="creativeCommon">Creative Commons</option></select></label></div>
       {([ ["embeddable", "允许嵌入"], ["notifySubscribers", "通知频道订阅者"], ["containsSyntheticMedia", "含需披露的修改或合成内容"] ] as const).map(([key, label]) => <label key={key} className="publishing-check"><input disabled={busy} type="checkbox" checked={value[key]} onChange={e => setValue({ ...value, [key]: e.target.checked })} />{label}</label>)}
     </details>
-    <div className="publishing-actions"><button className="btn-primary" type="submit" disabled={busy || reading}>{busy ? "保存中…" : "保存配置包"}</button><button type="button" disabled={busy} onClick={cancel}>返回</button></div>
+    <div className="publishing-actions"><button className="btn-primary" type="submit" disabled={busy}>{busy ? "保存中…" : "保存配置包"}</button><button type="button" disabled={busy} onClick={cancel}>返回</button></div>
   </form>;
 }

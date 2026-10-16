@@ -26,6 +26,8 @@ const accounts = [
 const profile = { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", revision: 1, name: "常规发布", agentId: "pc", instanceId: "main", accountId: accountOne, channelId: "channel_one", titleTemplate: "{{packageName}}", descriptionTemplate: "", tags: [], categoryId: "10", playlistIds: [], privacy: "public", scheduled: true, madeForKids: false, license: "youtube", embeddable: true, containsSyntheticMedia: false, notifySubscribers: true, thumbnailMode: "matching", ai: { enabled: false, language: "English", prompt: "Generate accurate copy", fallbackTitle: "{{packageName}}", fallbackDescription: "" }, schedule: { timezone: "UTC", weekdays: [1, 3, 5, 7], localTime: "18:00", startDate: "2030-10-01", preuploadDays: 28 } };
 const thirdProfile = { ...structuredClone(profile), id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", accountId: accountThree, channelId: "channel_three" };
 const view = { accounts, profiles: [profile, thirdProfile], jobs: [], plans: [], cleanups: [], policy, administrator: false };
+const templates = view.profiles.map(value => Object.fromEntries(Object.entries(value).filter(([key]) => !["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"].includes(key))));
+view.templates = templates;
 let settingsSave, emptyPlaylists = false;
 let confirmed; let latestPlan; let createdAccount; let rejectReschedule = false; let rejectPreviewEdit = false; let failNextRead = false; let releasePreview; let holdPreview = false; const errors = []; const actions = []; const screenshots = []; const archiveRequests = []; const legacyRequests = []; const accountConnectRequests = []; const oauthResultRequests = []; const schedulePreviews = new Map();
 const browser = await chromium.launch({ channel: process.env.LIVEPILOT_UI_BROWSER || "msedge" });
@@ -72,6 +74,15 @@ async function mock(route) {
   else if (url.pathname === "/api/youtube/result") { assert.equal(url.searchParams.get("id"), "55555555-5555-4555-8555-555555555555"); oauthResultRequests.push(url.searchParams.get("id")); result = { target: { agentId: "pc_two", instanceId: "main" }, accountId: accountTwo, status: "connected" }; }
   else if (url.pathname === "/api/broadcast-defaults") result = { revision: 0, value: { privacy: "public", madeForKids: false, videoAudio: false } };
   else if (url.pathname === "/api/account-ai") result = { revision: 0, configured: false, managed: false, uses: { copy: true, chat: true } };
+  else if (url.pathname === "/api/broadcast-profiles") result = { profiles: [] };
+  else if (url.pathname === "/api/publishing-templates") {
+    if (!body) result = { profiles: templates };
+    else {
+      for (const key of ["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"]) assert.equal(Object.hasOwn(body, key), false);
+      if (settingsSave) await settingsSave;
+      const index = templates.findIndex(value => value.id === body.id); if (index >= 0) templates[index] = body; else templates.push(body); result = body;
+    }
+  }
   else if (url.pathname === "/api/publishing") {
     if (!body) { if (failNextRead) { failNextRead = false; await route.fulfill({ status: 503, json: { error: "暂时无法读取状态。" } }); return; } result = view; }
     else {
@@ -85,7 +96,9 @@ async function mock(route) {
       if (body.action === "policy") { if (settingsSave) await settingsSave; result = body.policy; }
       if (body.action === "plan-preview") {
         if (holdPreview) await new Promise(resolve => { releasePreview = resolve; });
-        latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(view.profiles.find(value => value.id === body.profileId)), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
+        const selected = body.use ? { ...templates.find(value => value.id === body.profileId), ...body.use } : view.profiles.find(value => value.id === body.profileId);
+        if (body.use) { assert.equal(selected.revision, body.use.templateRevision); delete selected.templateRevision; }
+        latestPlan = allocate({ id: crypto.randomUUID(), revision: 1, owner: "alice", actor: "alice", profile: structuredClone(selected), batch: structuredClone(batches.find(value => value.id === body.batchId)), rule: body.rule, items: body.items, copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() });
         view.plans.push(latestPlan); result = latestPlan;
       }
       if (body.action === "plan-update") {
@@ -209,16 +222,17 @@ try {
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
   await page.getByRole("button", { name: "管理配置包", exact: true }).click(); await page.getByRole("button", { name: "新建视频发布配置包", exact: true }).click();
   assert.equal(await page.getByLabel("标题模板").inputValue(), "{{packageName}}"); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
-  await page.getByText("标签与播放列表", { exact: true }).click();
-  emptyPlaylists = true; await page.getByRole("button", { name: "读取播放列表", exact: true }).click(); await page.getByText("这个频道还没有播放列表。", { exact: true }).waitFor();
-  emptyPlaylists = false; await page.getByRole("button", { name: "读取播放列表", exact: true }).click(); await page.getByRole("checkbox", { name: "Rainy Night Sessions", exact: true }).check(); assert.equal(actions.filter(action => action === "account-playlists").length, 2);
+  assert.equal(await page.getByRole("dialog").getByText(/播放列表/).count(), 0, "通用配置包不绑定频道播放列表");
   let releaseSettings; settingsSave = new Promise(resolve => { releaseSettings = resolve; });
   await page.getByLabel("是否专为儿童制作").selectOption("false"); failNextRead = true; await page.getByRole("button", { name: "保存配置包", exact: true }).click();
   await page.getByRole("button", { name: "保存中…", exact: true }).waitFor();
   assert.equal(await page.getByLabel("标题模板").isDisabled(), true); assert.equal(await page.getByLabel("说明模板").isDisabled(), true);
   assert.equal(await page.getByLabel("是否专为儿童制作").isDisabled(), true); assert.equal(await page.getByRole("button", { name: "返回", exact: true }).isDisabled(), true);
   releaseSettings(); settingsSave = undefined;
-  await page.getByRole("dialog").getByText(/已保存「/).waitFor(); await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("视频发布配置", { exact: true }).selectOption(view.profiles.at(-1).id); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
+  await page.getByRole("dialog").getByText(/已保存「/).waitFor(); await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click(); await page.getByRole("heading", { name: "配置与排期", exact: true }).waitFor(); await page.getByText("暂时无法读取状态。", { exact: true }).waitFor(); await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.locator(".publishing-error").waitFor({ state: "hidden" }); await page.getByLabel("视频发布配置", { exact: true }).selectOption(templates.at(-1).id); await page.getByLabel("开始日期", { exact: true }).fill("2030-10-01"); await selectTimezone(page, "Asia/Shanghai");
+  await page.getByText("本次播放列表（可选）", { exact: true }).click();
+  emptyPlaylists = true; await page.getByRole("button", { name: "读取频道播放列表", exact: true }).click(); await page.getByText("这个频道还没有播放列表。", { exact: true }).waitFor();
+  emptyPlaylists = false; await page.getByRole("button", { name: "读取频道播放列表", exact: true }).click(); await page.getByRole("checkbox", { name: "Rainy Night Sessions", exact: true }).check(); assert.equal(actions.filter(action => action === "account-playlists").length, 2);
   await page.getByLabel("周一发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周三发布时间", { exact: true }).fill("20:00"); await page.getByLabel("周五发布时间", { exact: true }).fill("18:00"); await page.getByLabel("周日发布时间", { exact: true }).fill("12:00");
   await page.getByRole("button", { name: "周一添加时间", exact: true }).click(); assert.equal(await page.getByLabel("周一发布时间 2", { exact: true }).count(), 1); await page.getByRole("button", { name: "删除周一时间 2", exact: true }).click();
   await stepButton(page, "准备素材").focus(); await page.keyboard.press("Enter"); await expectStep(page, "准备素材");

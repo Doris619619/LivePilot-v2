@@ -18,9 +18,9 @@ await context.route('**/*', route => {
   if (new URL(request.url()).origin !== origin) return route.abort();
   if (['GET', 'HEAD'].includes(request.method())) return route.continue();
   const data = request.postDataJSON();
-  if (request.url().endsWith('/api/publishing') && data.action === 'profile') {
+  if (request.url().endsWith('/api/publishing-templates')) {
     if (failSave) return route.fulfill({ status: 503, json: { error: '模拟保存失败，请重试。' } });
-    saved.push(data.profile); return route.continue();
+    saved.push(data); return route.continue();
   }
   if (request.url().endsWith('/api/broadcast-profiles') && data.action === 'save') return route.continue();
   if (request.url().endsWith('/api/publishing') && ['packages', 'account-directory'].includes(data.action)) return route.continue();
@@ -39,14 +39,13 @@ try {
   await page.goto(origin + '/workspace');
   await page.getByRole('button', { name: '设置', exact: true }).click();
   await dialog.getByRole('tab', { name: '发布配置', exact: true }).click();
-  await dialog.locator('#api-settings-target').selectOption({ index: 1 });
+  await expect(dialog.locator('#api-settings-target')).toHaveCount(0);
   await dialog.locator('#privacy-profile-editor').selectOption('private');
   await dialog.getByLabel('自动回复观众', { exact: true }).check();
   await dialog.locator('#chat-prompt-profile-editor').fill('直播配置草稿保留');
   await dialog.getByRole('button', { name: '视频发布配置包', exact: true }).click();
-  await dialog.getByRole('combobox', { name: '发布账号', exact: true }).selectOption({ index: 1 });
   await dialog.getByRole('button', { name: '新建视频发布配置包', exact: true }).click();
-  const packageName = '夜间精选 · 私密';
+  const packageName = '夜间精选 · 私密 ' + Date.now();
   await dialog.getByLabel('配置名称', { exact: true }).fill(packageName);
   await dialog.getByLabel('标题模板', { exact: true }).fill('频道精选 · {{packageName}}');
   await dialog.getByRole('combobox', { name: '是否专为儿童制作', exact: true }).selectOption('false');
@@ -68,6 +67,7 @@ try {
   failSave = false;
   await dialog.getByRole('button', { name: '保存配置包', exact: true }).click();
   await expect(dialog.getByRole('status')).toContainText(`已保存「${packageName}」`);
+  assert(!('agentId' in saved[0]) && !('accountId' in saved[0]) && !('channelId' in saved[0]) && !('playlistIds' in saved[0]));
   assert.equal(saved.length, 1); assert.equal(saved[0].privacy, 'private');
   await dialog.getByRole('button', { name: '编辑 ' + packageName, exact: true }).click();
   await expect(dialog.getByRole('combobox', { name: '可见性', exact: true })).toHaveValue('private');
@@ -83,7 +83,7 @@ try {
     await dialog.getByLabel('配置名称', { exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: `${output}/video-${width}.png` });
     await dialog.getByRole('button', { name: '直播配置包', exact: true }).click();
-    await dialog.locator('#api-settings-target').scrollIntoViewIfNeeded();
+    await dialog.getByRole('combobox', { name: '直播配置包', exact: true }).scrollIntoViewIfNeeded();
     await measure(width);
     await page.screenshot({ path: `${output}/live-${width}.png` });
     await dialog.getByRole('button', { name: '视频发布配置包', exact: true }).click();
@@ -99,7 +99,6 @@ try {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole('link', { name: '视频发布', exact: true }).click();
   await page.getByRole('button', { name: '视频发布配置包', exact: true }).click();
-  await dialog.getByRole('combobox', { name: '发布账号', exact: true }).selectOption({ index: 1 });
   await expect(dialog.getByRole('button', { name: '编辑 ' + packageName, exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: '直播配置包', exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: '视频发布配置包', exact: true })).toBeVisible();

@@ -1,34 +1,42 @@
-/** 直播配置按设备所有者、实例与授权频道隔离；管理员协助使用同一份配置并留下审计。 */
+/** 直播配置包归属登录账号；旧目录只读复制，设备和频道仅作为迁移线索。 */
 import "server-only";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { type Member, requireAdmin } from "./access";
-import { authorizeAgent } from "./ownership";
-import { requireTarget, snapshotFor } from "@/cloud/agents";
+import type { Member } from "./access";
+import { agentStore } from "@/cloud/agents";
 import { cloudStore } from "@/cloud/store";
-import { cloudMode, config } from "@/core/config";
+import { cloudMode, config, dataRoot, instanceIds } from "@/core/config";
 import { Store } from "@/core/storage";
-import { AppError } from "@/core/errors";
-import { service } from "./service";
+import { readBroadcastProfiles, importBroadcastProfiles } from "@/core/broadcast-profiles";
+import { YouTubeAuth } from "@/core/youtube/auth";
 import type { BroadcastProfileTarget } from "@/shared/broadcast-profiles";
 
-/** 客户端声明的频道必须匹配服务端快照；换绑频道或转移设备不能读到原配置。 */
-export async function broadcastProfilesStore(user: Member, target: BroadcastProfileTarget) {
-  let owner = user.username, root: string, channelId: string | undefined;
+/** 只由会话账号计算新旧目录，不接受其他客户身份；旧目标不能授予控制或跨账号读取。 */
+export async function broadcastProfilesStore(user: Member, hint?: BroadcastProfileTarget) {
+  const store = new Store(path.join(dataRoot(), "broadcast-profile-library", createHash("sha256").update(user.username).digest("hex")));
+  const targets: BroadcastProfileTarget[] = hint ? [hint] : [];
   if (cloudMode()) {
-    if (!target.agentId) throw new AppError("TARGET", "请选择直播电脑。", 400);
-    const agent = await authorizeAgent(user, target.agentId);
-    await requireTarget(target.agentId, target.instanceId);
-    owner = agent.owner || user.username;
-    channelId = (await snapshotFor(target.agentId, target.instanceId))?.dashboard.youtube.channelId;
-    root = cloudStore().dir;
-  } else {
-    requireAdmin(user);
-    if (target.agentId) throw new AppError("TARGET", "本机模式不接受远程电脑。", 400);
-    channelId = (await service(target.instanceId).dashboard()).youtube.channelId;
-    root = config(target.instanceId).dataDir;
+    const registry = await cloudStore().read<{ agents: { id: string; instances: { id: string }[] }[] }>("agents.json");
+    targets.push(...await cloudStore().read<BroadcastProfileTarget[]>("bindings.json") || []);
+    for (const agent of registry?.agents || []) {
+      const beat = await agentStore(agent.id).read<{ snapshots: { instance: { id: string }; dashboard: { youtube: { channelId?: string } } }[] }>("heartbeat.json");
+      for (const snapshot of beat?.snapshots || []) if (snapshot.dashboard.youtube.channelId) targets.push({ agentId: agent.id, instanceId: snapshot.instance.id, channelId: snapshot.dashboard.youtube.channelId });
+    }
+    // 旧发布记录可恢复曾换绑的频道线索；最终目录仍必须匹配当前登录账号的摘要。
+    const history = await new Store(path.join(cloudStore().dir, "publishing")).read<{ profiles?: { value: BroadcastProfileTarget }[]; plans?: { profile: BroadcastProfileTarget }[] }>("state.json");
+    targets.push(...(history?.profiles || []).map(item => item.value), ...(history?.plans || []).map(item => item.profile));
   }
-  if (!channelId || target.channelId !== channelId) throw new AppError("CHANNEL", "频道尚未确认或已切换，请刷新频道状态后再使用直播配置。", 409);
-  const key = createHash("sha256").update(JSON.stringify([owner, target.agentId || "local", target.instanceId, channelId])).digest("hex");
-  return new Store(path.join(root, "broadcast-profiles", key));
+  if (!cloudMode()) for (const instanceId of instanceIds()) {
+    const tokens = await new YouTubeAuth(new Store(config(instanceId).dataDir), instanceId).tokens();
+    if (tokens?.channelId) targets.push({ instanceId, channelId: tokens.channelId });
+  }
+  const sources = new Map<string, Store>();
+  for (const target of targets) {
+    if (!cloudMode() && (target.agentId || !instanceIds().includes(target.instanceId))) continue;
+    const root = cloudMode() ? cloudStore().dir : config(target.instanceId).dataDir;
+    const key = createHash("sha256").update(JSON.stringify([user.username, target.agentId || "local", target.instanceId, target.channelId])).digest("hex");
+    sources.set(key, new Store(path.join(root, "broadcast-profiles", key)));
+  }
+  await importBroadcastProfiles(store, await Promise.all([...sources].map(async ([key, source]) => ({ key, profiles: await readBroadcastProfiles(source) }))));
+  return store;
 }

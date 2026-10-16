@@ -28,6 +28,8 @@ await context.route("**/api/**", async route => {
   else if (url.pathname === "/api/status") result = { state: { phase: "stopped", stage: "待机", updatedAt: new Date().toISOString(), selection: { video: "", music: "", videoAudio: false } }, busy: false, obs: { ready: true, running: true, streaming: false }, youtube: { connected: true, channel: "演示频道", lifecycle: "ready", ingest: "inactive" }, media: { videos: [], music: [] }, configuration: { broadcastDetails: true, liveChat: true, missing: [] }, device: { online: true, agentId: "preview_liang", observedAt: Date.now() } };
   else if (url.pathname === "/api/broadcast-defaults") result = { revision: 0, value: { privacy: "public", madeForKids: false, videoAudio: false } };
   else if (url.pathname === "/api/account-ai") result = { revision: 0, configured: false, managed: false, uses: { copy: true, chat: true } };
+  else if (url.pathname === "/api/broadcast-profiles") result = { profiles: [] };
+  else if (url.pathname === "/api/publishing-templates") result = { profiles: publishing.view.profiles.map(profile => Object.fromEntries(Object.entries(profile).filter(([key]) => !["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"].includes(key)))) };
   else if (url.pathname === "/api/publishing") result = method === "GET" ? publishing.view : publishing.request(request.postDataJSON());
   else if (url.pathname === "/api/uploads" && method === "POST") {
     creates++; const input = request.postDataJSON();

@@ -16,6 +16,8 @@ import { makeProblem } from "@/shared/problems";
 import { canRepublishPublishingJob, defaultPolicy, PRIVACY_VERSION, type PackageBatch, type PublishingPlan, type PublishingPlanRule, type VideoJob } from "@/shared/publishing";
 import { fixtureJob } from "./publishing-fixtures";
 import { createPublishingAccount, claimPublishingAccount } from "@/cloud/publishing-accounts";
+import { readPublishingTemplates, savePublishingTemplate } from "@/server/publishing-templates";
+import { publishingTemplate } from "@/shared/publishing-template";
 let root: string; let batch: PackageBatch; let profile: ReturnType<typeof fixtureJob>["profile"];
 const alice = { username: "alice", role: "customer" as const }; const admin = { username: "admin", role: "admin" as const };
 const rule: PublishingPlanRule = { timezone: "UTC", startDate: "2026-10-01", weeklySlots: [{ weekday: 4, time: "20:00" }, { weekday: 4, time: "21:00" }, { weekday: 5, time: "09:00" }], preuploadDays: 28 };
@@ -59,7 +61,7 @@ it("rejects a package preview returning after account cleanup is complete", asyn
   const pending = preview(); const rejected = expect(pending).rejects.toMatchObject({ code: "CLEANUP" }); await started;
   const cleanup = await requestPublishingAccountCleanup(alice, profile.accountId!); await completePublishingCleanup("pc", cleanup.id);
   finishScan({ root: "Synthetic/Publishing/Inbox", batches: [batch], thumbnails: [], channelId: profile.channelId });
-  await rejected; const view = await publishingView(alice); expect(view.profiles).toEqual([]); expect(view.plans).toEqual([]); expect(view.jobs).toEqual([]);
+  await rejected; const view = await publishingView(alice); expect(view.profiles).toEqual([]); expect(view.plans).toEqual([]); expect(view.jobs).toEqual([]); expect(view.templates.some(item => item.id === profile.id)).toBe(true);
 });
 /** 扫描开始时的管理员/客户设备归属不能授权扫描结束后的持久写入。 */
 it("rejects a package preview returning after device reassignment", async () => {
@@ -417,4 +419,29 @@ it("retains intermediate confirmed-plan slots across multiple unapplied revision
   await reportPublishing("pc", [{ id: first.spec.id, revision: current.spec.revision, sequence: 2, state: "scheduled", effectivePublishAt: c, offset: 0, total: first.spec.asset.size, updatedAt: Date.now() }]);
   current = (await publishingView(alice)).jobs.find(job => job.spec.id === first.spec.id)!; expect(occupiedPublishingSlots([current], "channel_one")).toEqual(new Set([Date.parse(c)]));
   const released = await previewPublishingReschedule(alice, plan.id, committedC.revision, ruleC, committedC.items.map((item, index) => index === 1 ? { ...item, scheduleSource: "manual", publishAt: b } : item)); expect(released.items[1].publishAt).toBe(b);
+});
+
+/** 同一模板可绑定另一台电脑/频道；保存包和生成草稿不会修改任何既有任务。 */
+it("reuses an account template on another channel and rechecks runtime ownership", async () => {
+  const oldPlan = await preview();
+  const template = await savePublishingTemplate(alice, { ...publishingTemplate(profile), id: randomUUID(), name: "Account reusable", revision: 1 });
+  const pairing = await createPairing("second_pc", "Second", "alice"); await pairAgent("second_pc", pairing.code, "c".repeat(64));
+  const secondSession = await openSession("second_pc", randomUUID(), [{ id: "main", name: "Main" }]);
+  await heartbeatAgent("second_pc", secondSession.session, []);
+  await agentStore("second_pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  const account = await createPublishingAccount(alice, "second_pc", "main", "Second channel");
+  await claimPublishingAccount("second_pc", account.id, "main", "channel_two", "Second channel", true);
+  remote.rpc.mockResolvedValue({ root: "Synthetic", batches: [batch], thumbnails: [], channelId: "channel_two" });
+  const use = { agentId: "second_pc", instanceId: "main", accountId: account.id, channelId: "channel_two", playlistIds: ["PL_current"], templateRevision: 1 };
+  const plan = await previewPublishingPlan(alice, template.id, batch.id, rule, undefined, use);
+  expect(plan.profile).toMatchObject({ id: template.id, agentId: "second_pc", channelId: "channel_two", playlistIds: ["PL_current"] });
+  expect((await readPublishingTemplates(alice)).find(item => item.id === template.id)).not.toHaveProperty("channelId");
+  await savePublishingTemplate(alice, { ...template, revision: 2, privacy: "private", scheduled: false });
+  expect((await publishingView(alice)).plans.find(item => item.id === oldPlan.id)?.profile).toEqual(oldPlan.profile);
+  expect((await publishingView(alice)).plans.find(item => item.id === plan.id)?.profile.privacy).toBe(template.privacy);
+  await expect(previewPublishingPlan(alice, template.id, batch.id, rule, undefined, use)).rejects.toMatchObject({ code: "REVISION" });
+  await expect(previewPublishingPlan({ username: "bob", role: "customer" }, template.id, batch.id, rule, undefined, { ...use, templateRevision: 2 })).rejects.toMatchObject({ code: "PROFILE" });
+  await setAgentOwner("second_pc", "bob");
+  await expect(previewPublishingPlan(alice, template.id, batch.id, rule, undefined, { ...use, templateRevision: 2 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect((await readPublishingTemplates(alice)).some(item => item.id === template.id)).toBe(true);
 });

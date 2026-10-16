@@ -7,7 +7,7 @@ import { confirmedJobPublishAt } from "./publishing-time";
 export { confirmedJobPublishAt, jobTimezone } from "./publishing-time";
 export { titleCharacters, descriptionBytes } from "@/shared/video-metadata";
 /** 将用户选择的隐私与公开方式转为确认页可读名称。 */
-export function visibilityLabel(profile: PublishingProfile) {
+export function visibilityLabel(profile: Pick<PublishingProfile, "privacy" | "scheduled">) {
   return profile.privacy === "public" ? profile.scheduled ? "定时公开" : "处理后公开" : profile.privacy === "private" ? "私密" : "不公开";
 }
 const states: Record<string, string> = { draft: "草稿", ready: "待处理", preparing_media: "正在生成", generating_metadata: "生成文案", uploading: "上传中", processing: "YouTube 处理中", finalizing: "整理发布设置", scheduled: "已排期", published: "已公开", completed: "已完成", retry_wait: "等待恢复", needs_attention: "需要处理", paused: "本地已暂停", cancelled: "已取消", failed: "失败" };

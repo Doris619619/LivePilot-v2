@@ -59,12 +59,12 @@ try {
   await complete.locator("summary").click();
   await first.getByRole("button", { name: "管理配置包", exact: true }).click();
   let dialog = page.getByRole("dialog", { name: "设置", exact: true });
-  await expect(dialog.getByLabel("公开范围", { exact: true })).toBeVisible();
-  await dialog.getByLabel("公开范围", { exact: true }).selectOption("private");
-  await dialog.getByLabel("保留视频原声").check();
+  await expect(dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true })).toBeVisible();
+  await dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true }).selectOption("private");
+  await dialog.getByLabel("保留视频原声").filter({ visible: true }).check();
   const privateName = `私密测试 ${stamp}`, publicName = `公开音乐 ${stamp}`;
   await saveAs(dialog, privateName);
-  await dialog.getByLabel("公开范围", { exact: true }).selectOption("public"); await dialog.getByLabel("保留视频原声").uncheck();
+  await dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true }).selectOption("public"); await dialog.getByLabel("保留视频原声").filter({ visible: true }).uncheck();
   failSave = true;
   await dialog.getByRole("button", { name: "另存为", exact: true }).click(); await dialog.getByLabel("配置名称", { exact: true }).fill(publicName);
   await dialog.getByRole("button", { name: "保存配置", exact: true }).click(); await expect(dialog.getByRole("alert")).toContainText("模拟保存失败"); await expect(dialog.getByLabel("配置名称", { exact: true })).toHaveValue(publicName);
@@ -85,7 +85,7 @@ try {
   await expect(first.locator('#video-preview_liang-main-complete')).toHaveValue(selectedVideo);
   await first.getByRole("button", { name: "默认设置", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "设置", exact: true });
-  await dialog.getByLabel("公开范围", { exact: true }).selectOption("unlisted");
+  await dialog.getByLabel("公开范围", { exact: true }).filter({ visible: true }).selectOption("unlisted");
   await dialog.getByRole("button", { name: "保存默认参数", exact: true }).click(); await expect(dialog.getByRole("status")).toContainText("默认参数已保存");
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(first.locator('#privacy-preview_liang-main-complete')).toHaveValue("private");
@@ -105,6 +105,7 @@ try {
   await first.getByRole("button", { name: "开始直播", exact: true }).click();
   await expect.poll(() => starts.length).toBe(1);
   assert.equal(starts[0].video, selectedVideo); assert.equal(starts[0].music, selectedMusic); assert.equal(starts[0].videoAudio, true);
+  assert.deepEqual(starts[0].broadcast.playlistIds, ["PL_preview_study"]);
   assert.equal(starts[0].broadcast.title, "Final title after package selection"); assert.equal(starts[0].broadcast.description, "Edited in complete configuration"); assert.equal(starts[0].broadcast.privacy, "private"); assert.equal(starts[0].broadcast.thumbnail.name, "cover.png");
   await page.reload(); await first.getByRole("tab", { name: "直播编排", exact: true }).click(); await expect(title).toHaveValue("Final title after package selection");
   const fresh = await browser.newContext();

@@ -11,7 +11,7 @@ export const broadcastDefaultsRecordSchema = z.object({ revision: z.number().int
 /** 套用配置只改变规则；旧版本包中的文案、封面和素材不会覆盖本场。 */
 export function applyBroadcastOptions(current: Selection, preset: Selection): Selection {
   const rules = preset.broadcast || defaultBroadcast();
-  return { ...current, videoAudio: preset.videoAudio, broadcast: { ...(current.broadcast || defaultBroadcast()), privacy: rules.privacy, madeForKids: rules.madeForKids, playlistIds: [...rules.playlistIds], ...(rules.liveChat ? { liveChat: { ...rules.liveChat } } : {}) } };
+  return { ...current, videoAudio: preset.videoAudio, broadcast: { ...(current.broadcast || defaultBroadcast()), privacy: rules.privacy, madeForKids: rules.madeForKids, ...(rules.liveChat ? { liveChat: { ...rules.liveChat } } : {}) } };
 }
 
 /** 新保存的配置包去除本场内容，保持旧协议可读，不改动既存文件。 */
@@ -22,5 +22,5 @@ export function broadcastOptionsSnapshot(value: Selection) {
 /** 比较规则而非文案；本场修改标题不会把配置包标成未保存。 */
 export function broadcastOptionsSignature(value: Selection) {
   const details = value.broadcast || defaultBroadcast();
-  return JSON.stringify([value.videoAudio, details.privacy, details.madeForKids, [...details.playlistIds].sort(), details.liveChat]);
+  return JSON.stringify([value.videoAudio, details.privacy, details.madeForKids, details.liveChat]);
 }

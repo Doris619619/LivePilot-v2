@@ -3,13 +3,15 @@ import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { authenticate, type Member } from "@/server/access";
 import { cloudStore } from "@/cloud/store";
 import { agentStore } from "@/cloud/agents";
 import { GET, POST } from "@/app/api/broadcast-profiles/route";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { broadcastProfileSignature } from "@/shared/broadcast-profiles";
+import { Store } from "@/core/storage";
+import { broadcastOptionsSnapshot } from "@/shared/broadcast-options";
 import { AppError } from "@/core/errors";
 vi.mock("@/server/access", async original => ({ ...await original<typeof import("@/server/access")>(), authenticate: vi.fn() }));
 const origin = "http://127.0.0.1:3010";
@@ -40,7 +42,7 @@ it("persists multiple snapshots, reopens them, updates by revision and deletes w
   const a = save(), b = save({ name: "Morning" });
   expect((await POST(request(a))).status).toBe(200); expect((await POST(request(b))).status).toBe(200);
   let profiles = (await (await GET(request())).json()).profiles;
-  expect(profiles).toHaveLength(2); expect(profiles[0].selection).toEqual(selection);
+  expect(profiles).toHaveLength(2); expect(profiles[0].selection).toEqual(broadcastOptionsSnapshot(selection));
   const update = { ...a, revision: 1, name: "Late Night", selection: { ...selection, broadcast: { ...selection.broadcast, privacy: "private" } } };
   expect((await POST(request(update))).status).toBe(200);
   expect((await POST(request(update))).status).toBe(200); // 响应丢失的原样重试
@@ -57,18 +59,32 @@ it("rejects unauthenticated and cross-origin operations before storage", async (
   expect((await GET(request())).status).toBe(401); expect((await POST(request(save()))).status).toBe(401);
 });
 
-it("isolates customer, device ownership, instance and channel while auditing admin assistance", async () => {
+it("shares within one login account, independent of device/channel, and isolates other customers and admins", async () => {
   const a = save(); await POST(request(a));
-  login("bob"); expect((await GET(request())).status).toBe(403); expect((await POST(request(a))).status).toBe(403);
-  login("admin", "admin"); expect((await (await GET(request())).json()).profiles).toHaveLength(1);
-  expect((await POST(request({ ...a, revision: 1, name: "Admin rename" }))).status).toBe(200);
+  login("bob"); expect((await (await GET(request())).json()).profiles).toEqual([]);
+  expect((await POST(request(a))).status).toBe(200);
+  login("admin", "admin"); expect((await (await GET(request())).json()).profiles).toEqual([]);
+  login("alice");
+  expect((await (await GET(request(undefined, { ...target, instanceId: "second", channelId: "another_channel" }))).json()).profiles).toHaveLength(1);
+  await cloudStore().write("agents.json", { agents: [] });
+  expect((await (await GET(request(undefined, {} as typeof target))).json()).profiles).toHaveLength(1);
+  expect((await POST(request({ ...a, target: undefined, revision: 1, name: "Account rename" }))).status).toBe(200);
   const auditDir = path.join(root, "access", "audit");
   const events = await Promise.all((await readdir(auditDir)).map(file => readFile(path.join(auditDir, file), "utf8")));
-  expect(events.some(event => JSON.parse(event).actor === "admin")).toBe(true); expect(events.join("")).not.toContain("lofi.mp3");
-  expect((await (await GET(request(undefined, { ...target, instanceId: "second" }))).json()).profiles).toHaveLength(0);
-  expect((await GET(request(undefined, { ...target, channelId: "another_channel" }))).status).toBe(409);
-  await cloudStore().write("agents.json", { agents: [{ id: "pc", owner: "bob", revoked: false, instances: [{ id: "main" }] }] });
-  login("bob"); expect((await (await GET(request())).json()).profiles).toHaveLength(0);
+  expect(events.join("")).not.toContain("lofi.mp3");
+});
+
+it("copies legacy rules without changing source files, and never resurrects deleted imports", async () => {
+  const key = createHash("sha256").update(JSON.stringify(["alice", "pc", "main", "channel_one"])).digest("hex");
+  const source = new Store(path.join(cloudStore().dir, "broadcast-profiles", key));
+  const old = [{ id: randomUUID(), revision: 3, name: "Old", selection, updatedAt: 1 }];
+  await source.write("profiles.json", old);
+  const first = await (await GET(request(undefined, {} as typeof target))).json();
+  expect(first.profiles).toHaveLength(1); expect(first.profiles[0].selection.broadcast.playlistIds).toEqual([]);
+  expect(await source.read("profiles.json")).toEqual(old);
+  expect((await POST(request({ action: "delete", id: old[0].id, revision: 3 }))).status).toBe(200);
+  expect((await (await GET(request())).json()).profiles).toEqual([]);
+  login("bob"); expect((await (await GET(request())).json()).profiles).toEqual([]);
 });
 
 it("rejects conflicting edits, duplicate names and unknown revisions without overwriting", async () => {

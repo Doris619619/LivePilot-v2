@@ -1,14 +1,17 @@
 /** 向导缓存恢复：明确的新批次选择优先于旧 Cloud 草稿，已保存计划仍按固定身份恢复。 */
-import { planRuleSchema, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanRule } from "@/shared/publishing";
+import { z } from "zod";
+import { profileSchema, planRuleSchema, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanRule } from "@/shared/publishing";
 
-export type PublishingDraft = { planId: string; batchId: string; profileId: string; rule?: PublishingPlanRule; excluded: string[]; step: number; newDraft: boolean };
+export type PublishingDraft = { planId: string; batchId: string; profileId: string; rule?: PublishingPlanRule; excluded: string[]; step: number; newDraft: boolean; channelOptions?: Record<string, { playlistIds: string[]; thumbnailFilename?: string }> };
 type Target = { agentId: string; instanceId: string; accountId?: string };
 
 /** 缓存只恢复非敏感输入；时区规则与排除 ID 必须通过现有协议校验，不恢复素材有效性。 */
 export function parsePublishingDraft(value: unknown): PublishingDraft | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, unknown>; const rule = planRuleSchema.safeParse(record.rule);
+  const options = z.record(z.string(), z.object({ playlistIds: profileSchema.shape.playlistIds, thumbnailFilename: profileSchema.shape.thumbnailFilename })).safeParse(record.channelOptions);
   return {
+    ...(options.success ? { channelOptions: options.data } : {}),
     planId: typeof record.planId === "string" ? record.planId : "", batchId: typeof record.batchId === "string" ? record.batchId : "", profileId: typeof record.profileId === "string" ? record.profileId : "",
     rule: rule.success ? rule.data : undefined,
     excluded: Array.isArray(record.excluded) ? record.excluded.filter((id): id is string => typeof id === "string" && /^[a-f0-9]{64}$/.test(id)) : [],

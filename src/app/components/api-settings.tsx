@@ -2,14 +2,11 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { InstanceDescriptor } from "@/shared/types";
-import { targetKey, type AgentDescriptor } from "@/shared/remote";
-import { api } from "../client-request";
 import { SurfaceDialog } from "./ui/primitives";
 import ApiKeySettings from "./api-key-settings";
 import BroadcastDefaultSettings from "./broadcast-default-settings";
 import PublishingProfileSettings from "./publishing-profile-settings";
 import type { PublishingTarget } from "../publishing/profile-editor";
-import { ConfigurationStepTitle } from "./configuration-step";
 import BroadcastProfileSettings from "./broadcast-profile-settings";
 import { Tabs, TabsList, TabsTrigger } from "./ui/primitives";
 import { SettingsPanel } from "./settings-panel";
@@ -18,13 +15,11 @@ import { SettingsDraftContext } from "./settings-drafts";
 
 type SettingsSection = "ai" | "chat" | "defaults" | "profiles" | "video-profiles";
 const SettingsContext = createContext<((target?: InstanceDescriptor, section?: SettingsSection, publishingTarget?: PublishingTarget) => void) | undefined>(undefined);
-type Inventory = { instances: InstanceDescriptor[]; agents?: AgentDescriptor[] };
+
 
 /** 同一登录会话只挂载一个设置窗口，关闭时销毁密钥输入，不卸载业务页面。 */
 export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
-  const [target, setTarget] = useState<InstanceDescriptor>();
-  const [publishingTarget, setPublishingTarget] = useState<PublishingTarget>();
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState<SettingsSection>("ai");
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
@@ -38,9 +33,9 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
     if (!value && Object.values(dirty).some(Boolean)) { setConfirmClose(true); return; }
     setConfirmClose(false); setOpen(value);
   }
-  /** 业务入口携带实例，公共入口允许用户主动选择，避免隐式写入首台设备。 */
-  function show(instance?: InstanceDescriptor, tab: SettingsSection = "ai", publishing?: PublishingTarget) { if (!open) { setPublishingTarget(publishing); setTarget(instance); } setSection(tab); setConfirmClose(false); setOpen(true); }
-  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={changeOpen} locked={saving} title="设置" description="管理账号 AI 服务、默认参数与发布配置。" descriptionHidden>{open && <SettingsDraftContext.Provider value={reportDirty}><SettingsContent initial={target} initialSection={section} publishingTarget={publishingTarget} onSectionChange={setSection} onSaving={setSaving} saving={saving} />{confirmClose && <div className="settings-close-confirm" role="alert"><p>有未保存的修改，确定关闭？</p><div><button ref={continueButton} type="button" className="btn-secondary" onClick={() => setConfirmClose(false)}>继续编辑</button><button type="button" onClick={() => { setConfirmClose(false); setOpen(false); }}>放弃修改并关闭</button></div></div>}</SettingsDraftContext.Provider>}</SurfaceDialog></SettingsContext.Provider>;
+  /** 兼容已有业务入口参数；账号设置不再依赖设备目标。 */
+  function show(_instance?: InstanceDescriptor, tab: SettingsSection = "ai") { setSection(tab); setConfirmClose(false); setOpen(true); }
+  return <SettingsContext.Provider value={show}>{children}<SurfaceDialog open={open} onOpenChange={changeOpen} locked={saving} title="设置" description="管理账号 AI 服务、默认参数与发布配置。" descriptionHidden>{open && <SettingsDraftContext.Provider value={reportDirty}><SettingsContent initialSection={section} onSectionChange={setSection} onSaving={setSaving} saving={saving} />{confirmClose && <div className="settings-close-confirm" role="alert"><p>有未保存的修改，确定关闭？</p><div><button ref={continueButton} type="button" className="btn-secondary" onClick={() => setConfirmClose(false)}>继续编辑</button><button type="button" onClick={() => { setConfirmClose(false); setOpen(false); }}>放弃修改并关闭</button></div></div>}</SettingsDraftContext.Provider>}</SurfaceDialog></SettingsContext.Provider>;
 }
 
 /** 业务页打开统一设置，保留其自身向导和上传；目标仅用于初始选择。 */
@@ -52,8 +47,8 @@ export function ApiSettingsButton({ instance, section = "ai", children = "设置
   return <button type="button" className={className} disabled={disabled || !show} onClick={() => show?.(instance, section)}>{children}</button>;
 }
 
-/** 每次打开重新读取当前用户可见设备；目录读取失败时不回退到另一目标。 */
-function SettingsContent({ initial, initialSection, onSaving, saving, publishingTarget, onSectionChange }: { onSectionChange(value: SettingsSection): void; publishingTarget?: PublishingTarget; initial?: InstanceDescriptor; initialSection: SettingsSection; onSaving: (value: boolean) => void; saving: boolean }) {
+/** 账号设置分类与模板类型保持挂载，避免切换丢失草稿。 */
+function SettingsContent({ initialSection, onSaving, saving, onSectionChange }: { onSectionChange(value: SettingsSection): void; initialSection: SettingsSection; onSaving: (value: boolean) => void; saving: boolean }) {
   const section = initialSection === "chat" ? "ai" : initialSection === "video-profiles" ? "profiles" : initialSection;
   const [packageType, setPackageType] = useState(initialSection === "video-profiles" ? "video" : "live");
   const [mobileDetail, setMobileDetail] = useState(true);
@@ -75,21 +70,6 @@ function SettingsContent({ initial, initialSection, onSaving, saving, publishing
       else settingsRoot.current?.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus();
     });
   }
-  const [inventory, setInventory] = useState<Inventory>();
-  const [selected, setSelected] = useState(initial ? targetKey(initial) : "");
-  const [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    const abort = new AbortController();
-    api<Inventory>("/api/instances", { signal: abort.signal }).then(result => {
-      if (abort.signal.aborted) return;
-      const customer = new URLSearchParams(window.location.search).get("customer");
-      const agents = result.agents?.filter(agent => !agent.revoked && agent.paired !== false && (!customer || agent.owner === customer));
-      setInventory({ agents, instances: result.instances.filter(instance => !agents || agents.some(agent => agent.id === instance.agentId)) });
-    }).catch(() => { if (!abort.signal.aborted) setError("无法读取设备列表，请重试。"); });
-    return () => abort.abort();
-  }, [revision]);
-  const instance = inventory?.instances.find(item => targetKey(item) === selected);
   return <Tabs orientation="vertical" value={section} onValueChange={value => { onSectionChange(value as SettingsSection); setMobileDetail(true); focusMobile(true); }} asChild><div ref={settingsRoot} className="api-settings" data-mobile-detail={mobileDetail}>
     <TabsList aria-label="设置分类"><TabsTrigger value="ai" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>AI 服务</TabsTrigger><TabsTrigger value="defaults" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>默认参数</TabsTrigger><TabsTrigger value="profiles" disabled={saving} onClick={() => { setMobileDetail(true); focusMobile(true); }}>发布配置</TabsTrigger></TabsList>
     <div className="settings-detail">
@@ -97,17 +77,9 @@ function SettingsContent({ initial, initialSection, onSaving, saving, publishing
     <SettingsPanel value="defaults"><BroadcastDefaultSettings onSaving={onSaving} /></SettingsPanel>
     <SettingsPanel value="profiles">
     <div className="publication-type" role="group" aria-label="配置包类型"><button type="button" aria-pressed={packageType === "live"} disabled={saving} onClick={() => choosePackageType("live")}>直播配置包</button><button type="button" aria-pressed={packageType === "video"} disabled={saving} onClick={() => choosePackageType("video")}>视频发布配置包</button></div>
-    <div hidden={packageType !== "live"}>
-    <h4 className="configuration-step-title"><ConfigurationStepTitle number={1}>选择配置对象</ConfigurationStepTitle></h4>
-    {section === "profiles" && error && <div role="alert"><p>{error}</p><button type="button" onClick={() => { setError(""); setRevision(value => value + 1); }}>重新读取设备</button></div>}
-    {section === "profiles" && !inventory && !error && <p role="status">正在读取设备…</p>}
-    {inventory && section === "profiles" && <>
-      <div className="api-settings-target"><div className="api-settings-label"><label htmlFor="api-settings-target">配置对象</label><span>仅作用于所选实例</span></div><select id="api-settings-target" value={selected} disabled={saving || !inventory.instances.length} onChange={event => setSelected(event.target.value)}><option value="">选择直播电脑 / OBS 实例</option>{inventory.instances.map(item => <option key={targetKey(item)} value={targetKey(item)}>{inventory.agents?.find(device => device.id === item.agentId)?.name || "本机电脑"} / {item.name}</option>)}</select></div>
-      {!inventory.instances.length && <p role="status">还没有可配置的实例，请先接入直播电脑。</p>}
-      {selected && !instance && <p role="status">此实例已不可用，请重新选择配置对象。</p>}
-    </>}
-    {instance && <BroadcastProfileSettings key={targetKey(instance)} instance={instance} onSaving={onSaving} />}</div>
-    <div hidden={packageType !== "video"}><PublishingProfileSettings initialTarget={publishingTarget} onSaving={onSaving} /></div></SettingsPanel>
+    <p className="field-hint">当前账号通用；设备和频道在使用时选择。</p>
+    <div hidden={packageType !== "live"}><BroadcastProfileSettings onSaving={onSaving} /></div>
+    <div hidden={packageType !== "video"}><PublishingProfileSettings onSaving={onSaving} /></div></SettingsPanel>
     <SettingsPanel value="ai"><ApiKeySettings onSaving={onSaving} /></SettingsPanel>
     </div>
   </div></Tabs>;

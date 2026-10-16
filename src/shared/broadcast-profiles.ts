@@ -17,8 +17,8 @@ export type BroadcastProfile = z.infer<typeof broadcastProfileSchema>;
 export const broadcastProfileTargetSchema = z.object({ agentId: idSchema.optional(), instanceId: idSchema, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/) }).strict();
 export type BroadcastProfileTarget = z.infer<typeof broadcastProfileTargetSchema>;
 export const broadcastProfileCommandSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("save"), target: broadcastProfileTargetSchema, id: z.string().uuid(), revision: z.number().int().nonnegative(), name: broadcastProfileSchema.shape.name, selection: broadcastProfileSelectionSchema }).strict(),
-  z.object({ action: z.literal("delete"), target: broadcastProfileTargetSchema, id: z.string().uuid(), revision: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal("save"), target: broadcastProfileTargetSchema.optional(), id: z.string().uuid(), revision: z.number().int().nonnegative(), name: broadcastProfileSchema.shape.name, selection: broadcastProfileSelectionSchema }).strict(),
+  z.object({ action: z.literal("delete"), target: broadcastProfileTargetSchema.optional(), id: z.string().uuid(), revision: z.number().int().positive() }).strict(),
 ]);
 export type BroadcastProfileCommand = z.infer<typeof broadcastProfileCommandSchema>;
 

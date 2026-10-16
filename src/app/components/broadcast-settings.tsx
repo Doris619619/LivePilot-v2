@@ -77,7 +77,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
     </TabsContent>
     <TabsContent className="studio-panel" value="content" aria-labelledby={`studio-tab-${id}-content`}>
       <section className="workflow-section" aria-labelledby={`preset-heading-${id}`}><h3 id={`preset-heading-${id}`}>配置包</h3>
-        {channelId ? <BroadcastProfiles key={`${id}:${channelId}`} target={{ ...(instance.agentId ? { agentId: instance.agentId } : {}), instanceId: instance.id, channelId }} instance={instance} value={{ video: videoName || "", music: musicName || "", videoAudio: !!videoAudio, broadcast: details }} disabled={disabled || !!working} onApply={onSelectionChange} onBusyChange={busy => { setProfilesBusy(busy); onBusyChange(busy); }} /> : <p className="field-hint">连接频道后可选择配置包，也可直接填写本场内容。</p>}
+        {<BroadcastProfiles key={`${id}:${channelId}`} target={channelId ? { ...(instance.agentId ? { agentId: instance.agentId } : {}), instanceId: instance.id, channelId } : undefined} instance={instance} value={{ video: videoName || "", music: musicName || "", videoAudio: !!videoAudio, broadcast: details }} disabled={disabled || !!working} onApply={onSelectionChange} onBusyChange={busy => { setProfilesBusy(busy); onBusyChange(busy); }} />}
       </section>
       <section className="workflow-section" aria-labelledby={`copy-heading-${id}`}><h3 id={`copy-heading-${id}`}>直播内容</h3>
         <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />

@@ -15,13 +15,14 @@ import { publishingInputKey, publishingPlanMatchesInputs } from "./publishing-wi
 import { hasNewPublishingDraft, parsePublishingDraft, restorePublishingPlan } from "./publishing-wizard-draft";
 import { publishingUploadReview } from "./publishing-upload-review";
 import UploadReview from "./upload-review";
+import PublishingChannelOptionsFields, { type PublishingChannelOptions } from "./publishing-channel-options";
 const steps = ["准备素材", "配置与排期", "确认计划", "自动执行"];
 type Props = {
   username: string; target: PublishingTarget; root: string; batches: PackageBatch[]; profiles: PublishingProfile[]; profileId: string; selectProfile(id: string): void;
   directoryMessage?: string; directoryReading?: boolean; retryDirectory?(): void; scanned?: boolean;
   plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; busy: boolean; accepted: boolean; scan(): Promise<void>; newProfile(): void;
   removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; removeBatch?: BatchRemovalOperation;
-  preview(profileId: string, batchId: string, rule: PublishingPlanRule, items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>;
+  preview(profileId: string, batchId: string, rule: PublishingPlanRule, items: PublishingPlanItem[], options: PublishingChannelOptions): Promise<PublishingPlan | undefined>;
   update(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError?: boolean): Promise<PublishingPlan | undefined>;
   reschedulePreview(plan: PublishingPlan, rule: PublishingPlanRule, items: PublishingPlanItem[], localError?: boolean): Promise<PublishingPlan | undefined>;
   rescheduleConfirm(plan: PublishingPlan): Promise<PublishingPlan | undefined>;
@@ -62,7 +63,10 @@ export default function PublishingWizard(props: Props) {
   const currentPlan = schedulePreview || committedPlan;
   const batch = confirmed ? committedPlan.batch : batches.find(value => value.id === batchId) || (plan?.batch.id === batchId ? plan.batch : batchId ? undefined : batches[0]);
   const selectedProfile = profiles.find(value => value.id === (props.profileId || restored?.profile.id || cached?.profileId)) || profiles[0];
-  const profile = confirmed ? committedPlan.profile : selectedProfile?.privacy === "public" ? { ...selectedProfile, scheduled: true } : selectedProfile;
+  const [channelOptions, setChannelOptions] = useState<Record<string, PublishingChannelOptions>>(() => cached?.channelOptions || (restored ? { [restored.profile.id + ":" + restored.profile.channelId]: { playlistIds: restored.profile.playlistIds, thumbnailFilename: restored.profile.thumbnailFilename } } : {}));
+  const optionKey = selectedProfile?.id + ":" + target.channelId;
+  const profile = confirmed ? committedPlan.profile : selectedProfile && { ...selectedProfile, ...(channelOptions[optionKey] || {}), thumbnailFilename: selectedProfile.thumbnailMode === "fixed" ? channelOptions[optionKey]?.thumbnailFilename ?? selectedProfile.thumbnailFilename : undefined, scheduled: selectedProfile.privacy === "public" };
+
   const inboxPath = publishingInboxPath(props.root);
   const invalid = batch?.packages.filter(item => item.validationState === "invalid" && !excluded.includes(item.id)) || [];
   const included = batch?.packages.filter(item => !excluded.includes(item.id)) || [];
@@ -81,8 +85,8 @@ export default function PublishingWizard(props: Props) {
     return item.excluded || !job || job.spec.desired === "cancel" || publishingTerminal(job.observed?.state) || job.observed?.state === "needs_attention";
   }).map(item => item.packageId) : undefined);
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify({ planId: plan?.id, newDraft: !plan?.id && newDraft, batchId: batch?.id || batchId, profileId: profile?.id || "", rule, excluded, step })); } catch { /* 浏览器禁止存储时仍可使用Cloud计划。 */ }
-  }, [batch?.id, batchId, excluded, newDraft, plan?.id, profile?.id, rule, step, storageKey]);
+    try { localStorage.setItem(storageKey, JSON.stringify({ planId: plan?.id, newDraft: !plan?.id && newDraft, batchId: batch?.id || batchId, profileId: profile?.id || "", rule, excluded, step, channelOptions })); } catch { /* 浏览器禁止存储时仍可使用Cloud计划。 */ }
+  }, [channelOptions, batch?.id, batchId, excluded, newDraft, plan?.id, profile?.id, rule, step, storageKey]);
   useEffect(() => { heading.current?.focus(); }, [step]);
   /** 复制的是所选Agent报告的实际路径；远程浏览器不假装已打开资源管理器。 */
   async function copyPath() { try { await navigator.clipboard.writeText(inboxPath); setCopied(true); setCopyError(""); } catch { setCopyError("请选中上方路径复制。"); } }
@@ -102,7 +106,7 @@ export default function PublishingWizard(props: Props) {
     const current = responseCurrent();
     const publishingRule = profile.scheduled || validRule ? rule : initialRule(profile);
     const items = batch.packages.map(item => ({ ...(plan?.items.find(value => value.packageId === item.id) || { packageId: item.id, scheduleSource: "auto" as const }), excluded: excluded.includes(item.id) }));
-    const next = confirmed && committedPlan ? await props.reschedulePreview(committedPlan, publishingRule, currentPlan?.items || items) : plan && plan.profile.id === profile.id && plan.profile.revision === profile.revision && plan.profile.scheduled === profile.scheduled && plan.batch.id === batch.id && plan.batch.version === batch.version ? await props.update(plan, publishingRule, items) : await props.preview(profile.id, batch.id, publishingRule, items);
+    const next = confirmed && committedPlan ? await props.reschedulePreview(committedPlan, publishingRule, currentPlan?.items || items) : plan && plan.profile.id === profile.id && plan.profile.revision === profile.revision && plan.profile.scheduled === profile.scheduled && JSON.stringify(plan.profile.playlistIds) === JSON.stringify(profile.playlistIds) && plan.profile.thumbnailFilename === profile.thumbnailFilename && plan.batch.id === batch.id && plan.batch.version === batch.version ? await props.update(plan, publishingRule, items) : await props.preview(profile.id, batch.id, publishingRule, items, { playlistIds: profile.playlistIds, ...(profile.thumbnailMode === "fixed" ? { thumbnailFilename: profile.thumbnailFilename } : {}) });
     if (next && current()) { if (confirmed) setSchedulePreview(next); else setPlan(next); setRule(next.rule); setBatchId(next.batch.id); setUnlockedStep(confirmed ? 4 : 3); setStep(3); }
   }
   return <div className="publishing-wizard">
@@ -117,7 +121,8 @@ export default function PublishingWizard(props: Props) {
     {viewStep === 2 && <form className="publishing-form" onSubmit={event => void generate(event)}><p className="publishing-plan-context">{batch?.name} · {included.length} 条</p>
       <UploadReview blockers={uploadReview.blockers} repeats={uploadReview.repeats} busy={busy} history={props.viewHistory} change={() => setStep(1)} />
       <label>发布频道<input readOnly value={target.channel || profile?.channelId || "尚未连接频道"} /></label>
-      <div className="publishing-profile-picker"><label>视频发布配置{confirmed ? <input readOnly value={profile?.name || ""} /> : <select aria-label="视频发布配置" required disabled={busy} value={profile?.id || ""} onChange={e => props.selectProfile(e.target.value)}><option value="">请选择配置</option>{profiles.map(value => <option key={value.id} value={value.id}>{value.name} · {visibilityLabel(value.privacy === "public" ? { ...value, scheduled: true } : value)}</option>)}</select>}</label>{!confirmed && <button type="button" disabled={busy || !target.channelId} onClick={props.newProfile}>管理配置包</button>}</div>
+      <div className="publishing-profile-picker"><label>视频发布配置{confirmed ? <input readOnly value={profile?.name || ""} /> : <select aria-label="视频发布配置" required disabled={busy} value={profile?.id || ""} onChange={e => props.selectProfile(e.target.value)}><option value="">请选择配置</option>{profiles.map(value => <option key={value.id} value={value.id}>{value.name} · {visibilityLabel(value.privacy === "public" ? { ...value, scheduled: true } : value)}</option>)}</select>}</label>{!confirmed && <button type="button" disabled={busy} onClick={props.newProfile}>管理配置包</button>}</div>
+      {!confirmed && profile && <PublishingChannelOptionsFields key={optionKey} profile={profile} busy={busy} change={value => setChannelOptions(current => ({ ...current, [optionKey]: value }))} />}
       {profile?.scheduled ? <WeeklySchedule rule={rule} change={setRule} disabled={busy} /> : profile && <p className="publishing-hint">{visibilityLabel(profile)} · 上传完成后保存。</p>}
       {profile?.scheduled && !validRule && <p className="publishing-validation" role="alert">请选择有效时区和每周时间，重复时间请合并。</p>}
       {confirmed && profile?.scheduled && <p className="publishing-hint">只调整未完成视频，手动时间保持不变。</p>}

@@ -22,7 +22,8 @@ import ChannelBinding from "./channel-binding";
 import { publishingTargetStorageKey, restorePublishingTarget } from "./publishing-target-selection";
 import { usePublishingDirectory } from "./use-publishing-directory";
 import "./publishing.css";
-type View = { profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; removals?: PublishingBatchRemoval[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
+import type { PublishingTemplate } from "@/shared/publishing-template";
+type View = { templates?: PublishingTemplate[]; profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; removals?: PublishingBatchRemoval[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
 type PackageIndex = { root: string; batches: PackageBatch[]; thumbnails?: string[]; channelId?: string; channel?: string };
 type Inventory = { instances: InstanceDescriptor[]; agents?: PublishingDevice[] };
 /** 所有发布编辑共用同源请求，检测等待不等于执行成功。 */
@@ -45,7 +46,7 @@ export default function PublishingConsole() {
   const accounts = view?.accounts?.filter(account => account.agentId === host?.agentId && account.status !== "deleted") || [];
   const account = accounts.find(value => value.id === accountId);
   const target = host && { ...host, accountId: account?.id, channelId: account?.status === "connected" ? account.channelId : undefined, channel: account?.status === "connected" ? account.channel : undefined };
-  const profiles = view?.profiles.filter(profile => profile.agentId + ":" + profile.instanceId === chosen && !!account && profile.accountId === account.id) || [];
+  const profiles: PublishingProfile[] = view?.templates && target?.channelId ? view.templates.map(template => ({ ...template, agentId: target.agentId, instanceId: target.instanceId, accountId: target.accountId, channelId: target.channelId!, playlistIds: [] })) : view?.profiles.filter(profile => profile.agentId + ":" + profile.instanceId === chosen && !!account && profile.accountId === account.id) || [];
   const jobs = view?.jobs.filter(job => job.spec.profile.agentId + ":" + job.spec.profile.instanceId === chosen && !!account && job.spec.profile.accountId === account.id) || [];
   const plans = view?.plans?.filter(plan => plan.profile.agentId + ":" + plan.profile.instanceId === chosen && !!account && plan.profile.accountId === account.id) || [];
   const cleanups = view?.cleanups.filter(cleanup => !cleanup.accountId && cleanup.agentId + ":" + cleanup.instanceId === chosen) || [];
@@ -128,7 +129,7 @@ export default function PublishingConsole() {
       if (!target) return; const next = await post<PackageIndex>({ action: "packages", agentId: target.agentId, instanceId: target.instanceId, ...(account ? { accountId: account.id } : {}) }); setIndex(next);
     });
   }
-  /** 创建配置统一进入设置；当前向导与上传始终挂载，目标沿用所选发布账号。 */
+  /** 创建配置统一进入设置；当前向导与上传始终挂载，模板独立于发布账号。 */
   function newProfile() { openSettings?.(undefined, "video-profiles", target); }
   /** 设置保存后即时刷新候选配置，不重置当前发布计划和素材。 */
   useEffect(() => { const saved = () => { void refresh(); }; window.addEventListener("livenest-publishing-profiles-saved", saved); return () => window.removeEventListener("livenest-publishing-profiles-saved", saved); }, [refresh]);
@@ -191,7 +192,7 @@ export default function PublishingConsole() {
       {tab !== "我的发布" && <div className="publishing-target"><label>设备<select aria-label="设备" disabled={busy} value={chosen} onChange={e => choose(e.target.value)}><option value="">请选择设备</option>{targets.map(value => <option key={value.agentId + ":" + value.instanceId} value={value.agentId + ":" + value.instanceId}>{value.name}</option>)}</select></label>{target && <><label>发布账号<select aria-label="发布账号" disabled={busy} value={account?.id || ""} onChange={e => chooseAccount(e.target.value)}><option value="">请选择发布账号</option>{accounts.map(value => <option key={value.id} value={value.id}>{value.channel || value.name}{value.status === "cleanup_pending" ? " · 清理中" : value.status !== "connected" ? " · 未连接" : ""}</option>)}</select></label>{!accounts.length && <button disabled={busy || !accepted} onClick={() => void addAccount()}>添加账号</button>}{tab === "发布视频" && account && <button className="btn-ghost" disabled={busy} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>管理账号</button>}</>}</div>}
 
       {target && <div hidden={tab !== "发布视频"}><PublishingWizard key={username + ":" + chosen + ":" + accountId + ":" + draftEpoch} username={username} target={target} root={index?.root || directory.root} directoryMessage={directory.message} directoryReading={directory.reading} retryDirectory={directory.retry} scanned={!!index} batches={index?.batches || []} profiles={profiles} profileId={profileId} selectProfile={setProfileId} plans={plans} jobs={jobs} allJobs={view.jobs} removals={view.removals} devices={devices} busy={busy} accepted={accepted} scan={scan} newProfile={() => void newProfile()} operate={operate} archive={archive} removeBatch={removeBatch} update={update} reschedulePreview={reschedulePreview} rescheduleConfirm={rescheduleConfirm} viewOverview={() => navigate("我的发布")} viewHistory={viewHistory}
-        preview={(id, batchId, rule, items) => perform(async () => { const result = await post<PublishingPlan>({ action: "plan-preview", profileId: id, batchId, rule, items }); await refresh(); return result; })}
+        preview={(id, batchId, rule, items, options) => perform(async () => { const result = await post<PublishingPlan>({ action: "plan-preview", profileId: id, batchId, rule, items, ...(view.templates ? { use: { agentId: target.agentId, instanceId: target.instanceId, accountId: target.accountId, channelId: target.channelId, templateRevision: profiles.find(profile => profile.id === id)!.revision, ...options } } : {}) }); await refresh(); return result; })}
         confirm={async (plan, ai, replaceJobIds, republishJobIds) => !!await perform(async () => { await post({ action: "plan-confirm", planId: plan.id, revision: plan.revision, ai, temporaryPrivateTitle: true, ...(replaceJobIds.length ? { replaceJobIds } : {}), ...(republishJobIds.length ? { republishJobIds } : {}) }); await refresh(); setNotice("发布计划已配置"); return true; }, true)} />
       </div>}
       {!target && tab !== "我的发布" && <div className="publishing-empty"><h2>{targets.length ? "请选择直播电脑" : "还没有直播电脑"}</h2>{targets.length ? <p>从上方选择要发布视频的电脑与实例。</p> : <Link href="/workspace">添加直播电脑</Link>}</div>}

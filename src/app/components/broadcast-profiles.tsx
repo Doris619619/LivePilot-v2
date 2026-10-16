@@ -11,7 +11,7 @@ import styles from "./broadcast-profiles.module.css";
 import { useSettingsDraft } from "./settings-drafts";
 
 type Mode = { kind: "new"; id: string } | { kind: "rename" | "delete" } | { kind: "apply"; profile: BroadcastProfile };
-type Props = { management?: boolean; instance?: InstanceDescriptor; target: BroadcastProfileTarget; value: Selection; disabled: boolean; onApply(value: Selection): void; onBusyChange(busy: boolean): void };
+type Props = { management?: boolean; instance?: InstanceDescriptor; target?: BroadcastProfileTarget; value: Selection; disabled: boolean; onApply(value: Selection): void; onBusyChange(busy: boolean): void };
 
 /** 外层按用户和频道提供稳定 key；加载与失败不触碰表单，切换配置保留一次撤销。 */
 export default function BroadcastProfiles({ target, value, disabled, onApply, onBusyChange, management = false, instance }: Props) {
@@ -32,9 +32,9 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
   const selected = profiles?.find(profile => profile.id === activeId);
   const [initialSignature] = useState(() => broadcastOptionsSignature(current));
   const dirty = !!selected && broadcastOptionsSignature(selected.selection) !== broadcastOptionsSignature(current);
-  useSettingsDraft(`profile-${target.agentId || "local"}-${target.instanceId}`, management && (dirty || !selected && initialSignature !== broadcastOptionsSignature(current) || (mode?.kind === "new" || mode?.kind === "rename") && !!name.trim()));
+  useSettingsDraft(`profile-${target?.agentId || "local"}-${target?.instanceId || "account"}`, management && (dirty || !selected && initialSignature !== broadcastOptionsSignature(current) || (mode?.kind === "new" || mode?.kind === "rename") && !!name.trim()));
   const locked = disabled || busy;
-  const prefix = `live-profile-${target.agentId || "local"}-${target.instanceId}`;
+  const prefix = `live-profile-${target?.agentId || "local"}-${target?.instanceId || "account"}`;
 
   /** 初次异步读取只用最新草稿识别配置，不覆盖用户在等待期间的输入。 */
   useEffect(() => { latest.current = { ...value, broadcast: value.broadcast || defaultBroadcast() }; }, [value]);
@@ -48,7 +48,7 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
   /** 自动读取可取消；不把读取失败伪装成空列表，也不自动应用配置覆盖草稿。 */
   useEffect(() => {
     const controller = new AbortController();
-    const query = new URLSearchParams(Object.entries(targetRef.current).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+    const query = new URLSearchParams(Object.entries(targetRef.current || {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
     void api<{ profiles: BroadcastProfile[] }>("/api/broadcast-profiles?" + query, { signal: controller.signal }).then(result => {
       if (controller.signal.aborted) return;
       setProfiles(result.profiles);
@@ -65,7 +65,7 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
     if (inFlight.current) return;
     inFlight.current = true; setBusy(true); setError("");
     try {
-      const query = new URLSearchParams(Object.entries(target).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+      const query = new URLSearchParams(Object.entries(target || {}).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
       const result = await api<{ profiles: BroadcastProfile[] }>("/api/broadcast-profiles?" + query);
       setProfiles(result.profiles); setNotice("配置列表已更新，当前草稿已保留。");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "读取失败，请重试。"); }

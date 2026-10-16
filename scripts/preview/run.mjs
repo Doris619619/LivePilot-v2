@@ -51,6 +51,11 @@ async function proxy(port, username) {
   const session = await fetch(origin + '/api/session', { method: 'POST', headers: { Origin: origin, 'x-livepilot': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }) });
   if (!session.ok) throw new Error('Preview login failed');
   let cookie = previewCookies('', session.headers);
+  // 示例模板同样走账号 API，方便验证跨工作台复用；始终位于隔离预览数据目录。
+  const template = Object.fromEntries(Object.entries(publishing.view.profiles[0]).filter(([key]) => !['agentId', 'instanceId', 'accountId', 'channelId', 'playlistIds', 'thumbnailFilename'].includes(key)));
+  const seeded = await fetch(origin + '/api/publishing-templates', { method: 'POST', headers: { Cookie: cookie, Origin: origin, 'x-livepilot': '1', 'Content-Type': 'application/json' }, body: JSON.stringify(template) });
+  if (!seeded.ok) throw new Error('Preview template seed failed');
+
   const server = createServer(async (request, response) => {
     try {
       guardPreview(request, port);
@@ -73,7 +78,11 @@ async function proxy(port, username) {
       if (url.pathname === '/api/publishing') {
         const inputValue = input ? JSON.parse(input) : undefined;
         await authorizePreviewControl(origin, cookie, { agentId: 'preview_liang', instanceId: 'main', action: 'launch' });
-        if (request.method === 'GET') return json(response, 200, publishing.view);
+        if (request.method === 'GET') {
+          const templates = await fetch(origin + '/api/publishing-templates', { headers: { Cookie: cookie } });
+          if (!templates.ok) return json(response, templates.status, { error: '演示配置读取失败，请重试。' });
+          return json(response, 200, { ...publishing.view, templates: (await templates.json()).profiles });
+        }
         if (request.method !== 'POST') return json(response, 405, { error: 'Read-only preview' });
         if (inputValue?.agentId && (inputValue.agentId !== 'preview_liang' || inputValue.instanceId !== 'main')) return json(response, 409, { error: '请选择示例发布账号对应的电脑。' });
         try { return json(response, 200, publishing.request(inputValue)); } catch (error) { return json(response, 409, { error: error.message }); }

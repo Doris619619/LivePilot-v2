@@ -18,14 +18,14 @@ afterEach(async () => { vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir
 function request(body?: unknown, from = origin) { return new Request(origin + "/api/broadcast-defaults", { method: body ? "POST" : "GET", headers: { host: "127.0.0.1:3010", origin: from, "x-livepilot": "1", "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) }); }
 
 it("applies legacy profile rules while preserving current media, copy and cover, including undo", () => {
-  const current = { video: "current.mp4", music: "current.mp3", videoAudio: false, broadcast: { ...defaultBroadcast(), title: "Current", description: "Edited", thumbnail: { id: "a", name: "current.jpg" } } };
+  const current = { video: "current.mp4", music: "current.mp3", videoAudio: false, broadcast: { ...defaultBroadcast(), title: "Current", description: "Edited", playlistIds: ["PL_current"], thumbnail: { id: "a", name: "current.jpg" } } };
   const preset = { video: "old.mp4", music: "old.mp3", videoAudio: true, broadcast: { ...defaultBroadcast(), title: "Old", privacy: "private" as const, madeForKids: true, playlistIds: ["PL_one_12345"] } };
   const applied = applyBroadcastOptions(current, preset);
-  expect(applied).toEqual({ ...current, videoAudio: true, broadcast: { ...current.broadcast, privacy: "private", madeForKids: true, playlistIds: ["PL_one_12345"] } });
+  expect(applied).toEqual({ ...current, videoAudio: true, broadcast: { ...current.broadcast, privacy: "private", madeForKids: true } });
   const afterEdit = { ...applied, broadcast: { ...applied.broadcast!, title: "Edited after apply" } };
   expect(applyBroadcastOptions(afterEdit, current).broadcast).toEqual({ ...current.broadcast, title: "Edited after apply" });
   const saved = broadcastOptionsSnapshot(applied);
-  expect(saved.video).toBe(""); expect(saved.broadcast.title).toBe(""); expect(saved.broadcast.thumbnail).toBeUndefined();
+  expect(saved.broadcast.playlistIds).toEqual([]); expect(saved.video).toBe(""); expect(saved.broadcast.title).toBe(""); expect(saved.broadcast.thumbnail).toBeUndefined();
   expect(broadcastOptionsSignature(applied)).toBe(broadcastOptionsSignature(afterEdit));
 });
 
