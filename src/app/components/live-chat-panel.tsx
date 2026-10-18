@@ -7,6 +7,7 @@ import { api } from "../client-request";
 import { defaultLiveChatConfig, liveChatConfigSchema, type LiveChatConfig, type LiveChatStatus } from "@/shared/live-chat";
 import type { InstanceDescriptor } from "@/shared/types";
 import styles from "./live-chat-panel.module.css";
+import LiveChatSettings from "./live-chat-settings";
 
 const states: Record<LiveChatStatus["state"], string> = {
   disabled: "已关闭", needs_key: "AI 服务未就绪", waiting_live: "等待直播", connecting: "连接聊天中",
@@ -23,10 +24,12 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [recordsExpanded, setRecordsExpanded] = useState<boolean>();
+  const [editing, setEditing] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const current = savedStatus && (!status || savedStatus.updatedAt >= status.updatedAt) ? savedStatus : status;
   const recordsOpen = recordsExpanded ?? current?.state === "running";
   const canRequest = supported && !stale;
-  const locked = !canRequest || !current || !!working;
+  const locked = !canRequest || !current || !!working || settingsSaving;
   useEffect(() => {
     /** 设置保存回传公开状态，原面板下次启停必须使用新的人设与间隔。 */
     function updated(event: Event) { const detail = (event as CustomEvent<{ target: string; status: LiveChatStatus }>).detail; if (detail?.target === targetKey(instance)) setSavedStatus(detail.status); }
@@ -101,8 +104,10 @@ export default function LiveChatPanel({ instance, status, supported, stale, onRe
       <div className={styles.toolbar}>
         <button type="button" className="btn-ghost" aria-expanded={recordsOpen} aria-controls={`chat-records-${id}`} onClick={() => setRecordsExpanded(!recordsOpen)}>活动记录{stale ? " · 上次记录" : ""}<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true" style={{ transform: recordsOpen ? "rotate(90deg)" : undefined }}><path d="m9 5 7 7-7 7" /></svg></button>
         <ApiSettingsButton instance={instance} section="ai" disabled={!!working}>AI 服务设置</ApiSettingsButton>
+        <button type="button" className="btn-ghost" disabled={!!working || settingsSaving || stale} aria-expanded={editing} aria-controls={`chat-editor-${id}`} onClick={() => setEditing(!editing)}>人设与试聊</button>
         <button type="button" className="btn-ghost" disabled={!!working} onClick={() => void readStatus()}>{working === "read" ? "读取中…" : stale ? "刷新设备状态" : "刷新互动状态"}</button>
       </div>
+      {editing && <div id={`chat-editor-${id}`}><LiveChatSettings key={id} instance={instance} offline={stale || !!working} onSaving={setSettingsSaving} /></div>}
       <div className={styles.history} id={`chat-records-${id}`} hidden={!recordsOpen}>
         <dl className={styles.counts} aria-label="互动统计"><div><dt>已发送</dt><dd>{stale ? "—" : current?.sent ?? "—"}</dd></div><div><dt>已跳过</dt><dd>{stale ? "—" : current?.skipped ?? "—"}</dd></div><div><dt>排队中</dt><dd>{stale ? "—" : current?.queued ?? "—"}</dd></div></dl>
         {current?.recent.length ? <ol>{current.recent.slice(-30).reverse().map(entry => <li key={entry.id}><div className={styles.entryHeading}><strong>{entry.author || "观众"}</strong><span>{entryStates[entry.status]}</span></div><p>{entry.text}</p>{entry.reply && <p className={styles.reply}>{entry.reply}</p>}{entry.reason && <p className={styles.hint}>{entry.reason}</p>}</li>)}</ol> : <p className={styles.hint}>还没有互动记录；启用后只回复新留言。</p>}

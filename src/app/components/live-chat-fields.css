@@ -3,4 +3,15 @@
 .live-chat-enable input { margin: 0; flex-shrink: 0; }
 .live-chat-field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .live-chat-fields textarea { min-height: 88px; }
+.chat-persona-sample { padding: 16px 0; border-block: 1px solid var(--border, #ddd); overflow-wrap: anywhere; }
+.chat-persona-sample p { margin: 8px 0; }
+.chat-persona-sample blockquote { margin: 12px 0; font-size: 1.15em; }
+.chat-expression, .chat-preview { margin-top: 20px; }
+.chat-expression summary, .chat-preview summary { min-height: 44px; cursor: pointer; padding-block: 12px; }
+.chat-preview p { max-width: 70ch; overflow-wrap: anywhere; }
+.chat-preview-samples { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-preview button { min-height: 44px; }
+.chat-preview-turns { list-style: none; padding: 0; max-height: 320px; overflow-y: auto; }
+.chat-preview-turns li { padding-block: 10px; border-bottom: 1px solid var(--border, #ddd); }
+.chat-preview input { width: 100%; min-width: 0; }
 @media (max-width: 600px) { .live-chat-field-grid { grid-template-columns: 1fr; } }

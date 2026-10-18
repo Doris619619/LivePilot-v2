@@ -1,6 +1,6 @@
 /** 验证真实聊天能力门禁，旧版与过期快照不得获得新任务，设备身份始终显式定位。 */
 import { beforeEach, expect, it, vi } from "vitest";
-import { requireLiveChat } from "@/server/remote";
+import { requireLiveChat, requireChatConversation } from "@/server/remote";
 import { requireTarget, snapshotFor } from "@/cloud/agents";
 import type { AgentSnapshot } from "@/shared/remote";
 vi.mock("@/cloud/agents", () => ({ requireTarget: vi.fn(), snapshotFor: vi.fn(), listAgents: vi.fn(), problemsFor: vi.fn() }));
@@ -24,4 +24,11 @@ it("rejects legacy Agent capability before a new chat task can be delivered", as
 it.each([now - 20_000, now + 5_001])("rejects a stale or future snapshot at %s", async observedAt => {
   vi.mocked(snapshotFor).mockResolvedValue(snapshot(true, observedAt));
   await expect(requireLiveChat(destination)).rejects.toMatchObject({ code: "AGENT_STALE", status: 409 });
+});
+
+it("requires explicit conversation capability in addition to the original chat capability", async () => {
+  await expect(requireChatConversation(destination)).rejects.toMatchObject({ code: "CONFIG" });
+  const upgraded = snapshot(true); upgraded.dashboard.configuration.chatConversation = true;
+  vi.mocked(snapshotFor).mockResolvedValue(upgraded);
+  await expect(requireChatConversation(destination)).resolves.toBeUndefined();
 });

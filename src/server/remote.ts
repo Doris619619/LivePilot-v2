@@ -6,6 +6,7 @@ import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
 import { targetSchema, type TaskPayload, type Target } from "@/shared/remote";
 import type { Dashboard } from "@/shared/types";
+import { usesChatConversation } from "@/shared/live-chat";
 import { initialState } from "@/core/control";
 import { listAgents, requireTarget, snapshotFor, problemsFor } from "@/cloud/agents";
 import { enqueue, latestControl, operation, rpc } from "@/cloud/tasks";
@@ -44,10 +45,17 @@ export async function requireLiveChat(destination: Target) {
   if (!snapshot?.dashboard.configuration.liveChat) throw new AppError("CONFIG", "请先升级这台直播电脑的 Agent，再使用 AI 观众互动。", 409);
   if (snapshot.observedAt <= Date.now() - 20_000 || snapshot.observedAt > Date.now() + 5_000) throw new AppError("AGENT_STALE", "设备状态已过期，请等待直播电脑重新连接后操作 AI 互动。", 409);
 }
+/** 新人设、接话参数与试聊只投递到明确声明能力的 Agent，避免旧 strict schema 拒绝整条任务。 */
+export async function requireChatConversation(destination: Target) {
+  await requireLiveChat(destination);
+  const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+  if (!snapshot?.dashboard.configuration.chatConversation) throw new AppError("CONFIG", "请升级直播电脑的 Agent，以使用新人设、接话策略和试聊。", 409);
+}
 /** 控制接口只持久化完整任务，核心执行在 Agent，不使用 Next after 编排直播。 */
 export async function remoteControl(destination: Target, actor: string, payload: Extract<TaskPayload, { kind: "control" }>, requestId: string) {
   if (payload.input.action === "start" && payload.input.broadcast) await requireBroadcastDetails(destination);
   if (payload.input.action === "start" && payload.input.broadcast?.liveChat) {
+    if (usesChatConversation(payload.input.broadcast.liveChat)) await requireChatConversation(destination);
     const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
     if (!snapshot?.dashboard.configuration.liveChatSelection) throw new AppError("CONFIG", "请更新直播电脑的 LiveNest 客户端，以便按本场配置启动观众互动。", 409);
   }

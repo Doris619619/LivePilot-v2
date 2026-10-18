@@ -62,9 +62,9 @@ function mounted(input: { saved?: LiveChatStatus; working?: string; stale?: bool
 /** 实际设置组件从合成已读取状态开始，验证迁移后的保存协议及草稿清理。 */
 function mountedSettings(input: { draft?: LiveChatConfig; interval?: string; saving?: boolean } = {}) {
   vi.mocked(useEffect).mockImplementation(() => {});
-  const values: unknown[] = [fixture(), input.draft, input.interval, false, 0, input.saving || false, "", ""];
+  const values: unknown[] = [fixture(), input.interval ? { ...(input.draft || defaultLiveChatConfig), intervalSeconds: Number(input.interval) } : input.draft, false, 0, input.saving || false, "", ""];
   const setters = values.map(() => vi.fn()); let index = 0;
-  vi.mocked(useState).mockImplementation((() => { const at = index++; return [values[at], setters[at]]; }) as typeof useState);
+  vi.mocked(useState).mockImplementation(((initial?: unknown) => { const at = index++; return at < values.length ? [values[at], setters[at]] : [initial, vi.fn()]; }) as typeof useState);
   const onSaving = vi.fn(); const dispatchEvent = vi.fn(); vi.stubGlobal("window", { dispatchEvent });
   const tree = LiveChatSettings({ instance, offline: false, onSaving });
   return { tree, controls: elements(tree), setters, onSaving, dispatchEvent };
@@ -159,7 +159,7 @@ it("saves the persona and interval together and clears only the successfully sav
   (form.props.onSubmit as (event: { preventDefault(): void }) => void)({ preventDefault: () => {} });
   await vi.waitFor(() => expect(dispatchEvent).toHaveBeenCalledOnce());
   expect(JSON.parse(String(vi.mocked(api).mock.calls[0][1]?.body))).toMatchObject({ action: "configure", config });
-  expect(setters[1]).toHaveBeenCalledWith(undefined); expect(setters[2]).toHaveBeenCalledWith(undefined);
+  expect(setters[1]).toHaveBeenCalledWith(undefined);
   expect(onSaving).toHaveBeenLastCalledWith(false);
   expect(dispatchEvent.mock.calls[0][0].detail).toMatchObject({ target: "agent-one:LIVE", status: { config } });
 });
@@ -176,7 +176,7 @@ it("turns off with the latest saved preferences instead of resetting them to def
 it("offers all personas in settings and refuses an invalid interval without writing", () => {
   const { tree, controls } = mountedSettings({ interval: "2" });
   const html = renderToStaticMarkup(tree);
-  for (const label of ["友善陪聊", "活泼幽默", "安静温柔", "自定义", "发送间隔（5–60 秒）"]) expect(html).toContain(label);
+  for (const label of ["电台搭子", "俏皮捧场王", "深夜守夜人", "猫猫值班员", "自定义", "发送间隔（秒）"]) expect(html).toContain(label);
   (controls.find(element => element.type === "form")!.props.onSubmit as (event: { preventDefault(): void }) => void)({ preventDefault: () => {} });
   expect(api).not.toHaveBeenCalled();
 });
