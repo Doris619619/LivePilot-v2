@@ -85,7 +85,7 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
         <BroadcastCopyFields id={id} value={details} disabled={locked} onChange={onChange} />
         {cover("primary")}
       </section>
-      <section className="workflow-section" aria-labelledby={`chat-heading-${id}`}><div className="field-label-row"><h3 id={`chat-heading-${id}`}>AI 观众互动</h3><ApiSettingsButton disabled={locked}>AI 服务设置</ApiSettingsButton></div><LiveChatFields id={id} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} /><LiveChatPreview key={JSON.stringify(details.liveChat)} config={details.liveChat || defaultLiveChatConfig} instanceId={instance.id} agentId={instance.agentId} disabled={locked} /></section>
+      <section className="workflow-section" aria-labelledby={`chat-heading-${id}`}><div className="field-label-row"><h3 id={`chat-heading-${id}`}>AI 观众互动</h3><ApiSettingsButton disabled={locked}>AI 服务设置</ApiSettingsButton></div><LiveChatFields id={id} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} /><LiveChatPreview key={`${instance.agentId || "local"}-${instance.id}`} config={details.liveChat || defaultLiveChatConfig} instanceId={instance.id} agentId={instance.agentId} disabled={locked} /></section>
       <details className="workflow-complete"><summary><span>完整配置</span><span className="workflow-summary">{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</span></summary>
         <div className="workflow-complete-body">
           <p className="field-hint">本场开播使用以下配置，修改会同步到前面的输入。</p>

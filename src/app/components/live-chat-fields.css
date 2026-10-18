@@ -15,3 +15,30 @@
 .chat-preview-turns li { padding-block: 10px; border-bottom: 1px solid var(--border, #ddd); }
 .chat-preview input { width: 100%; min-width: 0; }
 @media (max-width: 600px) { .live-chat-field-grid { grid-template-columns: 1fr; } }
+
+/* 人设工作区在宽屏并排比较，窄屏顺序阅读；应用条只占自己的布局空间。 */
+.chat-workspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.chat-workspace > * { min-width: 0; }
+.chat-workspace h4 { margin: 0 0 16px; font-size: 1rem; }
+.chat-workspace .chat-preview { margin-top: 0; border-left: 1px solid var(--border, #ddd); padding-left: 28px; }
+.chat-effective { margin: 0; padding-block: 12px; }
+.chat-persona-directory summary { cursor: pointer; min-height: 44px; padding-block: 12px; }
+.chat-persona-directory button { display: flex; flex-direction: column; align-items: start; gap: 6px; text-align: left; width: 100%; padding: 12px; margin-block: 6px; white-space: normal; }
+.chat-persona-directory button[aria-pressed="true"] { outline: 2px solid var(--accent, #32695f); outline-offset: -2px; }
+.chat-persona-directory span, .chat-persona-directory q { font-size: .875rem; }
+.chat-apply-bar { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 0 max(16px, env(safe-area-inset-bottom)); background: var(--bg-card, #fff); border-top: 1px solid var(--border, #ddd); }
+.chat-preview-empty { padding-block: 20px; color: var(--text-secondary, #555); }
+.chat-preview-turns { scroll-padding-block: 12px; }
+.chat-preview-turns small { font-weight: 600; }
+.chat-preview .api-settings-actions { flex-wrap: wrap; }
+@media (max-width: 900px) {
+  .chat-workspace { grid-template-columns: 1fr; gap: 24px; }
+  .chat-workspace .chat-preview { border-left: 0; border-top: 1px solid var(--border, #ddd); padding: 20px 0 0; }
+  .chat-apply-bar { flex-direction: column; align-items: stretch; }
+  .chat-apply-bar .api-settings-actions { display: flex; }
+  .chat-apply-bar button { flex: 1; min-height: 44px; }
+}
+
+.chat-workspace .live-chat-fields { gap: 16px; }
+.chat-workspace .chat-expression { margin-top: 0; }
+.chat-preview-note { font-size: .875rem; color: var(--text-secondary, #555); }

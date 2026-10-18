@@ -21,6 +21,7 @@ const child = spawn(process.execPath, ["node_modules/next/dist/bin/next", "start
 let browser;
 const requests = [], errors = [];
 let offline = false;
+let rejectSave = false;
 const config = { enabled: true, preset: "friendly", customPrompt: "", intervalSeconds: 5 };
 let chat = { config, configured: true, state: "running", message: "演示数据：正在与观众互动。", sent: 12, skipped: 3, queued: 1, recent: [{ id: "first", authorId: "guest", author: "观众小梁", text: "今晚的音乐很舒服！", reply: "[AI] @观众小梁 欢迎，祝你度过轻松的夜晚。", status: "sent", at: Date.now() }, { id: "long", authorId: "another", author: "A very long multilingual viewer name 超长观众名字", text: "こんにちは " + "多语言长留言".repeat(30), reply: "[AI] @guest こんにちは！", status: "sent", at: Date.now() }], updatedAt: Date.now() };
 const instances = [{ id: "main", name: "演示视频直播", agentId: "synthetic_pc", agentName: "模拟直播电脑" }, { id: "main", name: "旧版实例", agentId: "synthetic_old", agentName: "模拟旧电脑" }];
@@ -42,6 +43,7 @@ async function mock(route) {
   else if (url.pathname === "/api/live-chat") {
     const body = request.postDataJSON(); requests.push(body); assert.equal(body.agentId, "synthetic_pc"); assert.equal(body.instanceId, "main");
     assert.ok(["read", "configure", "preview"].includes(body.action), "面板只读取状态或保存配置。"); assert.equal("apiKey" in body, false);
+    if (body.action === "configure" && rejectSave) { rejectSave = false; await route.fulfill({ status: 503, json: { error: "模拟保存失败，请重试。" } }); return; }
     if (body.action === "configure") chat = { ...chat, config: body.config, state: body.config.enabled ? "running" : "disabled", queued: 0, updatedAt: Date.now() };
     result = body.action === "preview" ? { action: body.input.text.includes("谈何") ? "clarify" : "reply", reply: body.input.text.includes("谈何") ? "@试聊观众 Was that a typo?" : "@试聊观众 good taste.", reason: body.input.text.includes("谈何") ? "ambiguous" : "conversation" } : chat;
   }
@@ -67,10 +69,11 @@ try {
   const editor = panel.getByRole("region", { name: "互动人设与频率" });
   const persona = editor.getByLabel("互动人设", { exact: true });
   await expect(persona.locator("option")).toHaveCount(9);
-  await persona.selectOption("cat"); await expect(editor.getByText("批准再听一会儿 🐾", { exact: true })).toBeVisible();
+  await persona.selectOption("cat"); await expect(editor.locator(".chat-persona-sample blockquote")).toBeVisible();
+  await editor.getByText("更多设置 · 昵称、频道背景与表达", { exact: true }).click();
   await editor.getByRole("button", { name: "填入「AI 音乐，未命名」", exact: true }).click();
   await editor.getByLabel("什么时候接话").selectOption("natural");
-  await editor.getByText("试聊 · 不发送到直播间", { exact: true }).click();
+
   await editor.getByRole("button", { name: "what is 谈何", exact: true }).click();
   await editor.getByRole("button", { name: "生成试聊回复", exact: true }).click();
   await expect(editor.locator(".chat-preview-turns")).toContainText("@试聊观众 Was that a typo?");
@@ -78,16 +81,38 @@ try {
   await editor.getByRole("button", { name: "生成试聊回复", exact: true }).click();
   await expect(editor.locator(".chat-preview-turns")).toContainText("@试聊观众 good taste.");
   assert.equal(requests.filter(r => r.action === "preview")[1].input.history.length, 1);
-  await editor.getByRole("button", { name: "保存互动设置", exact: true }).click();
+  await persona.selectOption("deadpan");
+  await expect(editor.locator(".chat-preview-turns")).toContainText("Was that a typo?");
+  await editor.getByRole("button", { name: "用当前人设比较这句", exact: true }).last().click();
+  await expect(editor.locator(".chat-preview-turns li")).toHaveCount(3);
+  assert.equal(requests.filter(r => r.action === "preview")[2].input.history.length, 0);
+  await expect(editor.locator(".chat-preview-turns")).toContainText("冷面吐槽役");
+  await panel.getByRole("button", { name: "人设与试聊", exact: true }).click();
+  await panel.getByRole("button", { name: "人设与试聊", exact: true }).click();
+  await expect(persona).toHaveValue("deadpan");
+  await expect(editor.locator(".chat-preview-turns li")).toHaveCount(3);
+  await editor.getByRole("button", { name: "保存并应用", exact: true }).click();
   await expect(editor.getByText("互动设置已保存，直播期间立即生效。", { exact: true })).toBeVisible();
-  assert.equal(chat.config.preset, "cat"); assert.equal(chat.config.replyMode, "natural"); assert.ok(chat.config.channelFacts.includes("AI"));
+  assert.equal(chat.config.preset, "deadpan"); assert.equal(chat.config.replyMode, "natural"); assert.ok(chat.config.channelFacts.includes("AI"));
+  await editor.getByText("更多设置 · 昵称、频道背景与表达", { exact: true }).click();
   await screenshotPanel(editor, "conversation-desktop.png");
   await page.setViewportSize({ width: 390, height: 844 });
+  await persona.selectOption("gentle");
+  await editor.getByRole("button", { name: "用当前人设比较这句", exact: true }).last().click();
+  await expect(editor.locator(".chat-preview-turns li")).toHaveCount(4);
+  rejectSave = true;
+  await editor.getByRole("button", { name: "保存并应用", exact: true }).click();
+  await expect(editor.getByRole("alert")).toContainText("模拟保存失败");
+  await expect(persona).toHaveValue("gentle");
+  assert.equal(chat.config.preset, "deadpan");
+  await editor.getByRole("button", { name: "保存并应用", exact: true }).click();
+  await expect(editor.getByText("互动设置已保存，直播期间立即生效。", { exact: true })).toBeVisible();
+  assert.equal(chat.config.preset, "gentle");
   await screenshotPanel(editor, "conversation-mobile.png");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await persona.focus(); assert.ok(await persona.evaluate(el => getComputedStyle(el).outlineStyle !== "none"));
 
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, "conversation-result.json"), JSON.stringify({ passed: true, mocked: true, scenarios: ["9 personas", "style example", "facts", "mode", "two-turn preview", "save during live", "desktop", "390px", "keyboard focus", "no page errors"], requests: requests.map(r => r.action) }, null, 2));
+  await writeFile(path.join(output, "conversation-result.json"), JSON.stringify({ passed: true, mocked: true, scenarios: ["9 personas", "style example", "facts", "mode", "two-turn preview", "compare without history", "preserve draft on collapse", "preserve results on persona change", "save during live", "desktop", "390px select compare save", "failed save preserves draft", "keyboard focus", "no page errors"], requests: requests.map(r => r.action) }, null, 2));
   console.log("Conversation browser checks passed; all APIs synthetic.");
 } finally { await browser?.close(); child.kill(); }

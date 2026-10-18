@@ -8,9 +8,10 @@ import { api } from "../client-request";
 import styles from "./live-chat-panel.module.css";
 import LiveChatFields from "./live-chat-fields";
 import LiveChatPreview from "./live-chat-preview";
+import { chatPersonas } from "@/shared/chat-personas";
 
 /** 读取失败不提供虚构的默认值；目标切换由父组件重新挂载以隔离草稿和异步结果。 */
-export default function LiveChatSettings({ instance, offline, onSaving }: { instance: InstanceDescriptor; offline: boolean; onSaving: (value: boolean) => void }) {
+export default function LiveChatSettings({ instance, offline, onSaving, effectiveStatus }: { effectiveStatus?: LiveChatStatus; instance: InstanceDescriptor; offline: boolean; onSaving: (value: boolean) => void }) {
   const [status, setStatus] = useState<LiveChatStatus>();
   const [draft, setDraft] = useState<LiveChatConfig>();
   const [loading, setLoading] = useState(true);
@@ -28,12 +29,14 @@ export default function LiveChatSettings({ instance, offline, onSaving }: { inst
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
   }, [id, agentId, offline, revision]);
-  const config = draft || status?.config;
+  const latestStatus = effectiveStatus && (!status || effectiveStatus.updatedAt > status.updatedAt) ? effectiveStatus : status;
+  const config = draft || latestStatus?.config;
+  const dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(latestStatus?.config);
   /** 显式保存已编辑字段；成功后通知原运行面板，避免它继续使用旧配置执行启停。 */
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving || !config || !status || offline) return;
-    const parsed = liveChatConfigSchema.safeParse({ ...config, enabled: status.config.enabled, intervalSeconds: config.intervalSeconds });
+    const parsed = liveChatConfigSchema.safeParse({ ...config, enabled: latestStatus?.config.enabled ?? status.config.enabled, intervalSeconds: config.intervalSeconds });
     if (!parsed.success) { setError("发送间隔请输入 5–60 的整数，人设描述最多 2000 字符。"); return; }
     setSaving(true); onSaving(true); setError(""); setMessage("");
     try {
@@ -45,9 +48,12 @@ export default function LiveChatSettings({ instance, offline, onSaving }: { inst
   }
   return <section className="api-service-section" aria-label="互动人设与频率" aria-busy={loading && !offline || saving}>
     {offline ? <p role="status">直播电脑离线，暂时无法读取或修改互动偏好。</p> : loading ? <p role="status">正在读取互动设置…</p> : config && <form className={styles.form + " api-chat-form"} onSubmit={event => void save(event)}>
-      <LiveChatFields id={`settings-${agentId || "local"}-${id}`} value={config} hideEnable disabled={saving} onChange={setDraft} />
-      <LiveChatPreview key={JSON.stringify(config)} config={config} instanceId={id} agentId={agentId} disabled={saving || offline} />
-      <div className="api-settings-actions"><button className="btn-primary" type="submit" disabled={saving || !draft}>{saving ? "保存中…" : "保存互动设置"}</button></div>
+      <p className="chat-effective">当前已保存：<strong>{latestStatus && chatPersonas[latestStatus.config.preset].name}</strong> · {latestStatus?.config.enabled ? "自动回复已开启" : "自动回复已关闭"}</p>
+      <div className="chat-workspace"><div><h4>选择人设</h4>
+      <LiveChatFields id={`settings-${agentId || "local"}-${id}`} value={config} hideEnable disabled={saving} onChange={next => { setDraft(next); setMessage(""); }} />
+      </div>
+      <LiveChatPreview key={`${agentId || "local"}-${id}`} config={config} instanceId={id} agentId={agentId} disabled={saving || offline} />
+      </div><div className="chat-apply-bar"><span role="status">{dirty ? "未保存修改 · 试聊不会自动应用" : "设置已保存"}</span><div className="api-settings-actions"><button type="button" disabled={saving || !dirty} onClick={() => { setDraft(undefined); setMessage(""); }}>撤销修改</button><button className="btn-primary" type="submit" disabled={saving || !dirty}>{saving ? "正在应用…" : "保存并应用"}</button></div></div>
     </form>}
     {error && <div role="alert"><p>{error}</p>{!offline && <button type="button" disabled={saving || loading} onClick={() => { setError(""); setLoading(true); setRevision(value => value + 1); }}>重新读取互动设置</button>}</div>}
     {message && <p role="status" className="api-settings-success">{message}</p>}
