@@ -15,6 +15,7 @@ import { ObsController } from "./obs/controller";
 import { ObsProcessManager } from "./obs/process";
 import { saveChannelBinding } from "./youtube/bindings";
 import { LiveChatRunner } from "./live-chat/runner";
+import { LiveChatPreview } from "./live-chat-preview";
 import { YouTubeLiveChat } from "./youtube/live-chat";
 import { generateLiveChatReply, liveChatAiConfigured } from "./live-chat-ai";
 import type { Broadcast } from "./youtube/api";
@@ -26,11 +27,13 @@ export class Service {
   readonly control: Control;
   readonly commands: Commands;
   readonly chat: LiveChatRunner;
+  readonly chatPreview: LiveChatPreview;
   /** 所有有状态依赖按实例创建；main 继续读取原来的 .data。 */
   constructor(readonly id: string, saveBinding = saveChannelBinding) {
     /** 始终读取构造时选定实例的配置。 */
     const readConfig = () => config(id);
     const storage = new Store(readConfig().dataDir);
+    this.chatPreview = new LiveChatPreview(storage);
     this.auth = new YouTubeAuth(storage, id, tokens => saveBinding(id, tokens));
     this.youtube = new YouTubeApi(this.auth, storage);
     this.obs = new LocalObsRuntime(new ObsController(readConfig, { id, scene: "LIVE", video: "VIDEO", music: "MUSIC" }), new ObsProcessManager(readConfig));
@@ -125,7 +128,7 @@ export class Service {
       }
     } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
-    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, liveChatSelection: true, accountAi: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, liveChatSelection: true, chatConversation: true, accountAi: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

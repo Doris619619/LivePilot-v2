@@ -111,6 +111,7 @@ export class Executor {
     const app = this.services.get(task.instanceId); if (!app) throw new AppError("INSTANCE", "实例不存在。", 404);
     const p = task.payload;
     if (p.kind === "live-chat-read") return app.chat.status();
+    if (p.kind === "live-chat-preview") return app.chatPreview.run(p.input);
     if (p.kind === "live-chat-configure") {
       const result = await app.configureChat(p.config);
       await audit(task.actor, "live-chat-configure", task.instanceId, "succeeded", task.id);

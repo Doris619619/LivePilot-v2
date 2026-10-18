@@ -4,7 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { assetsResultSchema, packagesResultSchema } from "@/shared/publishing";
 import { aiCopySchema } from "@/shared/broadcast-ai";
-import { liveChatStatusSchema } from "@/shared/live-chat";
+import { liveChatStatusSchema, chatDecisionSchema } from "@/shared/live-chat";
 import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
 import { AppError, sleep } from "@/core/errors";
@@ -72,6 +72,7 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 }
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
+  if (record.kind === "live-chat-preview") return chatDecisionSchema.parse(value);
   if (record.kind === "live-chat-read" || record.kind === "live-chat-configure") return liveChatStatusSchema.parse(value);
   if (record.kind === "publishing-assets") return assetsResultSchema.parse(value);
   if (record.kind === "publishing-packages") return packagesResultSchema.parse(value);

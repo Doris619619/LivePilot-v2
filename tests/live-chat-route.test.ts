@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/live-chat/route";
 import { authenticate, requireAdmin } from "@/server/access";
 import { authorizeAgent } from "@/server/ownership";
-import { rpc, requireLiveChat } from "@/server/remote";
+import { rpc, requireLiveChat, requireChatConversation } from "@/server/remote";
 import { service } from "@/server/service";
 import { defaultLiveChatConfig } from "@/shared/live-chat";
 import { AppError } from "@/core/errors";
@@ -12,7 +12,7 @@ const mode = vi.hoisted(() => ({ cloud: true }));
 vi.mock("@/server/http", () => ({ guard: vi.fn(), failed: (error: AppError) => Response.json({ error: error.message }, { status: error.status || 500 }) }));
 vi.mock("@/server/access", () => ({ authenticate: vi.fn(), requireAdmin: vi.fn() }));
 vi.mock("@/server/ownership", () => ({ authorizeAgent: vi.fn() }));
-vi.mock("@/server/remote", () => ({ cloudMode: () => mode.cloud, target: (value: unknown) => value, rpc: vi.fn(), requireLiveChat: vi.fn() }));
+vi.mock("@/server/remote", () => ({ cloudMode: () => mode.cloud, target: (value: unknown) => value, rpc: vi.fn(), requireLiveChat: vi.fn(), requireChatConversation: vi.fn() }));
 vi.mock("@/server/service", () => ({ service: vi.fn() }));
 vi.mock("@/core/audit", () => ({ audit: vi.fn() }));
 /** 所有测试默认已登录合成客户与已配置的新 Agent。 */
@@ -61,4 +61,20 @@ it("keeps local mode administrator-only and avoids Cloud RPC", async () => {
   mode.cloud = false;
   vi.mocked(requireAdmin).mockImplementation(() => { throw new AppError("FORBIDDEN", "需要管理员", 403); });
   expect((await POST(request())).status).toBe(403); expect(service).not.toHaveBeenCalled(); expect(rpc).not.toHaveBeenCalled();
+});
+
+// 新试聊请求复用归属与能力门禁，公开输出不接受额外字段。
+it("routes preview only after new capability and keeps content out of audit", async () => {
+  const input = { config: defaultLiveChatConfig, text: "hi", history: [] };
+  vi.mocked(rpc).mockResolvedValue({ action: "reply", reply: "hey", reason: "conversation" });
+  expect((await POST(request({ action: "preview", input }))).status).toBe(200);
+  expect(requireChatConversation).toHaveBeenCalled();
+  expect(rpc).toHaveBeenCalledWith(expect.objectContaining({ instanceId: "main" }), "customer", { kind: "live-chat-preview", input });
+  expect(audit).toHaveBeenCalledWith("customer", "live-chat-preview", "main", "succeeded", "studio");
+});
+it("blocks preview on old devices and rejects oversized histories", async () => {
+  vi.mocked(requireChatConversation).mockRejectedValue(new AppError("CONFIG", "请升级", 409));
+  expect((await POST(request({ action: "preview", input: { config: defaultLiveChatConfig, text: "hi" } }))).status).toBe(409);
+  expect(rpc).not.toHaveBeenCalled();
+  expect((await POST(request({ action: "preview", input: { config: defaultLiveChatConfig, text: "hi", history: Array.from({ length: 9 }, () => ({ text: "hi" })) } }))).status).toBe(400);
 });

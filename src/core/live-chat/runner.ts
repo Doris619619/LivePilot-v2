@@ -254,9 +254,28 @@ export class LiveChatRunner {
   private async deliverOne(message: LiveChatMessage) {
     const epoch = this.epoch; const abort = new AbortController(); this.actionAbort = abort; let attempted = false;
     try {
-      const context = this.checkpoint.recent.filter(entry => entry.authorId === message.authorId && entry.status === "sent" && entry.at >= this.checkpoint.sessionAt && this.checkpoint.receipts.some(receipt => receipt.messageId === entry.id && receipt.target === this.checkpoint.target)).slice(-5);
+      // 新配置合并相邻的同人短连发；在生成前落盘，绝不吞掉生成期间后来到达的消息。
+      if (this.checkpoint.config.replyMode) await this.mutate(() => {
+        if (epoch !== this.epoch || this.stopped || !this.checkpoint.config.enabled) return;
+        const consecutive: LiveChatMessage[] = [];
+        let length = message.text.length;
+        for (const next of this.checkpoint.queue.slice(1)) {
+          if (next.authorId !== message.authorId || next.publishedAt - message.publishedAt > 2000 || length + next.text.length + 1 > 1000 || consecutive.length >= 3) break;
+          consecutive.push(next); length += next.text.length + 1;
+        }
+        if (!consecutive.length) return;
+        message = { ...message, text: [message.text, ...consecutive.map(item => item.text)].join("\n") };
+        const ids = new Set(consecutive.map(item => item.id));
+        this.checkpoint.queue = this.checkpoint.queue.filter(item => !ids.has(item.id)).map(item => item.id === message.id ? message : item);
+        for (const item of consecutive) this.record(item, "skipped", "已合并到同一观众的相邻留言，一起回应。");
+      });
+      const context = this.checkpoint.recent.filter(entry => entry.id !== message.id && entry.at >= this.checkpoint.sessionAt && (entry.status !== "sent" || this.checkpoint.receipts.some(receipt => receipt.messageId === entry.id && receipt.target === this.checkpoint.target))).slice(-12);
       const content = await this.ports.generate(structuredClone(this.checkpoint.config), message, structuredClone(context), abort.signal);
       if (epoch !== this.epoch || abort.signal.aborted || this.stopped) return;
+      if (content === null) {
+        await this.mutate(() => { this.checkpoint.queue = this.checkpoint.queue.filter(item => item.id !== message.id); this.record(message, "skipped", "按接话策略跳过，无需发送。"); this.checkpoint.lastAttemptAt = this.now(); });
+        return;
+      }
       const target = await this.ports.observe();
       const identity = JSON.stringify([target.channelId, target.broadcastId, target.liveChatId || ""]);
       if (!target.live || target.available === false || identity !== this.checkpoint.target || message.publishedAt < this.now() - MAX_AGE_MS) { this.cancel(); await this.mutate(() => this.clearQueue("场次已结束或消息已过期，已跳过待回复。")); return; }

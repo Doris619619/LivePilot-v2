@@ -64,6 +64,19 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2026-10-08T12:
 afterEach(async () => { for (const runner of runners.splice(0)) await runner.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("LiveChatRunner", () => {
+  it("records deliberate silence without sending or blocking subsequent chat", async () => {
+    const f = fixture(); vi.mocked(f.ports.generate).mockResolvedValueOnce(null); f.runner.start(); await advance();
+    f.feeds[0].push({ messages: [message("silence"), message("answer")] }); await advance(6000);
+    expect(f.ports.send).toHaveBeenCalledTimes(1);
+    expect(await f.runner.status()).toMatchObject({ state: "running", skipped: 1, sent: 1 });
+  });
+
+  it("coalesces adjacent same-author fragments without swallowing other viewers", async () => {
+    const f = fixture(); await f.runner.configure({ ...defaultLiveChatConfig, replyMode: "responsive" }); f.runner.start(); await advance();
+    f.feeds[0].push({ messages: [message("one", { authorId: "alice", text: "这首" }), message("two", { authorId: "alice", text: "很好听" }), message("three", { authorId: "bob", text: "hi" })] }); await advance(6000);
+    expect(vi.mocked(f.ports.generate).mock.calls[0][1].text).toBe("这首\n很好听");
+    expect(f.ports.send).toHaveBeenCalledTimes(2); expect((await f.runner.status()).skipped).toBe(1);
+  });
   it("sends real generator replies without an AI prefix through the runner", async () => {
     vi.stubEnv("DEEPSEEK_API_KEY", "sk-synthetic-chat-integration");
     const fetcher = vi.fn(async () => Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ reply: "谢谢你，听得开心！" }) } }] }));
@@ -171,7 +184,7 @@ describe("LiveChatRunner", () => {
 
   it("uses author ids rather than matching display names for conversation context", async () => {
     const f = fixture(); f.runner.start(); await advance(); f.feeds[0].push({ messages: [message("first", { authorId: "alice", author: "Same Name" }), message("second", { authorId: "bob", author: "Same Name" }), message("third", { authorId: "alice", author: "Same Name" })] }); await advance(10200);
-    expect(vi.mocked(f.ports.generate).mock.calls[1][2]).toEqual([]); expect(vi.mocked(f.ports.generate).mock.calls[2][2]).toMatchObject([{ id: "first", authorId: "alice", status: "sent" }]);
+    expect(vi.mocked(f.ports.generate).mock.calls[1][2]).toEqual(expect.arrayContaining([expect.objectContaining({ id: "first", authorId: "alice", status: "sent" })])); expect(vi.mocked(f.ports.generate).mock.calls[2][2]).toEqual(expect.arrayContaining([expect.objectContaining({ id: "second", authorId: "bob", status: "sent" })]));
   });
 
   it("maps existing observer auth failures to a permanent safe state and unknown errors to a fixed reconnect message", async () => {
