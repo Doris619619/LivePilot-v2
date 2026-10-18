@@ -47,7 +47,7 @@ it("passes supplemental persona for friendly preset as data without replacing id
 
 it("passes authoritative first-message state and requests a welcome only for a first message", async () => {
   const fetcher = vi.fn().mockImplementation(() => Promise.resolve(completion({ reply: "Hello!" }))); vi.stubGlobal("fetch", fetcher);
-  for (const firstMessage of [true, false]) await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, firstMessage }, [], new AbortController().signal);
+  for (const firstMessage of [true, false]) await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "hi", firstMessage }, [], new AbortController().signal);
   const requests = fetcher.mock.calls.map(call => JSON.parse(call[1].body));
   expect(requests[0].messages[0].content).toContain("When viewer.firstMessage is true, a brief welcome is optional");
   expect(requests[1].messages[0].content).toContain("When viewer.firstMessage is false, do not repeat the welcome");
@@ -77,7 +77,7 @@ it("limits final label, name and reply to 200 UTF-16 units without splitting emo
 
 it("uses a safe viewer salutation when the name is absent or contains only a URL", async () => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(completion({ reply: "Hello!" }))));
-  for (const author of ["", "https://untrusted.example"]) expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, author }, [], new AbortController().signal)).toBe("@viewer Hello!");
+  for (const author of ["", "https://untrusted.example"]) expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "hi", author }, [], new AbortController().signal)).toBe("@viewer Hello!");
 });
 
 it.each([{ reply: "" }, { reply: "hello", tool: "start" }, { reply: "https://secret.example" }, { reply: "<b>text</b>" }, { reply: 5 }])("rejects unusable public reply output", async output => {
@@ -102,7 +102,7 @@ it("uses the runtime environment key even with an independently saved instance k
   await saveAiKey(storage, storedKey); const read = vi.spyOn(storage, "read");
   const fetcher = vi.fn().mockResolvedValue(completion({ reply: "Hello!" })); vi.stubGlobal("fetch", fetcher);
   expect(liveChatAiConfigured()).toBe(true);
-  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal)).toBe("@小梁 Hello!");
+  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "hi" }, [], new AbortController().signal)).toBe("@小梁 Hello!");
   expect(read).not.toHaveBeenCalled(); expect(fetcher.mock.calls[0][1].headers.Authorization).toBe("Bearer " + key);
   expect(fetcher.mock.calls[0][1].body).not.toContain(key); expect(fetcher.mock.calls[0][1].body).not.toContain(storedKey);
 });
@@ -157,4 +157,32 @@ it("accepts normal skip decisions and suppresses identical recent replies", asyn
   const fetcher = vi.fn().mockResolvedValueOnce(completion({ action: "skip", reply: "", reason: "noise" })).mockResolvedValueOnce(completion({ reply: "喜欢就多听会儿" })); vi.stubGlobal("fetch", fetcher);
   expect(await generateLiveChatReply(storage, defaultLiveChatConfig, message, [], new AbortController().signal)).toBeNull();
   expect(await generateLiveChatReply(storage, defaultLiveChatConfig, message, [{ id: "previous", authorId: message.authorId, author: message.author, text: "好听", reply: "@小梁 喜欢就多听会儿！", status: "sent", at: 1 }], new AbortController().signal)).toBeNull();
+});
+
+it.each(["安静听着就好。", "这画面有点可爱，晚上好。", "信号收到，多待一会儿。", "我也觉得这氛围不错。", "这首是我生成的。", "欢迎进来坐。", "月亮上的土豆先记下了。", "这是AI生成的音乐，能听上头就好。"])("regenerates %s once without rewriting a canned reply", async (draft) => {
+  const fetcher = vi.fn().mockResolvedValueOnce(completion({ reply: draft })).mockResolvedValueOnce(completion({ reply: "嗯，听着舒服就好。" })); vi.stubGlobal("fetch", fetcher);
+  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "好好听啊" }, [], new AbortController().signal)).toBe("@小梁 嗯，听着舒服就好。");
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  const second = JSON.parse(fetcher.mock.calls[1][1].body);
+  expect(second.messages[0].content).toContain("Rewrite correction");
+  expect(JSON.parse(second.messages[1].content).viewer.text).toBe("好好听啊");
+});
+
+it("shares the retry budget across language and conversational repair", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(completion({ reply: "你喜欢就好" })).mockResolvedValueOnce(completion({ reply: "I'll remember that" })); vi.stubGlobal("fetch", fetcher);
+  await expect(generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "I like it" }, [], new AbortController().signal)).rejects.toMatchObject({ code: "AI_OUTPUT" });
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("does not mistake a truthful denial of authorship for a creation claim", async () => {
+  const fetcher = vi.fn().mockResolvedValue(completion({ reply: "不是我生成的，我只是陪聊助手。" })); vi.stubGlobal("fetch", fetcher);
+  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "这首歌是你生成的吗？" }, [], new AbortController().signal)).toBe("@小梁 不是我生成的，我只是陪聊助手。");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("allows an actual greeting while refusing a repeated invented-memory claim", async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(completion({ reply: "嗨，欢迎来坐坐。" })).mockResolvedValue(completion({ reply: "这画面我先记下了。" })); vi.stubGlobal("fetch", fetcher);
+  expect(await generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "你好" }, [], new AbortController().signal)).toBe("@小梁 嗨，欢迎来坐坐。");
+  await expect(generateLiveChatReply(storage, defaultLiveChatConfig, { ...message, text: "土豆在月亮上游泳" }, [], new AbortController().signal)).rejects.toMatchObject({ code: "AI_OUTPUT" });
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });
