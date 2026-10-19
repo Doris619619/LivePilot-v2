@@ -1,0 +1,30 @@
+/* 文件用途：将网页运行状态与操作链接分为双面板，统一信号行、推流计时和按钮的响应式布局。 */
+.root { container: broadcast-runtime / inline-size; }
+.columns { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); align-items: stretch; gap: 20px; }
+.columns > section { margin-bottom: 0; }
+.summary { display: grid; justify-items: start; gap: 12px; }
+.summary p { max-width: 72ch; margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.signals { display: grid; margin: 0; border-top: 1px solid var(--border-subtle); }
+.signals > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; min-width: 0; padding: 18px 0; border-bottom: 1px solid var(--border-subtle); }
+.signals dt { color: var(--text-secondary); font-size: 14px; }
+.signals dd { margin: 0; color: var(--text-primary); font-size: 18px; font-weight: 600; line-height: 1.5; }
+.clock { display: grid; gap: 8px; margin: 0; padding: 16px; border-radius: var(--radius-md); background: var(--surface-hover); }
+.clock dt { color: var(--text-secondary); font-size: 14px; }
+.clock dd { margin: 0; font-size: 28px; font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.root .actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.root .actions > button { margin: 0; min-width: 0; }
+.readiness { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.linkArea { display: grid; gap: 12px; min-width: 0; }
+.linkArea > label { color: var(--text-primary); font-size: 14px; font-weight: 600; }
+.linkRow { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.linkArea input { width: 100%; min-width: 0; font-size: 14px; }
+.linkRow > a, .linkRow > button { flex: none; min-height: 44px; }
+.copyResult:empty { display: none; }
+.copyResult, .empty { color: var(--text-secondary); font-size: 14px; }
+@container broadcast-runtime (max-width: 759px) {
+  .columns { grid-template-columns: minmax(0, 1fr); }
+}
+@container broadcast-runtime (max-width: 479px) {
+  .signals dd { font-size: 16px; }
+  .linkArea input { font-size: 16px; }
+}
