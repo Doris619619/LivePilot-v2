@@ -1,11 +1,11 @@
-/** 共用互动编辑器；人设示例仅展示风格，不代表模型实测。 */
+/** 共用互动编辑器；网页编排可选紧凑展示，人设示例只表达风格，不代表模型实测。 */
 "use client";
 import type { LiveChatConfig } from "@/shared/live-chat";
 import { chatPersonas, type ChatPersona } from "@/shared/chat-personas";
 import "./live-chat-fields.css";
 import FieldCounter from "./field-counter";
-/** 回写完整草稿；设置页隐藏启停但允许编辑已关闭的偏好。 */
-export default function LiveChatFields({ id, value, disabled, onChange: onCommit, hideEnable = false }: { id: string; value: LiveChatConfig; disabled?: boolean; hideEnable?: boolean; onChange(value: LiveChatConfig): void }) {
+/** 回写完整草稿；隐藏启停时仍可编辑关闭的偏好，紧凑样式只由网页编排显式启用。 */
+export default function LiveChatFields({ id, value, disabled, onChange: onCommit, hideEnable = false, compact = false }: { id: string; value: LiveChatConfig; disabled?: boolean; hideEnable?: boolean; compact?: boolean; onChange(value: LiveChatConfig): void }) {
   /** 编辑后明确保存新接话模式；未编辑的旧包保持原协议兼容。 */
   function onChange(next: LiveChatConfig) { onCommit({ ...next, replyMode: next.replyMode || "responsive" }); }
   const persona = chatPersonas[value.preset];
@@ -16,9 +16,9 @@ export default function LiveChatFields({ id, value, disabled, onChange: onCommit
         <div className="field-group"><label htmlFor={`chat-persona-${id}`}>互动人设</label><select id={`chat-persona-${id}`} value={value.preset} onChange={e => onChange({ ...value, preset: e.target.value as ChatPersona })}>{Object.entries(chatPersonas).map(([key, item]) => <option key={key} value={key}>{item.name}</option>)}</select></div>
         <div className="field-group"><label htmlFor={`chat-mode-${id}`}>什么时候接话</label><select id={`chat-mode-${id}`} value={value.replyMode || "responsive"} onChange={e => onChange({ ...value, replyMode: e.target.value as LiveChatConfig["replyMode"] })}><option value="responsive">尽量回应 · 有效留言优先</option><option value="natural">自然参与 · 不抢话</option><option value="addressed">被叫才回 · 昵称或明确对话</option></select></div>
       </div>
-      <details className="chat-persona-directory"><summary>比较全部人设风格</summary><p>以下是风格示例，实际回复请在试聊中比较。</p>{Object.entries(chatPersonas).map(([key, item]) => <button type="button" key={key} aria-pressed={value.preset === key} onClick={() => onChange({ ...value, preset: key as ChatPersona })}><strong>{item.name}</strong><span>{item.description}</span><q>{item.example}</q></button>)}</details>
-      <div className="chat-persona-sample" aria-live="polite"><strong>{persona.description}</strong><p>风格示例 · 观众说「好好听呀」</p><blockquote>{persona.example}</blockquote><p lang="en">{persona.english}</p></div>
-      <details className="chat-expression" open={value.preset === "custom" ? true : undefined}><summary>更多设置 · 昵称、频道背景与表达</summary>
+      <details className="chat-persona-directory"><summary>{compact ? "人设风格示例" : "比较全部人设风格"}</summary>{!compact && <p>以下是风格示例，实际回复请在试聊中比较。</p>}{Object.entries(chatPersonas).map(([key, item]) => <button type="button" key={key} aria-pressed={value.preset === key} onClick={() => onChange({ ...value, preset: key as ChatPersona })}><strong>{item.name}</strong><span>{item.description}</span><q>{item.example}</q>{compact && <span lang="en">{item.english}</span>}</button>)}</details>
+      {!compact && <div className="chat-persona-sample" aria-live="polite"><strong>{persona.description}</strong><p>风格示例 · 观众说「好好听呀」</p><blockquote>{persona.example}</blockquote><p lang="en">{persona.english}</p></div>}
+      <details className="chat-expression" open={value.preset === "custom" ? true : undefined}><summary>{compact ? "更多设置" : "更多设置 · 昵称、频道背景与表达"}</summary>
       <div className="live-chat-field-grid">
         <div className="field-group"><label htmlFor={`chat-nickname-${id}`}>助手昵称</label><input id={`chat-nickname-${id}`} maxLength={40} value={value.nickname || ""} placeholder="助手" onChange={e => onChange({ ...value, nickname: e.target.value })} /></div>
         <div className="field-group"><label htmlFor={`chat-interval-${id}`}>发送间隔（秒）</label><select id={`chat-interval-${id}`} value={value.intervalSeconds} onChange={e => onChange({ ...value, intervalSeconds: Number(e.target.value) })}>{Array.from({ length: 56 }, (_, index) => index + 5).map(seconds => <option key={seconds} value={seconds}>{seconds}{seconds === 5 ? " · 活跃" : seconds === 15 ? " · 适中" : seconds === 30 ? " · 安静" : ""}</option>)}</select></div>

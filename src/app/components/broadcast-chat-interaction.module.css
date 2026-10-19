@@ -1,0 +1,44 @@
+/* 文件用途：仅调整网页直播编排互动区的分组、间距与试聊，不覆盖共用表单或桌面全局样式。 */
+.root { display: grid; gap: 20px; min-width: 0; }
+.root [hidden] { display: none; }
+.heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.heading h3 { margin: 0; font-size: 16px; }
+.heading button { min-height: 44px; padding: 6px 8px; font-size: 13px; }
+.settings { display: grid; gap: 16px; min-width: 0; }
+.enable { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; font-weight: 500; cursor: pointer; }
+.enable input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-primary); }
+.preferences { min-width: 0; }
+.preferences :global(.live-chat-fields) { gap: 16px; }
+.preferences :global(.chat-expression) { margin: 0; }
+.preferences :global(.chat-expression) > :not(summary) { margin-top: 16px; }
+.preferences :global(.chat-expression) > summary,
+.preferences :global(.chat-persona-directory) > summary { min-height: 44px; padding-block: 10px; font-size: 14px; }
+.preferences :global(.chat-persona-directory) > button { margin: 12px 0 0; gap: 6px; }
+.trial { min-width: 0; border-top: 1px solid var(--border-subtle); }
+.trial > summary { min-height: 44px; padding: 16px 0 0; font-size: 14px; font-weight: 500; cursor: pointer; }
+.trialBody { min-width: 0; padding-top: 16px; }
+.root :global(.chat-preview-compact) { display: grid; gap: 24px; margin: 0; min-width: 0; }
+.root :global(.chat-preview-context) { display: grid; gap: 6px; }
+.root :global(.chat-preview-context) > strong { font-size: 14px; font-weight: 500; }
+.root :global(.chat-preview-note) { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.root :global(.chat-preview-composer) { display: grid; gap: 12px; min-width: 0; }
+.root :global(.chat-preview-input) { display: grid; gap: 8px; min-width: 0; }
+.root :global(.chat-preview-input) > label { font-size: 14px; font-weight: 500; }
+.root :global(.chat-preview-samples) { gap: 8px; }
+.root :global(.chat-preview-samples) > button,
+.root :global(.chat-preview-more-samples) button { min-height: 44px; padding: 8px 12px; font-size: 13px; }
+.root :global(.chat-preview-more-samples) > summary { min-height: 44px; padding-block: 10px; font-size: 13px; cursor: pointer; }
+.root :global(.chat-preview-more-samples) > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.root :global(.chat-preview-actions) { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.root :global(.chat-preview-history) { display: grid; gap: 12px; min-width: 0; padding-top: 20px; border-top: 1px solid var(--border-subtle); }
+.root :global(.chat-preview-history-heading) { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.root :global(.chat-preview-history-heading) > h4 { margin: 0; font-size: 14px; }
+.root :global(.chat-preview-history-heading) > button { min-height: 44px; padding: 6px 8px; font-size: 13px; }
+.root :global(.chat-preview-turns) { display: grid; gap: 16px; margin: 0; padding: 0; max-height: 360px; }
+.root :global(.chat-preview-turns) > li { display: grid; gap: 8px; padding: 0 0 16px; }
+.root :global(.chat-preview-turns) > li > button { justify-self: start; max-width: 100%; white-space: normal; font-size: 13px; }
+.root :global(.chat-preview-error) { margin: 0; color: var(--error-rose); font-size: 14px; }
+@media (max-width: 600px) {
+  .preferences :global(.live-chat-field-grid) { gap: 16px; }
+  .root :global(.chat-preview-actions) > button { width: 100%; }
+}
