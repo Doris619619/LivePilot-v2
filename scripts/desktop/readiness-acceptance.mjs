@@ -54,8 +54,8 @@ try {
   await capture(page,'configuration-780');
   await page.setViewportSize({width:1280,height:900}); await capture(page,'configuration-1280');
   await selectStep(page,'second',3);
-  await page.getByRole('button',{name:'重新检查 OBS 2',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('[aria-label="重新检查 OBS 2"]').disabled);
+  await page.getByRole('button',{name:/重新检查 OBS 2$/}).click();
+  await page.waitForFunction(()=>!document.querySelector('[aria-label$="重新检查 OBS 2"]').disabled);
   assert.deepEqual(await page.evaluate(()=>window.launchFixture.calls),[{action:'diagnose-obs',id:'second'}]);
   await page.getByRole('button',{name:'本机 OBS',exact:true}).click();
   await page.getByRole('button',{name:'配置 OBS 2',exact:true}).click();
@@ -67,7 +67,7 @@ try {
   assert.equal(await page.locator('[data-instance-id="second"]').getByRole('alert').count(),0);
   await capture(page,'blocking-failure');
   await page.evaluate(()=>{window.launchFixture.fail=false;});
-  await page.getByRole('button',{name:'重新检查 OBS 1',exact:true}).click();
+  await page.getByRole('button',{name:/重新检查 OBS 1$/}).click();
   await expect(page.locator('#obs-step-panel-3-main .problem-card[role="alert"]')).toHaveCount(0);
   await page.getByRole('button',{name:'添加 OBS',exact:true}).click();
   await page.getByRole('heading',{name:'添加另一个 OBS',exact:true}).waitFor();
@@ -78,7 +78,7 @@ try {
   });
   await page.locator('#setup-obs-main').getByText('准备完成',{exact:true}).waitFor();
   await selectStep(page,'second',3);
-  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '重新检查 OBS 2', exact: true }).isVisible(), true);
+  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: /重新检查 OBS 2$/ }).isVisible(), true);
   assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '启动并检查 OBS 2', exact: true }).count(), 0);
   assert.equal(await page.locator('#obs-detail-main').isVisible(),false);
   await page.locator('#setup-obs-main').getByRole('button',{name:'查看配置',exact:true}).click();

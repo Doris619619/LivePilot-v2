@@ -1,4 +1,4 @@
-/** 合成桌面验收：状态进展、异常恢复、成功详情的渐进展示及就近操作；不连接真实设备。 */
+/** 合成桌面验收：启动阶段、异常恢复、历史详情及紧凑成功操作；不连接真实设备。 */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -97,12 +97,12 @@ try {
     await page.evaluate(() => window.startupFixture.finish(false));
     await controls.getByText('本轮连接检查已超时', { exact: true }).waitFor();
     assert.equal(await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).count(), 0);
-    await page.waitForFunction(() => !document.querySelector('[aria-label="重新检查 OBS 1"]').disabled);
+    await page.waitForFunction(() => !document.querySelector('[aria-label$="重新检查 OBS 1"]').disabled);
     await capture(page, 'timeout-' + width);
     await page.evaluate(() => window.startupFixture.observe(true));
     await controls.getByText('控制连接已恢复', { exact: true }).waitFor();
     assert.equal(await controls.getByRole('alert').count(), 0);
-    await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).click();
+    await controls.getByRole('button', { name: /重新检查 OBS 1$/ }).click();
     await controls.getByText('上次连接检查超时；刚刚重新检测到控制已连接。', { exact: true }).waitFor();
     assert.equal(await details.getAttribute('open'), null, 'recovered state keeps details secondary');
     assert.equal(await details.getByText('本轮最多等待 60 秒', { exact: false }).count(), 0, 'recovered connection does not repeat the expired wait contract');
@@ -121,8 +121,9 @@ try {
     await selectControlStep(page, 'main');
     await controls.getByText('控制已连接', { exact: true }).waitFor();
     const title = await controls.getByText('控制已连接', { exact: true }).boundingBox();
-    const button = await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).boundingBox();
-    assert.ok(button.y > title.y && Math.abs(button.x - title.x) < 40, 'recheck is under the status, aligned left');
+    const button = await controls.getByRole('button', { name: /重新检查 OBS 1$/ }).boundingBox();
+    if (width > 390) assert.ok(Math.abs(button.y + button.height / 2 - title.y - title.height / 2) < 6, 'connected status and recheck share one row while launch history remains secondary');
+    else assert.ok(button.y >= title.y - 22 && button.x >= (await controls.boundingBox()).x, 'narrow success controls stay beside or immediately after their status');
     assert.equal(await controls.locator('button.btn-primary').count(), 0);
     const timing = details.getByText(/本次检查用时 \d+ 秒 · 最近确认于 \d+ 秒前/);
     assert.equal(await timing.count(), 1, 'success timing remains available in details');

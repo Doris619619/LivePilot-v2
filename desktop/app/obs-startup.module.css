@@ -1,6 +1,10 @@
-/* 文件用途：OBS 检查的局部阶段反馈与状态下方操作区，继承桌面字体和颜色。 */
+/* 文件用途：OBS 检查的紧凑连接摘要及启动异常反馈，继承桌面字体和颜色。 */
 .feedback { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin: 12px 0 4px; min-width: 0; overflow-wrap: anywhere; }
-.feedback[data-startup-state="ready"] { gap: 8px; }
+.feedback[data-startup-state="ready"] { gap: 2px; margin: 0; }
+.summary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.feedback[data-startup-state="ready"] .summary { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 20px; }
+.summary .actions { margin: 0; }
+.feedback > .confirmedAt { margin: 0; padding-left: 28px; color: var(--text-secondary); font-size: 13px; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .heading { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; line-height: 1.6; }
 .heading svg { width: 20px; height: 20px; flex-shrink: 0; }
 .ready { color: var(--success-green); }
@@ -15,7 +19,6 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin-top: 4px; }
 .actions button, .details summary { min-height: 44px; }
 .actions button { white-space: normal; text-align: start; }
-.result { color: var(--text-secondary); font-size: 14px; }
 .details { width: 100%; max-width: 65ch; color: var(--text-secondary); font-size: 14px; }
 .details summary { display: list-item; cursor: pointer; padding-block: 10px; width: fit-content; }
 .details p { margin: 0 0 8px; line-height: 1.6; }

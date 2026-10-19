@@ -136,23 +136,31 @@ async function assertHiddenPanelsAreInert(page) {
   }
 }
 
-/** 页面实际渲染必须为纵向五个标题；状态只在所属标题显示一次。 */
+/** 纵向标题仅折叠时显示通用完成状态，运行或异常始终可见，箭头不随状态显隐移动。 */
 async function assertVerticalLayout(page, id) {
   const detail = page.locator('#obs-detail-' + id);
   const triggers = detail.locator('button[id^="obs-step-"]');
   assert.equal(await triggers.count(), 5);
   assert.equal(await page.locator('.setup-progress').count(), 0, 'the duplicate horizontal progress navigation is removed');
   const boxes = await triggers.evaluateAll(items => items.map(element => { const box = element.getBoundingClientRect(); return { x: box.x, y: box.y, width: box.width, height: box.height, text: element.textContent }; }));
+  const arrows = [];
   for (let index = 0; index < boxes.length; index++) {
     assert.ok(boxes[index].height >= 44, 'step header is at least 44 CSS px');
     assert.ok(Math.abs(boxes[index].x - boxes[0].x) < 2, 'step headers share the same left edge');
     if (index) assert.ok(boxes[index].y > boxes[index - 1].y + boxes[index - 1].height - 1, 'step headers are ordered vertically');
     assert.ok((boxes[index].text.match(/已完成/g) || []).length <= 1, 'header completion label is not repeated');
-    assert.equal(await triggers.nth(index).locator('[data-step-header-status]').count(), 1, 'each title has one status label');
+    const trigger = triggers.nth(index);
+    const status = trigger.locator('[data-step-header-status]');
+    assert.equal(await status.count(), 1, 'each title retains one status label in the DOM');
+    const state = await trigger.evaluate(element => ({ expanded: element.getAttribute('aria-expanded') === 'true', state: element.closest('li').dataset.stepState }));
+    if (state.expanded && state.state === 'complete') await expect(status).toBeHidden();
+    else await expect(status).toBeVisible();
+    arrows.push(await trigger.locator('svg').last().boundingBox());
     const panel = detail.locator('#obs-step-panel-' + (index + 1) + '-' + id);
     assert.equal(await panel.locator('.obs-complete-badge').count(), 0, 'panels do not repeat header completion badges');
     assert.equal(await panel.getByRole('heading', { name: labels[index], exact: true }).count(), 0, 'panels do not repeat their step heading');
   }
+  for (const arrow of arrows) assert.ok(Math.abs(arrow.x - arrows[0].x) < 2, 'chevrons retain the same column when completion labels are hidden');
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'no horizontal page overflow at the tested CSS width');
 }
 
@@ -163,17 +171,48 @@ async function capture(page, name) {
   await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled' });
 }
 
+/** 无启动历史的正常连接只占紧凑状态行与固定时刻；完成文案只出现在原复查按钮内一次。 */
+async function assertCompactReady(page, controls, complete = false) {
+  const recheck = controls.getByRole('button', { name: /重新检查 OBS 1$/ });
+  const connected = controls.getByText('控制已连接', { exact: true });
+  await expect(connected).toBeVisible();
+  await expect(controls.locator('details')).toHaveCount(0);
+  await expect(controls.getByText(/^最近确认 \d{2}:\d{2}$/)).toBeVisible();
+  const time = controls.locator('time');
+  await expect(time).toHaveCount(1);
+  await expect(time).toHaveText(/^\d{2}:\d{2}$/);
+  assert.ok(Number.isFinite(Date.parse(await time.getAttribute('datetime'))), 'confirmation time has a machine-readable timestamp');
+  assert.equal(await controls.getByText(/秒前/).count(), 0, 'normal connected feedback does not repeat a ticking relative time');
+  const [area, title, button] = await Promise.all([controls.boundingBox(), connected.boundingBox(), recheck.boundingBox()]);
+  assert.ok(area.height <= 80, 'normal ready feedback is at most 80 CSS px high');
+  assert.ok(button.height >= 44, 'compact recheck retains a 44 CSS px target');
+  if (page.viewportSize().width > 520) assert.ok(Math.abs(button.y + button.height / 2 - title.y - title.height / 2) < 6, 'connected status and recheck share one row');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'compact ready feedback does not overflow horizontally');
+  if (complete) {
+    await expect(recheck).toHaveText('检查完成');
+    await expect(recheck).toHaveAccessibleName('检查完成，重新检查 OBS 1');
+    await expect(controls.getByText('检查完成', { exact: true })).toHaveCount(1);
+    await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
+    await expect(controls.getByRole('status').filter({ hasText: /^OBS 1 检查完成$/ })).toBeAttached();
+  }
+}
+
 /** 手动结算示例诊断，验证即时反馈、去重、原实例路由和失败重试，不使用等待时间猜测请求阶段。 */
 async function assertRecheckFeedback(page, screenshots) {
   const controls = page.locator('#obs-step-panel-3-main .obs-instance-controls');
-  const recheck = controls.getByRole('button', { name: '重新检查 OBS 1', exact: true });
+  const recheck = controls.getByRole('button', { name: /重新检查 OBS 1$/ });
+  // 缓存本实例的真实按钮节点；状态从已连接到未连接时只改布局，不替换或迁移操作控件。
+  const originalRecheck = await recheck.elementHandle();
+  assert.ok(originalRecheck, 'original recheck button exists before the held diagnosis');
   const initialChecks = await page.evaluate(() => window.obsStepsFixture.state.checks.map(check => ({ id: check.instanceId, at: check.checkedAt })));
   await page.evaluate(() => { window.obsStepsFixture.holdDiagnose = true; });
   await recheck.click();
   await expect(recheck).toHaveText('正在检查…');
+  await expect(recheck).toHaveAccessibleName('正在检查，重新检查 OBS 1');
   await expect(recheck).toBeDisabled();
   await expect(controls.getByRole('status').filter({ hasText: '正在检查 OBS 1 的控制连接' })).toBeAttached();
   await expect(page.locator('.setup-feedback:visible')).toHaveCount(0);
+  await assertVerticalLayout(page, 'main');
   await page.waitForFunction(() => window.obsStepsFixture.pendingDiagnose?.id === 'main');
   await recheck.evaluate(button => { button.click(); button.click(); });
   assert.deepEqual(await page.evaluate(() => window.obsStepsFixture.calls.filter(call => call.action === 'diagnose-obs')), [{ action: 'diagnose-obs', id: 'main' }], 'repeated clicks during one pending check submit only one original-instance request');
@@ -182,13 +221,13 @@ async function assertRecheckFeedback(page, screenshots) {
   await expect(page.locator('#obs-step-panel-3-second .obs-instance-controls').getByText('正在检查…', { exact: true })).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.obsStepsFixture.pendingDiagnose.id), 'main', 'switching OBS never retargets the pending diagnosis');
   await navigate(page, '本机 OBS');
-  await expect(page.locator('.obs-instance-controls[data-instance-id="main"]:visible').getByRole('button', { name: '重新检查 OBS 1', exact: true })).toHaveText('正在检查…');
+  await expect(page.locator('.obs-instance-controls[data-instance-id="main"]:visible').getByRole('button', { name: /重新检查 OBS 1$/ })).toHaveText('正在检查…');
   await expect(page.locator('.obs-instance-controls[data-instance-id="second"]:visible').getByText('正在检查…', { exact: true })).toHaveCount(0);
   await navigate(page, '设备配置');
   await selectStep(page, 'main', 3);
   await expect(recheck).toHaveText('正在检查…');
   await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true));
-  await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
+  await assertCompactReady(page, controls, true);
   await expect(recheck).toBeEnabled();
   if (screenshots) await capture(page, 'recheck-complete');
   const completedChecks = await page.evaluate(() => window.obsStepsFixture.state.checks.map(check => ({ id: check.instanceId, at: check.checkedAt })));
@@ -199,7 +238,10 @@ async function assertRecheckFeedback(page, screenshots) {
   await page.waitForFunction(() => typeof window.obsStepsFixture.finishDiagnose === 'function');
   await page.evaluate(() => window.obsStepsFixture.finishDiagnose(false));
   await expect(page.getByRole('alert').filter({ hasText: '示例：本次 OBS 检查未完成，请重新检查。' })).toHaveCount(1);
-  await expect(controls.getByText('检查未完成', { exact: true })).toBeVisible();
+  await expect(controls.getByRole('status').filter({ hasText: /^OBS 1 检查未完成$/ })).toBeAttached();
+  await expect(recheck).toHaveText('重新检查');
+  await expect(recheck).toHaveAccessibleName('重新检查 OBS 1');
+  await assertVerticalLayout(page, 'main');
   await expect(recheck).toBeEnabled();
   await expect(controls.getByText('检查完成', { exact: true })).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.obsStepsFixture.state.checks.find(check => check.instanceId === 'main').checkedAt), completedChecks.find(check => check.id === 'main').at, 'failed diagnosis keeps the previous observation instead of creating a success');
@@ -208,10 +250,14 @@ async function assertRecheckFeedback(page, screenshots) {
   await page.waitForFunction(() => typeof window.obsStepsFixture.finishDiagnose === 'function');
   assert.deepEqual(await page.evaluate(() => window.obsStepsFixture.calls.filter(call => call.action === 'diagnose-obs')), Array.from({ length: 3 }, () => ({ action: 'diagnose-obs', id: 'main' })), 'failure retry retains the original instance ID');
   await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true, { controlReady: false }));
-  await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
+  await expect(recheck).toHaveText('检查完成');
+  await expect(recheck).toHaveAccessibleName('检查完成，重新检查 OBS 1');
+  await expect(controls.getByText('检查完成', { exact: true })).toHaveCount(1);
   await expect(page.getByRole('alert').filter({ hasText: '示例：本次 OBS 检查未完成，请重新检查。' })).toHaveCount(0);
   await expect(controls.getByText('控制已连接', { exact: true })).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.obsStepsFixture.state.checks.find(check => check.instanceId === 'main').controlReady), false, 'completed diagnosis can report a disconnected OBS without inventing a connection success');
+  assert.equal(await recheck.evaluate((button, original) => button === original && button.isConnected, originalRecheck), true, 'connection changes preserve the original recheck DOM node');
+  await originalRecheck.dispose();
   assert.equal(await page.evaluate(() => window.obsStepsFixture.calls.some(call => call.action === 'launch-obs')), false, 'rechecking never launches OBS or begins a broadcast');
   await page.evaluate(() => { window.obsStepsFixture.holdDiagnose = false; });
 }
@@ -323,6 +369,7 @@ export async function runAcceptance(server) {
       await ready.locator('#obs-step-panel-3-main:visible').waitFor();
       await expect(ready.locator('#obs-detail-main [data-step-state="complete"]')).toHaveCount(5);
       await assertVerticalLayout(ready, 'main');
+      await assertCompactReady(ready, ready.locator('#obs-step-panel-3-main .obs-instance-controls'));
       assert.equal(await ready.locator('.problem-card[role="alert"]:visible,.setup-feedback[role="alert"]:visible,.setup-feedback :is([role="alert"]):visible').count(), 0, 'fresh ready preview contains no product failure card or operation failure feedback');
       assert.equal(await ready.getByRole('alert').filter({ hasText: /示例：|未完成|失败|错误/ }).count(), 0, 'fresh ready preview contains no synthetic or product failure text');
       await capture(ready, 'ready-' + width);

@@ -13,7 +13,7 @@
 .status { color: var(--text-secondary); font-size: 14px; font-weight: 400; line-height: 1.5; }
 .step[data-step-state="running"] .status { color: var(--accent-primary); font-weight: 500; }
 .step[data-step-state="error"] .status { color: var(--error-rose); font-weight: 500; }
-.chevron { width: 18px; height: 18px; color: var(--text-secondary); transform: rotate(-90deg); }
+.chevron { grid-column: 4; width: 18px; height: 18px; color: var(--text-secondary); transform: rotate(-90deg); }
 .trigger[aria-expanded="true"] .chevron { transform: rotate(0); }
 .trigger[aria-expanded="true"] .number { color: var(--accent-primary); background: var(--accent-subtle); }
 .panel { min-width: 0; padding: 0 8px 24px 50px; scroll-margin-top: 100px; }

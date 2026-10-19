@@ -6,7 +6,7 @@ import styles from "./obs-setup-steps.module.css";
 
 export type ObsSetupStep = { label: string; complete: boolean; pending: string; status?: { text: string; tone: "running" | "error" }; content: ReactNode };
 
-/** 只在实例首次挂载时选未完成项；后续轮询和完成状态变化都不打断正在编辑的步骤。 */
+/** 首次选未完成项，轮询不打断编辑；展开时省略通用完成标签，具体结果由内容说明。 */
 export default function ObsSetupSteps({ instanceId, steps }: { instanceId: string; steps: ObsSetupStep[] }) {
   const [selected, setSelected] = useState(() => {
     const next = steps.findIndex(step => !step.complete);
@@ -26,7 +26,7 @@ export default function ObsSetupSteps({ instanceId, steps }: { instanceId: strin
       const status = step.status?.text || (step.complete ? "已完成" : step.pending);
       return <li key={step.label} className={styles.step} data-step-state={step.status?.tone || (step.complete ? "complete" : "pending")}>
         <h4 className={styles.heading}><button type="button" id={triggerId} className={styles.trigger} aria-expanded={expanded} aria-controls={panelId} aria-disabled={expanded || undefined} onClick={() => selectStep(index)}>
-          <span className={styles.number} aria-hidden="true">{index + 1}</span><span className={styles.title}>{step.label}</span><span className={styles.status} data-step-header-status>{status}</span><ChevronDownIcon className={styles.chevron} aria-hidden="true" />
+          <span className={styles.number} aria-hidden="true">{index + 1}</span><span className={styles.title}>{step.label}</span><span className={styles.status} data-step-header-status hidden={expanded && step.complete && !step.status}>{status}</span><ChevronDownIcon className={styles.chevron} aria-hidden="true" />
         </button></h4>
         <div id={panelId} className={styles.panel} role="region" aria-labelledby={triggerId} data-obs-step-panel={index + 1} hidden={!expanded}>{step.content}</div>
       </li>;
