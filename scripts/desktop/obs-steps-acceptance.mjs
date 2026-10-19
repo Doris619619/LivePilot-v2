@@ -17,10 +17,9 @@ function installFixture() {
   const instances = ['main', 'second'].map((id, index) => ({ id, name: 'OBS ' + (index + 1), initialized: true, managed: index === 0 || readyPreview, exe: 'D:/示例数据/OBS-' + (index + 1) + '/bin/64bit/obs64.exe', port: 4457 + index * 2 }));
   const state = { version: '界面预览 · 示例数据', busy: false, dataRoot: 'D:/示例数据/LiveNest', dataLocationReady: true, paired: true, online: true, agentRunning: true, autoStart: false, instances,
     checks: instances.map(instance => ({ id: 'network-' + instance.id, instanceId: instance.id, label: instance.name, status: 'ready', controlReady: true, checkedAt: Date.now() })), snapshots: [], update: { status: 'idle' } };
-  const fixture = window.obsStepsFixture = { state, calls: [], reads: 0, rejectRename: false };
-  /** 每次只读刷新时间戳，避免预览静置后被误判为真实连接陈旧。 */
+  const fixture = window.obsStepsFixture = { state, calls: [], reads: 0, rejectRename: false, holdDiagnose: false };
+  /** 示例心跳只刷新快照；本机检查时间只在合成检查实际完成时更新。 */
   fixture.refresh = () => {
-    for (const check of state.checks) check.checkedAt = Date.now();
     for (const snapshot of state.snapshots) snapshot.observedAt = Date.now();
     return state;
   };
@@ -40,8 +39,32 @@ function installFixture() {
     session: async () => ({ authenticated: true, username: '示例用户' }), logout: async () => {},
     state: async () => fixture.refresh(), readState: async () => { fixture.reads++; return { ok: true, state: fixture.refresh() }; }, updateState: async () => state,
     update: async () => ({ ok: true, state }),
+    /** 合成检查默认留出可见反馈；验收可暂停并手动返回成功或失败，不接触真实 OBS。 */
     act: async (action, input = {}) => {
       fixture.calls.push({ action, ...input });
+      if (action === 'diagnose-obs') return new Promise(resolve => {
+        const startedAt = Date.now(); let settled = false;
+        fixture.pendingDiagnose = { id: input.id, startedAt };
+        state.busy = true;
+        state.activity = { action, instanceId: input.id, step: 2, status: 'running', stage: '示例：正在检查 OBS 控制连接', startedAt };
+        /** 只结算本轮指定实例；失败保留原观测，不生成连接成功证据。 */
+        const finish = (ok, options = {}) => {
+          if (settled) return; settled = true;
+          delete fixture.finishDiagnose; delete fixture.pendingDiagnose;
+          const endedAt = Date.now(); state.busy = false;
+          if (!ok) {
+            const problem = { version: 1, source: 'desktop', code: 'SYNTHETIC_DIAGNOSE', domain: 'desktop', target: { instanceId: input.id }, severity: 'error', stage: '检查 OBS', outcome: 'rejected', observedAt: endedAt, actions: ['refresh'], message: '示例：本次 OBS 检查未完成，请重新检查。' };
+            state.activity = { ...state.activity, status: 'failed', stage: '检查 OBS', endedAt, problem, message: problem.message };
+            return resolve({ ok: false, problem });
+          }
+          const previous = state.checks.find(check => check.instanceId === input.id);
+          fixture.setControl(input.id, options.controlReady ?? !!previous?.controlReady);
+          state.activity = { ...state.activity, status: 'complete', stage: '检查完成', endedAt };
+          resolve({ ok: true, state: fixture.refresh() });
+        };
+        fixture.finishDiagnose = finish;
+        if (!fixture.holdDiagnose) setTimeout(() => finish(true), 600);
+      });
       await new Promise(resolve => setTimeout(resolve, 100));
       if (action === 'pair' && fixture.holdPair) return new Promise(resolve => {
         state.activity = { action, step: 3, status: 'running', stage: '示例：正在连接网页', startedAt: Date.now() };
@@ -52,7 +75,7 @@ function installFixture() {
       if (action === 'rename') { const instance = instances.find(item => item.id === input.id); if (instance) instance.name = input.name; }
       if (action === 'pair' || action === 'start') fixture.setPaired(true);
       if (action === 'unpair') fixture.setPaired(false);
-      if (action === 'launch-obs' || action === 'diagnose-obs') fixture.setControl(input.id, true);
+      if (action === 'launch-obs') fixture.setControl(input.id, true);
       if (action === 'prepare') { const instance = instances.find(item => item.id === input.id); if (instance) instance.initialized = true; }
       if (action === 'add') { const number = instances.length + 1; instances.push({ id: 'example-' + number, name: 'OBS ' + number, initialized: true, managed: true, exe: 'D:/示例数据/OBS-' + number + '/bin/64bit/obs64.exe', port: 4455 + number * 2 }); }
       return { ok: true, state: fixture.refresh() };
@@ -66,8 +89,8 @@ function installFixture() {
   }, 100));
 }
 
-/** 仅服务本次 desktop/out，并在 HTML 的应用脚本之前注入隔离桥接。 */
-export async function createPreviewServer() {
+/** 仅服务本次 desktop/out，并在 HTML 的应用脚本之前注入隔离桥接；默认随机端口。 */
+export async function createPreviewServer(port = 0) {
   const server = createServer(async (req, res) => {
     try {
       const pathname = new URL(req.url, 'http://localhost').pathname.replace(/\/$/, '/index.html');
@@ -79,7 +102,7 @@ export async function createPreviewServer() {
       res.setHeader('Cache-Control', 'no-store'); res.end(body);
     } catch { res.writeHead(404); res.end(); }
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await new Promise(resolve => server.listen(port, '127.0.0.1', resolve));
   return server;
 }
 
@@ -138,6 +161,59 @@ async function capture(page, name) {
   await page.locator('#fixture-note').waitFor();
   await page.evaluate(() => { window.scrollTo(0, 0); document.querySelector('.main-wrapper')?.scrollTo(0, 0); });
   await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled' });
+}
+
+/** 手动结算示例诊断，验证即时反馈、去重、原实例路由和失败重试，不使用等待时间猜测请求阶段。 */
+async function assertRecheckFeedback(page, screenshots) {
+  const controls = page.locator('#obs-step-panel-3-main .obs-instance-controls');
+  const recheck = controls.getByRole('button', { name: '重新检查 OBS 1', exact: true });
+  const initialChecks = await page.evaluate(() => window.obsStepsFixture.state.checks.map(check => ({ id: check.instanceId, at: check.checkedAt })));
+  await page.evaluate(() => { window.obsStepsFixture.holdDiagnose = true; });
+  await recheck.click();
+  await expect(recheck).toHaveText('正在检查…');
+  await expect(recheck).toBeDisabled();
+  await expect(controls.getByRole('status').filter({ hasText: '正在检查 OBS 1 的控制连接' })).toBeAttached();
+  await expect(page.locator('.setup-feedback:visible')).toHaveCount(0);
+  await page.waitForFunction(() => window.obsStepsFixture.pendingDiagnose?.id === 'main');
+  await recheck.evaluate(button => { button.click(); button.click(); });
+  assert.deepEqual(await page.evaluate(() => window.obsStepsFixture.calls.filter(call => call.action === 'diagnose-obs')), [{ action: 'diagnose-obs', id: 'main' }], 'repeated clicks during one pending check submit only one original-instance request');
+  if (screenshots) await capture(page, 'recheck-running');
+  await selectStep(page, 'second', 3);
+  await expect(page.locator('#obs-step-panel-3-second .obs-instance-controls').getByText('正在检查…', { exact: true })).toHaveCount(0);
+  assert.equal(await page.evaluate(() => window.obsStepsFixture.pendingDiagnose.id), 'main', 'switching OBS never retargets the pending diagnosis');
+  await navigate(page, '本机 OBS');
+  await expect(page.locator('.obs-instance-controls[data-instance-id="main"]:visible').getByRole('button', { name: '重新检查 OBS 1', exact: true })).toHaveText('正在检查…');
+  await expect(page.locator('.obs-instance-controls[data-instance-id="second"]:visible').getByText('正在检查…', { exact: true })).toHaveCount(0);
+  await navigate(page, '设备配置');
+  await selectStep(page, 'main', 3);
+  await expect(recheck).toHaveText('正在检查…');
+  await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true));
+  await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
+  await expect(recheck).toBeEnabled();
+  if (screenshots) await capture(page, 'recheck-complete');
+  const completedChecks = await page.evaluate(() => window.obsStepsFixture.state.checks.map(check => ({ id: check.instanceId, at: check.checkedAt })));
+  assert.ok(completedChecks.find(check => check.id === 'main').at > initialChecks.find(check => check.id === 'main').at, 'successful fixture diagnosis produces a new original-instance check time');
+  assert.equal(completedChecks.find(check => check.id === 'second').at, initialChecks.find(check => check.id === 'second').at, 'checking one OBS does not forge a sibling check time');
+  await recheck.click();
+  await expect(recheck).toHaveText('正在检查…');
+  await page.waitForFunction(() => typeof window.obsStepsFixture.finishDiagnose === 'function');
+  await page.evaluate(() => window.obsStepsFixture.finishDiagnose(false));
+  await expect(page.getByRole('alert').filter({ hasText: '示例：本次 OBS 检查未完成，请重新检查。' })).toHaveCount(1);
+  await expect(controls.getByText('检查未完成', { exact: true })).toBeVisible();
+  await expect(recheck).toBeEnabled();
+  await expect(controls.getByText('检查完成', { exact: true })).toHaveCount(0);
+  assert.equal(await page.evaluate(() => window.obsStepsFixture.state.checks.find(check => check.instanceId === 'main').checkedAt), completedChecks.find(check => check.id === 'main').at, 'failed diagnosis keeps the previous observation instead of creating a success');
+  await recheck.click();
+  await expect(recheck).toHaveText('正在检查…');
+  await page.waitForFunction(() => typeof window.obsStepsFixture.finishDiagnose === 'function');
+  assert.deepEqual(await page.evaluate(() => window.obsStepsFixture.calls.filter(call => call.action === 'diagnose-obs')), Array.from({ length: 3 }, () => ({ action: 'diagnose-obs', id: 'main' })), 'failure retry retains the original instance ID');
+  await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true, { controlReady: false }));
+  await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: '示例：本次 OBS 检查未完成，请重新检查。' })).toHaveCount(0);
+  await expect(controls.getByText('控制已连接', { exact: true })).toHaveCount(0);
+  assert.equal(await page.evaluate(() => window.obsStepsFixture.state.checks.find(check => check.instanceId === 'main').controlReady), false, 'completed diagnosis can report a disconnected OBS without inventing a connection success');
+  assert.equal(await page.evaluate(() => window.obsStepsFixture.calls.some(call => call.action === 'launch-obs')), false, 'rechecking never launches OBS or begins a broadcast');
+  await page.evaluate(() => { window.obsStepsFixture.holdDiagnose = false; });
 }
 
 /** 在三个 CSS 宽度验证布局、输入草稿、键盘、状态轮询和实例路由，不替代真实 OBS 验收。 */
@@ -250,16 +326,17 @@ export async function runAcceptance(server) {
       assert.equal(await ready.locator('.problem-card[role="alert"]:visible,.setup-feedback[role="alert"]:visible,.setup-feedback :is([role="alert"]):visible').count(), 0, 'fresh ready preview contains no product failure card or operation failure feedback');
       assert.equal(await ready.getByRole('alert').filter({ hasText: /示例：|未完成|失败|错误/ }).count(), 0, 'fresh ready preview contains no synthetic or product failure text');
       await capture(ready, 'ready-' + width);
+      await assertRecheckFeedback(ready, width === 1280);
       assert.deepEqual(readyErrors, [], 'fresh preview has no browser errors');
       await ready.close();
     }
-    console.log('PASS: 1280/780/520 CSS px vertical single-panel steps, keyboard, hidden focus exclusion, retained pairing/name drafts, polling stability and instance-bound actions');
+    console.log('PASS: 1280/780/520 CSS px vertical single-panel steps, keyboard, hidden focus exclusion, retained pairing/name drafts, polling stability, instance-bound actions and recheck running/completion/failure/retry feedback');
     console.log('Screenshots: ' + output);
   } finally { await browser.close(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-  const server = await createPreviewServer();
+  const server = await createPreviewServer(process.argv.includes('--serve') ? Number(process.env.LIVENEST_STEPS_PORT || 0) : 0);
   if (process.argv.includes('--serve')) {
     console.log('Preview URL: http://127.0.0.1:' + server.address().port + '/?scenario=ready');
     console.log('Pairing preview: http://127.0.0.1:' + server.address().port + '/?scenario=unpaired');

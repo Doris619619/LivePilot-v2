@@ -15,6 +15,7 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin-top: 4px; }
 .actions button, .details summary { min-height: 44px; }
 .actions button { white-space: normal; text-align: start; }
+.result { color: var(--text-secondary); font-size: 14px; }
 .details { width: 100%; max-width: 65ch; color: var(--text-secondary); font-size: 14px; }
 .details summary { display: list-item; cursor: pointer; padding-block: 10px; width: fit-content; }
 .details p { margin: 0 0 8px; line-height: 1.6; }
