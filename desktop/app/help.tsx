@@ -1,4 +1,4 @@
-/** 随安装包离线提供的 OBS 图解；复用仓库实拍标注，不依赖联网加载。 */
+/** 随安装包离线提供的 OBS 图解和客户端快捷键；复用仓库实拍标注，不依赖联网加载。 */
 "use client";
 /* eslint-disable @next/next/no-img-element -- 本地实拍截图直接离线显示，不使用 Next 图片服务。 */
 import { useState } from "react";
@@ -12,6 +12,7 @@ const topics = [
   { title: "画布与帧率", image: "video.png", steps: ["先确认没有推流或录制，再进入设置 → 视频。", "基础画布填写 1920×1080，输出分辨率填写 1280×720。", "常用 FPS 选择 30，保存设置。", "竖屏素材应使用匹配的竖屏画布，不强行拉伸。"] },
   { title: "编码与码率", image: "output.png", steps: ["进入设置 → 输出，选择简单模式。", "初次测试选择软件 x264，视频 4000 Kbps，音频 128 Kbps。", "截图显示的是原机器数值，应按本页文字填写。", "同时运行多个 OBS 时检查 CPU、编码负载和上行带宽。"] },
   { title: "故障与恢复", image: "", steps: ["设备已删除：网页或本机删除绑定后，联网并登录会自动解除旧绑定。在网页添加直播电脑，再粘贴新配对码即可连接，不需要恢复旧设备或重新安装。OBS 和素材保留。", "账号无权访问：尚未删除的设备仍属于原客户，请使用对应客户账号；不要把权限问题当成网络故障。", "设备离线：保持客户端运行，检查电脑出站 HTTPS 网络，点击重新连接。", "OBS 连接失败：核对正确的 OBS 是否运行，以及 WebSocket 端口和密码。", "频道查询失败：先检查直播电脑网络并重新查询；只有明确授权失效才重新授权原频道，应用配置错误请联系管理员。", "配置被阻止：在方便维护时结束直播、完成或取消上传与授权，再重试原操作。", "点击“更新并重启”会自动下载、安装并重新打开，无需登录、重新配对或重复确认。准备失败时查看具体原因；OBS 推流、录制或状态未知时不会安装。Agent 正在处理任务时等待完成后重试重启更新，不要强杀进程。", "旧版本卡在重启更新：通过托盘正常退出客户端，从官方发行页下载新版覆盖安装，保留原数据目录，无需卸载或删除配置。", "未知直播状态：检查 OBS 和 YouTube Studio，不重复点击开播，不删除身份或授权文件。", "关闭窗口会收至托盘；电脑睡眠或关机会中断远程控制。"] },
+  { title: "界面缩放", image: "", steps: ["在本地执行机窗口按 Ctrl + + 放大界面，按 Ctrl + - 缩小；也支持 Ctrl + = 和数字键盘的加减键。", "按 Ctrl + 0 恢复 100%。缩放范围为 50%–200%，文字、按钮和布局会一起调整。", "登录页和登录后的配置页均可使用。缩放只调整客户端界面，不改变 OBS 画布或直播输出分辨率。"] },
 ];
 /** 章节切换不改变配置，图片可在断网情况下阅读。 */
 export default function Help({initialTopic="obs"}:{initialTopic?:string}) { const [index, setIndex] = useState(initialTopic==="storage"?1:initialTopic==="recovery"?8:0); const topic = topics[index]; return <div className="desktop-help"><nav aria-label="帮助章节">{topics.map((t, i) => <button className={i === index ? "btn-primary" : "btn-ghost"} key={t.title} onClick={() => setIndex(i)}>{t.title}</button>)}</nav><article><h2>{topic.title}</h2><ol>{topic.steps.map(s => <li key={s}>{s}</li>)}</ol>{topic.image && <img src={"/help/" + topic.image} alt={topic.title + "：编号标注为点击位置"} />}</article></div>; }

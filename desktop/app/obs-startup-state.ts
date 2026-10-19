@@ -3,6 +3,20 @@ import type { Check, DesktopActivity } from "../../src/shared/desktop";
 import type { AgentSnapshot } from "../../src/shared/remote";
 import { OBS_OBSERVATION_FRESH_MS, OBS_STARTUP_SLOW_MS, obsStartupLabels } from "../../src/shared/obs-startup";
 
+/** 时间只计算已用与剩余预算，读取过期或到期不推断成功，阶段只取宿主真实报告。 */
+export function obsCheckProgressView(activity: DesktopActivity, now: number, readFresh: boolean) {
+  const progress = activity.action === "launch-obs" ? activity.obsStartup : activity.obsDiagnosis;
+  const at = Math.max(activity.startedAt, now);
+  const remaining = progress ? Math.max(0, Math.ceil((progress.deadlineAt - at) / 1000)) : undefined;
+  const overdue = remaining === 0;
+  const unknown = !readFresh || at - (progress?.lastProbeAt || activity.startedAt) >= OBS_OBSERVATION_FRESH_MS || overdue;
+  return {
+    elapsed: Math.max(0, Math.floor((at - activity.startedAt) / 1000)), remaining, overdue, unknown,
+    phaseIndex: ["process", "control", "verify", "ready"].indexOf(progress?.phase || "process"),
+    observation: progress?.observation || activity.stage,
+  };
+}
+
 /** 优先使用本轮宿主记录；IPC 失败可暂时覆盖运行态，下一次真实终态可恢复它。 */
 export function obsLaunchFor(id: string, activity?: DesktopActivity, launches: DesktopActivity[] = []) {
   const saved = launches.find(item => item.instanceId === id);
