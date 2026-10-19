@@ -121,6 +121,10 @@ Windows App 只接受客户账号，通过云端验证。退出界面不停止�
 
 ## 本地前端预览
 
+检查当前网页在真实账号下的显示效果：先 `npm run build`，再 `npm run preview:live`，打开 <http://127.0.0.1:63027/workspace> 并使用正式账号登录。页面来自本地构建，设备、频道、状态和配置由 `https://livenest.duckdns.org` 的已鉴权接口原样返回，没有模拟名称或在线状态。可用 `LIVENEST_LIVE_ORIGIN` 指定正式 HTTPS Origin，`LIVENEST_LIVE_PREVIEW_PORT` 指定回环端口。会话仅存在预览进程内存，重启后需重新登录；读取以正式账号的访问权限为准。此入口仅允许登录与读取，开停播、配置保存、上传和 AI 生成请在正式工作台执行。未登录、服务失败及无设备时均显示真实错误或空状态，不回退到演示内容。
+
+以下 `preview:local` 专用于合成场景测试，不用于代表真实账号的界面验收：
+
 先执行 `npm run build` 与 `npm run desktop:renderer`，再执行 `npm run preview:local`，打开 <http://127.0.0.1:3020>。入口包含客户工作台、管理员总览、登录页及 App 的首次配置、第二路 OBS、诊断、帮助和设置。客户（3021）与管理员（3023）分别自动登录，避免同时预览时角色混淆；3022 是真实本地网页登录服务。
 
 预览只监听本机，使用新建的 `.data/preview/session-*` 合成数据。演示账号 Liang / ULiang 的本地密码为 `preview123456`，与线上密码无关；开停播仅改变演示状态。App 的磁盘选择、扫描和配对使用浏览器模拟桥，不执行 OBS 或文件迁移。可在本机 `.env.local` 配置 `DEEPSEEK_API_KEY`，重启预览后「一键生成文案」会真实调用 DeepSeek，同时填入英文标题与说明；未配置时仍返回标明的演示文案。密钥不会进入前端或 Git。此预览不属于安装版或真实直播验收。按 Ctrl+C 停止。
