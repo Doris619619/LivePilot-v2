@@ -12,6 +12,7 @@ import { Shutdown } from "./shutdown";
 import { DesktopAccess } from "./desktop-access";
 import { problemSchema, problemSummary } from "../src/shared/problems";
 import { UpdateAccess } from "./update-access";
+import { installWindowZoom } from "./window-zoom";
 const auth = new DesktopAuth((url, init) => net.fetch(url, init));
 protocol.registerSchemesAsPrivileged([{ scheme: "livenest", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName("LiveNest"); app.setAppUserModelId("com.doris619619.livenest");
@@ -54,6 +55,7 @@ async function launch() {
   await manager.init();
   protocol.handle("livenest", serve); session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   window = new BrowserWindow({ width: 1280, height: 880, minWidth: 780, minHeight: 620, show: false, backgroundColor: "#ffffff", title: "LiveNest", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
+  installWindowZoom(window.webContents);
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" })); window.webContents.on("will-navigate", e => e.preventDefault()); window.webContents.on("will-attach-webview", e => e.preventDefault());
   window.on("close", e => { if (!quitting) { e.preventDefault(); window?.hide(); } });
   ipcMain.handle("desktop:session", event => { trusted(event); return auth.session(); });

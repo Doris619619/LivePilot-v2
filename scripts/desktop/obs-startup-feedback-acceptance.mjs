@@ -1,11 +1,11 @@
-/** 合成桌面验收：阶段、慢等待、失联、超时恢复及状态下方的操作位置；不连接真实设备。 */
+/** 合成桌面验收：状态进展、异常恢复、成功详情的渐进展示及就近操作；不连接真实设备。 */
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 const root = path.resolve('desktop/out');
-const output = path.resolve('docs/desktop/screenshots/startup-feedback');
+const output = path.resolve(process.env.LIVENEST_STARTUP_SCREENSHOTS || 'docs/desktop/screenshots/startup-feedback');
 await mkdir(output, { recursive: true });
 /** 隔离静态服务只使用随机本机端口。 */
 const server = createServer(async (req, res) => {
@@ -57,6 +57,8 @@ try {
     });
     await page.goto('http://127.0.0.1:' + server.address().port);
     const controls = page.locator('.obs-instance-controls[data-instance-id="main"]');
+    const details = controls.locator('details').filter({ has: page.locator('summary', { hasText: '查看检查详情' }) });
+    const detailSummary = details.locator('summary');
     await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
     await page.waitForFunction(() => window.startupFixture.finish !== null);
     await controls.getByRole('status').filter({ hasText: /^正在检查并启动 OBS$/ }).waitFor();
@@ -64,6 +66,12 @@ try {
     await page.evaluate(() => window.startupFixture.stage('control'));
     await controls.locator('[aria-current="step"]').filter({ hasText: '连接控制服务' }).waitFor();
     await controls.getByText('连接等待较久，检查仍在继续。', { exact: false }).waitFor();
+    assert.equal(await details.getAttribute('open'), null, 'check details start collapsed');
+    await detailSummary.focus();
+    await page.keyboard.press('Enter');
+    await controls.getByText('本轮最多等待 60 秒；到期停止检查，不关闭 OBS，也不会自动开播。', { exact: true }).waitFor();
+    await controls.getByText('OBS 已运行，控制服务尚未就绪，正在继续检查。', { exact: true }).waitFor();
+    await page.keyboard.press('Enter');
     await capture(page, 'waiting-' + width);
     await controls.getByRole('button', { name: '连接帮助', exact: true }).click();
     await navigate(page, '本机 OBS');
@@ -95,23 +103,39 @@ try {
     assert.equal(await controls.getByRole('alert').count(), 0);
     await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).click();
     await controls.getByText('上次连接检查超时；刚刚重新检测到控制已连接。', { exact: true }).waitFor();
+    assert.equal(await details.getAttribute('open'), null, 'recovered state keeps details secondary');
+    assert.equal(await details.getByText('本轮最多等待 60 秒', { exact: false }).count(), 0, 'recovered connection does not repeat the expired wait contract');
     assert.equal(await controls.locator('button.btn-primary').count(), 0);
     await capture(page, 'recovered-' + width);
     await page.evaluate(() => window.startupFixture.observe(false));
     await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
     await page.waitForFunction(() => window.startupFixture.starts === 2);
+    await detailSummary.focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await details.getAttribute('open'), '', 'running details can be expanded before completion');
     await page.evaluate(() => window.startupFixture.finish(true));
     await controls.getByText('控制已连接', { exact: true }).waitFor();
+    assert.equal(await details.getAttribute('open'), null, 'success collapses details previously opened while waiting');
     await navigate(page, '设备配置');
     await controls.getByText('控制已连接', { exact: true }).waitFor();
     const title = await controls.getByText('控制已连接', { exact: true }).boundingBox();
     const button = await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).boundingBox();
     assert.ok(button.y > title.y && Math.abs(button.x - title.x) < 40, 'recheck is under the status, aligned left');
     assert.equal(await controls.locator('button.btn-primary').count(), 0);
+    const timing = details.getByText(/本次检查用时 \d+ 秒 · 最近确认于 \d+ 秒前/);
+    assert.equal(await timing.count(), 1, 'success timing remains available in details');
+    assert.equal(await timing.isVisible(), false, 'success timing is hidden by default');
+    assert.equal(await details.getByText('本轮最多等待 60 秒', { exact: false }).count(), 0, 'success details omit the completed wait contract');
+    assert.equal(await details.getByText('OBS 已运行，控制服务尚未就绪，正在继续检查。', { exact: true }).count(), 0, 'success details omit the old observation');
+    await detailSummary.focus();
+    await page.keyboard.press('Enter');
+    await timing.waitFor();
+    await page.keyboard.press('Enter');
+    assert.equal(await timing.isVisible(), false, 'keyboard closes success details');
     await capture(page, 'success-' + width);
     assert.deepEqual(errors, []); await page.close();
   }
-  console.log('PASS: 390/780/1280px stages, slow/stale/IPC, cross-page history, timeout/recovery, success actions and placement');
+  console.log('PASS: 390/780/1280px stages, slow/stale/IPC, cross-page history, timeout/recovery, success disclosure, keyboard access and action placement');
 } finally { await browser.close(); server.close(); }
 /** 小窗口通过同一导航抽屉切换页面，验证真实响应式入口。 */
 async function navigate(page, name) {

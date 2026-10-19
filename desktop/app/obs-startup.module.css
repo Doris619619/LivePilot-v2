@@ -1,5 +1,6 @@
 /* 文件用途：OBS 检查的局部阶段反馈与状态下方操作区，继承桌面字体和颜色。 */
 .feedback { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin: 12px 0 4px; min-width: 0; overflow-wrap: anywhere; }
+.feedback[data-startup-state="ready"] { gap: 8px; }
 .heading { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 600; line-height: 1.6; }
 .heading svg { width: 20px; height: 20px; flex-shrink: 0; }
 .ready { color: var(--success-green); }
@@ -14,9 +15,9 @@
 .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin-top: 4px; }
 .actions button, .details summary { min-height: 44px; }
 .actions button { white-space: normal; text-align: start; }
-.details { width: 100%; color: var(--text-secondary); font-size: 14px; }
+.details { width: 100%; max-width: 65ch; color: var(--text-secondary); font-size: 14px; }
 .details summary { display: list-item; cursor: pointer; padding-block: 10px; width: fit-content; }
-.details p { line-height: 1.6; }
+.details p { margin: 0 0 8px; line-height: 1.6; }
 .details summary:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 3px; }
 @keyframes turn { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

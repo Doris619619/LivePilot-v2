@@ -6,7 +6,7 @@ import { CheckCircleIcon, AlertCircleIcon } from "../../src/app/components/icons
 import { obsStartupView } from "./obs-startup-state";
 import styles from "./obs-startup.module.css";
 
-/** 按不可变实例 ID 发起启动或只读检查，忙碌反馈只标记原目标。 */
+/** 按不可变实例 ID 发起启动或只读检查；成功只突出结果，计时留在详情，异常始终就地可见。 */
 export default function ObsInstanceControls({ instance, check, snapshot, activity, disabled, act, help, now, readFresh, refresh }: {
   instance: PublicInstance; check?: Check; snapshot?: AgentSnapshot; activity?: DesktopActivity; disabled: boolean;
   now: number; readFresh: boolean; refresh: () => void;
@@ -28,7 +28,6 @@ export default function ObsInstanceControls({ instance, check, snapshot, activit
     {view.running && <div className={styles.meta} aria-live="off">已等待 {elapsed} 秒{progress?.lastProbeAt ? " · 最近检查完成于 " + Math.max(0, Math.floor((now - progress.lastProbeAt) / 1000)) + " 秒前" : " · 等待首次检查结果"}</div>}
     {view.running && (view.unknown || view.slow) && <p role="status" className={styles.notice}>{view.unknown ? view.overdue ? "本轮已达到检查时限，正在核对最终结果。请重新读取状态，避免重复启动。" : "暂时无法确认检查是否仍在进行。可重新读取状态，或查看连接帮助。" : "连接等待较久，检查仍在继续。可查看 OBS 的控制服务设置，无需重复启动。"}</p>}
     {view.recovered && <p className={styles.notice}>{current?.problem?.code === "OBS_READY" ? "上次连接检查超时；刚刚重新检测到控制已连接。" : "上次连接检查未完成；刚刚重新检测到控制已连接。"}</p>}
-    {view.ready && <div className={styles.meta} aria-live="off">{current?.status === "complete" && !view.recovered ? `本次检查用时 ${elapsed} 秒 · ` : ""}最近确认于 {Math.max(0, Math.floor((now - view.latest!.at) / 1000))} 秒前</div>}
     {view.showFailure && current?.problem && <ProblemCard problem={current.problem} objectName={instance.name} />}
     <div className={styles.actions}>
       {view.showLaunch && <button className="btn-primary" disabled={disabled} aria-label={"启动并检查 " + instance.name} onClick={() => void act("launch-obs", { id: instance.id })}>启动并检查</button>}
@@ -36,10 +35,12 @@ export default function ObsInstanceControls({ instance, check, snapshot, activit
       {view.running && view.unknown && <button onClick={refresh}>重新读取状态</button>}
       {!view.ready && <button className="btn-ghost" onClick={help}>连接帮助</button>}
     </div>
-    {current && current.status !== "cancelled" && <details className={styles.details}><summary>查看检查详情</summary>
-      <p>{progress?.observation || current.stage}</p>
-      <p>本轮最多等待 60 秒；到期停止检查，不关闭 OBS，也不会自动开播。</p>
-      {view.showFailure && <p>本次检查用时 {elapsed} 秒。处理后请先重新检查当前状态。</p>}
+    {(view.ready || (current && current.status !== "cancelled")) && <details key={view.ready ? "connected" : "checking"} className={styles.details}><summary>查看检查详情</summary>
+      {view.ready ? <p className={styles.meta} aria-live="off">{current?.status === "complete" && !view.recovered ? `本次检查用时 ${elapsed} 秒 · ` : ""}最近确认于 {Math.max(0, Math.floor((now - view.latest!.at) / 1000))} 秒前</p> : current && <>
+        <p>{progress?.observation || current.stage}</p>
+        <p>本轮最多等待 60 秒；到期停止检查，不关闭 OBS，也不会自动开播。</p>
+        {view.showFailure && <p>本次检查用时 {elapsed} 秒。处理后请先重新检查当前状态。</p>}
+      </>}
     </details>}
   </div>;
 }
