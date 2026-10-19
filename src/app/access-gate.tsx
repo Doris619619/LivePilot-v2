@@ -170,8 +170,7 @@ export default function AccessGate({ children }: { children: ReactNode }) {
               {busy ? "验证中…" : "登录"}
             </button>
           </form>
-          <p className="login-help"><LockIcon /> 仅限已授权成员访问</p>
-          <AccountSwitcher />
+          <AccountSwitcher placement="login" />
         </section>
         <footer className="login-footer"><span>LiveNest Studio</span><Link href="/download">下载 Windows 客户端 ↗</Link></footer>
       </main>

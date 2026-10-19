@@ -1,4 +1,4 @@
-/** 直播前填写可同步到 YouTube 的详情，并预览观众看到的标题、封面和公开范围。 */
+/** 网页直播前按独立面板选择配置包、填写内容，并预览观众看到的标题、封面和公开范围。 */
 "use client";
 import { useState, type ReactNode } from "react";
 import BroadcastAi from "./broadcast-ai";
@@ -8,15 +8,16 @@ import { api } from "../client-request";
 import { defaultBroadcast, type BroadcastDetails, type Playlist } from "@/shared/broadcast";
 import type { InstanceDescriptor, Selection } from "@/shared/types";
 import BroadcastProfiles from "./broadcast-profiles";
-import { ExternalLinkIcon } from "./icons";
+import { ExternalLinkIcon, VideoIcon } from "./icons";
 import MediaPreview from "./media-preview/media-preview";
 import LiveChatFields from "./live-chat-fields";
-import LiveChatPreview from "./live-chat-preview";
+import BroadcastChatInteraction from "./broadcast-chat-interaction";
 import { defaultLiveChatConfig } from "@/shared/live-chat";
 import BroadcastCopyFields from "./broadcast-copy-fields";
 import BroadcastRuleFields from "./broadcast-rule-fields";
 import { ApiSettingsButton } from "./api-settings";
 import "./broadcast-workflow.css";
+import contentStyles from "./broadcast-workflow-panel.module.css";
 
 /** 配置只作用于当前实例；上传中锁定表单，防止异步完成覆盖新草稿。 */
 export default function BroadcastSettings({ id, instance, value, disabled, channel, channelId, broadcastId, videoName, musicName, videoAudio, live, onChange, onSelectionChange, onBusyChange, media, controls, tab, onTabChange: setTab }: {
@@ -77,15 +78,21 @@ export default function BroadcastSettings({ id, instance, value, disabled, chann
       <fieldset disabled={locked} className="broadcast-fields"><legend className="visually-hidden">本场素材</legend>{media("primary")}</fieldset>
     </TabsContent>
     <TabsContent className="studio-panel" value="content" aria-labelledby={`studio-tab-${id}-content`}>
-      <section className="workflow-section" aria-labelledby={`preset-heading-${id}`}><h3 id={`preset-heading-${id}`}>配置包</h3>
+      <section className={`broadcast-profile-panel ${contentStyles.root}`} aria-labelledby={`preset-heading-${id}`}>
+        <h3 id={`preset-heading-${id}`} className={contentStyles.heading}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="M3 8v9l9 5 9-5V8M12 13v9" /></svg>配置包</h3>
+        <div className={contentStyles.body}>
         {<BroadcastProfiles key={`${id}:${channelId}`} target={channelId ? { ...(instance.agentId ? { agentId: instance.agentId } : {}), instanceId: instance.id, channelId } : undefined} instance={instance} value={{ video: videoName || "", music: musicName || "", videoAudio: !!videoAudio, broadcast: details }} disabled={disabled || !!working} onApply={onSelectionChange} onBusyChange={busy => { setProfilesBusy(busy); onBusyChange(busy); }} />}
+        </div>
       </section>
-      <section className="workflow-section" aria-labelledby={`copy-heading-${id}`}><h3 id={`copy-heading-${id}`}>直播内容</h3>
-        <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
-        <BroadcastCopyFields id={id} value={details} disabled={locked} onChange={onChange} />
-        {cover("primary")}
+      <section className={`broadcast-content-panel ${contentStyles.root}`} aria-labelledby={`copy-heading-${id}`}>
+        <h3 id={`copy-heading-${id}`} className={contentStyles.heading}><VideoIcon width="18" height="18" aria-hidden="true" />直播内容</h3>
+        <div className={contentStyles.body}>
+          <BroadcastAi id={id} instance={instance} disabled={locked} current={{ title: details.title, description: details.description }} onApply={copy => onChange({ ...details, ...copy })} onBusyChange={busy => { setWorking(busy ? "ai" : ""); onBusyChange(busy); }} />
+          <BroadcastCopyFields id={id} value={details} disabled={locked} onChange={onChange} />
+          {cover("primary")}
+        </div>
       </section>
-      <section className="workflow-section" aria-labelledby={`chat-heading-${id}`}><div className="field-label-row"><h3 id={`chat-heading-${id}`}>AI 观众互动</h3><ApiSettingsButton disabled={locked}>AI 服务设置</ApiSettingsButton></div><LiveChatFields id={id} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} /><LiveChatPreview key={`${instance.agentId || "local"}-${instance.id}`} config={details.liveChat || defaultLiveChatConfig} instanceId={instance.id} agentId={instance.agentId} disabled={locked} /></section>
+      <BroadcastChatInteraction key={`${instance.agentId || "local"}-${instance.id}`} id={id} instance={instance} value={details.liveChat || defaultLiveChatConfig} disabled={locked} onChange={liveChat => onChange({ ...details, liveChat })} />
       <details className="workflow-complete"><summary><span>完整配置</span><span className="workflow-summary">{privacy} · {details.madeForKids ? "面向儿童" : "不面向儿童"} · 原声{videoAudio ? "开启" : "关闭"}</span></summary>
         <div className="workflow-complete-body">
           <p className="field-hint">本场开播使用以下配置，修改会同步到前面的输入。</p>

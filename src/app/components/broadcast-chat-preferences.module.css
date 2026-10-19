@@ -1,0 +1,38 @@
+/* 文件用途：为网页互动偏好提供清楚的功能面板边界和紧凑字段布局，不影响桌面共用表单。 */
+.root { display: grid; gap: 16px; min-width: 0; margin: 0; padding: 0; border: 0; container-type: inline-size; }
+.panel { min-width: 0; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-base); overflow: hidden; }
+.root .panelHeading, .collapsible > summary { display: flex; align-items: center; gap: 10px; margin: 0; padding: 16px 20px; background: var(--surface-hover); color: var(--text-primary); font-size: 15px; font-weight: 600; line-height: 1.5; }
+.root .panelHeading { border-bottom: 1px solid var(--border-subtle); }
+.panelHeading > svg, .collapsible > summary > span > svg { flex: none; color: var(--accent-primary); }
+.panelBody { display: grid; gap: 16px; min-width: 0; padding: 16px 20px; }
+.field { display: grid; gap: 8px; min-width: 0; }
+.field > label { margin: 0; color: var(--text-primary); font-size: 14px; font-weight: 500; }
+.field > :is(input, select, textarea) { width: 100%; min-width: 0; min-height: 44px; font-size: 14px; }
+.field > textarea { display: block; padding: 12px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-base); color: var(--text-primary); font: inherit; font-size: 14px; line-height: 1.6; resize: vertical; caret-color: var(--accent-primary); }
+.field > textarea::placeholder { color: var(--text-muted); opacity: 1; }
+.field > textarea:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+.root :is(input, select, textarea):disabled { background: var(--bg-subtle); color: var(--text-secondary); cursor: not-allowed; }
+.root ::selection { background: var(--accent-subtle); color: var(--text-primary); }
+.paired { display: grid; gap: 16px; min-width: 0; }
+.checkbox { display: flex; align-items: center; gap: 8px; min-height: 44px; color: var(--text-primary); font-size: 14px; cursor: pointer; }
+.checkbox > input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--accent-primary); }
+.collapsible > summary { justify-content: space-between; min-height: 56px; cursor: pointer; list-style: none; }
+.collapsible > summary::-webkit-details-marker { display: none; }
+.collapsible > summary > span { display: flex; align-items: center; gap: 10px; }
+.collapsible > summary > svg { flex: none; color: var(--text-secondary); transition: transform 160ms; }
+.collapsible[open] > summary { border-bottom: 1px solid var(--border-subtle); }
+.collapsible[open] > summary > svg { transform: rotate(180deg); }
+.collapsible > summary:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -3px; }
+.factButton { justify-self: start; max-width: 100%; min-height: 44px; padding: 8px 12px; font-size: 13px; white-space: normal; text-align: left; }
+@container (min-width: 440px) {
+  .paired { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 350px) {
+  .root .panelHeading, .panelBody, .collapsible > summary { padding-inline: 16px; }
+}
+@media (max-width: 760px) {
+  .field > :is(input, select, textarea) { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collapsible > summary > svg { transition: none; }
+}

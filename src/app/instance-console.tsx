@@ -1,9 +1,9 @@
-/* 文件用途：组织三步开播与就地故障恢复；技术状态保留在后台，不在客户工作台展示诊断字段。 */
+/* 文件用途：组织网页三步开播与就地恢复，统一摘要和运行状态结论；控制仍由所属实例模型执行。 */
 
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { broadcastActionMode, canStopBroadcast, youtubeLifecycleLabel } from "@/shared/readiness";
+import { canStopBroadcast } from "@/shared/readiness";
 import BroadcastSettings from "./components/broadcast-settings";
 import LiveChatPanel from "./components/live-chat-panel";
 import OAuthFeedback from "./oauth-feedback";
@@ -12,7 +12,9 @@ import { makeProblem, configurationLabel, type Problem } from "../shared/problem
 import { useInstance } from "./use-instance";
 import { targetKey } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
-import { StatusBadge, type StatusType } from "./components/status-indicator";
+import { StatusBadge } from "./components/status-indicator";
+import BroadcastRuntime from "./components/broadcast-runtime";
+import { runtimeActionMode, runtimeSummary } from "./components/broadcast-runtime-model";
 import { Reveal } from "./components/ui/primitives";
 import {
   ObsIcon,
@@ -77,33 +79,10 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
   const operationLabel = data?.operation && { queued: "等待设备接收", delivering: "等待设备确认", uncertain: "结果待核对", expired: "未接收已过期", accepted: "设备已接收", running: "执行中", succeeded: "已完成", failed: "需要处理", interrupted: "重启后待核对" }[data.operation.status];
 
-  const statusType: StatusType = stale
-    ? "stale"
-    : !data ? "busy" : live
-    ? "live"
-    : busy
-    ? "busy"
-    : error || data?.state.phase === "error"
-    ? "error"
-    : data?.state.phase === "live"
-    ? "error"
-    : data?.state.phase === "stopped"
-    ? "standby"
-    : blocker ? "standby" : "ready";
-
-  const stateLabel = stale
-    ? "离线/过期"
-    : !data ? "读取中" : live
-    ? "直播中"
-    : busy
-    ? operationLabel || "处理中"
-    : error || data?.state.phase === "error"
-    ? "需处理"
-    : data?.state.phase === "live"
-    ? "异常"
-    : data?.state.phase === "stopped"
-    ? "待机"
-    : blocker ? "待配置" : "就绪";
+  const runtimeInput = { data, stale, busy, live, error, working };
+  const summary = runtimeSummary(runtimeInput);
+  const statusType = summary.status;
+  const stateLabel = !live && !busy && !stale && !error && blocker && summary.status === "ready" ? "待配置" : summary.label;
 
   const issues: Problem[] = [model.problem, data?.obs.problem, data?.youtube.problem, ...(data?.media.problems || []), ...(data?.problems || [])].filter((p): p is NonNullable<typeof p>=>!!p).map(p=>({...p,target:{...p.target,agentId:instance.agentId,instanceId:instance.id}}));
   // 兼容尚未返回结构化问题的设备，移除诊断区后仍保留真实失败原因。
@@ -126,7 +105,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
 
   const stoppable = canStopBroadcast(data);
-  const actionMode = broadcastActionMode(data, busy, stale, live);
+  const actionMode = runtimeActionMode(runtimeInput);
   /** 摘要入口只定位到当前实例的开播区，不在摘要栏发送开停播命令。 */
   function showBroadcast() {
     setExpanded(true);
@@ -139,7 +118,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
   const broadcastControls = <>
           {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
-          {actionMode === "check" && <button type="button" className="btn-secondary" disabled={busy} onClick={() => void refresh()}><RefreshIcon />重新检查状态</button>}
+          {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy} onClick={() => void refresh()}><RefreshIcon />重新检查状态</button>}
           {(actionMode === "start" || actionMode === "retry") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{actionMode === "retry" ? "重试开播" : "开始直播"}</span>
           </button>}
@@ -224,20 +203,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
 
 
 
-          </section>} controls={<div className="broadcast-control-row">
-          <section className="workflow-step" aria-labelledby={`step-4-${id}`}>
-            <h3 id={`step-4-${id}`} tabIndex={-1}>本场运行状态</h3>
-            <div className="workflow-status"><StatusBadge status={statusType} label={stateLabel} /><span className="runtime-duration">{stale || durationMs === null ? "—" : formatDuration(durationMs)}</span></div>
-            <p role="status">{stale ? "状态已过期，请先重新检查。" : error || data?.state.error || data?.state.stage || "等待开始"}</p>
-            <dl className="runtime-values">
-              <div><dt>OBS 推流</dt><dd>{stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流"}</dd></div>
-              <div><dt>YouTube</dt><dd>{stale ? "未知" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
-            </dl>
-            {blocker && !live && <p className="readiness-text">{readiness}</p>}
-            {actionMode === "check" && !stale && <p className="readiness-text">开播结果尚未确认，请先重新检查状态。</p>}
-            <div className="broadcast-actions">{broadcastControls}</div>
-          </section>
-        </div>} />
+          </section>} controls={<BroadcastRuntime key={`${key}:${data?.state.broadcastId || "draft"}`} id={id} data={data} stale={stale} durationMs={durationMs} summary={summary} readiness={actionMode === "start" || actionMode === "retry" ? readiness : undefined} controls={broadcastControls} />} />
 
         {(live || pending) && <LiveChatPanel key={key} instance={instance} status={data?.liveChat} supported={!data || data.configuration.liveChat === true} stale={stale || !data} onRefresh={refresh} />}
 

@@ -34,7 +34,8 @@
     "desktop:build": "node scripts/desktop/build.mjs package",
     "desktop:release": "node scripts/desktop/build.mjs release",
     "test:desktop:packaged": "node scripts/desktop/smoke.mjs",
-    "preview:local": "node scripts/preview/run.mjs"
+    "preview:local": "node scripts/preview/run.mjs",
+    "preview:live": "node scripts/preview/live.mjs"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.14.5",

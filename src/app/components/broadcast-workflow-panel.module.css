@@ -1,0 +1,11 @@
+/* 文件用途：为网页配置包、直播内容和运行状态提供一致的面板边界、标题栏及内边距。 */
+.root { container: broadcast-panel / inline-size; min-width: 0; margin: 0 0 28px; padding: 0; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-base); overflow: hidden; }
+.heading { display: flex; align-items: center; gap: 10px; margin: 0; padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-hover); color: var(--text-primary); font-size: 20px; font-weight: 650; line-height: 1.4; }
+.heading > svg { flex: none; color: var(--accent-primary); }
+.body { display: grid; gap: 24px; min-width: 0; padding: 20px; }
+.body > :global(.broadcast-ai) { margin: 0; }
+.body > :global(section[aria-label="直播配置包"]) { margin: 0; padding: 0; border: 0; }
+@container broadcast-panel (max-width: 479px) {
+  .heading { padding-inline: 16px; }
+  .body { padding: 16px; }
+}
