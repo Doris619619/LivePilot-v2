@@ -171,23 +171,38 @@ async function capture(page, name) {
   await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled' });
 }
 
-/** 无启动历史的正常连接只占紧凑状态行与固定时刻；完成文案只出现在原复查按钮内一次。 */
+/** 连接摘要使用状态、复查、详情三组；窄屏将操作置于第二行，固定时刻与完成文案各显示一次。 */
 async function assertCompactReady(page, controls, complete = false) {
   const recheck = controls.getByRole('button', { name: /重新检查 OBS 1$/ });
   const connected = controls.getByText('控制已连接', { exact: true });
+  const statusGroup = controls.locator('[data-obs-status-group]');
+  const detailToggle = controls.locator('button[data-obs-details-toggle]');
+  const details = controls.locator('[data-obs-details-panel]');
   await expect(connected).toBeVisible();
-  await expect(controls.locator('details')).toHaveCount(0);
-  await expect(controls.getByText(/^最近确认 \d{2}:\d{2}$/)).toBeVisible();
-  const time = controls.locator('time');
+  await expect(detailToggle).toHaveText('查看详情');
+  await expect(detailToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toBeHidden();
+  assert.equal(await detailToggle.getAttribute('aria-controls'), await details.getAttribute('id'), 'details toggle controls its own instance region');
+  const time = controls.locator('[data-obs-confirmed-time]');
   await expect(time).toHaveCount(1);
   await expect(time).toHaveText(/^\d{2}:\d{2}$/);
   assert.ok(Number.isFinite(Date.parse(await time.getAttribute('datetime'))), 'confirmation time has a machine-readable timestamp');
-  assert.equal(await controls.getByText(/秒前/).count(), 0, 'normal connected feedback does not repeat a ticking relative time');
-  const [area, title, button] = await Promise.all([controls.boundingBox(), connected.boundingBox(), recheck.boundingBox()]);
-  assert.ok(area.height <= 80, 'normal ready feedback is at most 80 CSS px high');
-  assert.ok(button.height >= 44, 'compact recheck retains a 44 CSS px target');
-  if (page.viewportSize().width > 520) assert.ok(Math.abs(button.y + button.height / 2 - title.y - title.height / 2) < 6, 'connected status and recheck share one row');
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'compact ready feedback does not overflow horizontally');
+  await expect(statusGroup.getByText(/^最近确认 \d{2}:\d{2}$/)).toBeVisible();
+  assert.equal(await controls.locator('[data-obs-confirmed-time]:visible').count(), 1, 'ready summary has one visible HH:mm confirmation time');
+  assert.equal(await statusGroup.getByText(/秒前/).count(), 0, 'summary does not repeat a ticking relative time');
+  const [group, button, toggle] = await Promise.all([statusGroup.boundingBox(), recheck.boundingBox(), detailToggle.boundingBox()]);
+  assert.ok(button.width >= 136 && button.height >= 44 && toggle.height >= 44, 'recheck is at least 136 px wide and both actions retain 44 px target heights');
+  assert.equal(await recheck.locator('svg').count(), 1, 'recheck exposes its refresh icon');
+  const border = await recheck.evaluate(button => { const style = getComputedStyle(button); return { width: parseFloat(style.borderTopWidth), style: style.borderTopStyle, color: style.borderTopColor }; });
+  assert.ok(border.width >= 1 && border.style !== 'none' && border.color !== 'transparent' && border.color !== 'rgba(0, 0, 0, 0)', 'recheck retains a visible outline');
+  if (page.viewportSize().width > 520) {
+    assert.ok(Math.abs(button.y + button.height / 2 - group.y - group.height / 2) < 6 && Math.abs(button.y + button.height / 2 - toggle.y - toggle.height / 2) < 6, 'status, recheck and details occupy one desktop row');
+    assert.ok(group.x + group.width <= button.x + 1 && button.x + button.width <= toggle.x + 1, 'desktop row orders status, recheck and details');
+  } else {
+    assert.ok(group.y + group.height <= button.y + 1, 'mobile status occupies the first row');
+    assert.ok(Math.abs(button.y + button.height / 2 - toggle.y - toggle.height / 2) < 6, 'mobile recheck and details share the second row');
+  }
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'ready summary does not overflow horizontally');
   if (complete) {
     await expect(recheck).toHaveText('检查完成');
     await expect(recheck).toHaveAccessibleName('检查完成，重新检查 OBS 1');
@@ -195,6 +210,74 @@ async function assertCompactReady(page, controls, complete = false) {
     await expect(controls.getByText('检查完成', { exact: true })).toBeVisible();
     await expect(controls.getByRole('status').filter({ hasText: /^OBS 1 检查完成$/ })).toBeAttached();
   }
+}
+
+/** 每个实例及其跨页副本都使用唯一开关和区域 ID，详情只能控制所属实例的区域。 */
+async function assertDetailsAssociations(page) {
+  const associations = await page.locator('button[data-obs-details-toggle]').evaluateAll(buttons => buttons.map(button => {
+    const target = button.getAttribute('aria-controls');
+    const panels = [...document.querySelectorAll('[data-obs-details-panel]')].filter(panel => panel.id === target);
+    const owner = button.closest('.obs-instance-controls');
+    return { toggle: button.id, panel: target, matches: panels.length, named: panels[0]?.getAttribute('aria-labelledby') === button.id, sameInstance: panels[0]?.closest('.obs-instance-controls') === owner, instanceId: owner?.getAttribute('data-instance-id') };
+  }));
+  assert.ok(associations.length >= 2, 'ready preview exposes detail controls for both OBS instances');
+  assert.equal(new Set(associations.map(item => item.toggle)).size, associations.length, 'all detail toggle IDs are unique');
+  assert.equal(new Set(associations.map(item => item.panel)).size, associations.length, 'all detail panel IDs are unique');
+  assert.ok(associations.every(item => item.toggle && item.panel && item.matches === 1 && item.named && item.sameInstance), 'each toggle controls exactly one region labelled by that same toggle in its original instance');
+  assert.deepEqual([...new Set(associations.map(item => item.instanceId))].sort(), ['main', 'second'], 'detail associations cover both original instance IDs');
+}
+
+/** 无启动记录也提供真实配置与确认依据；键值明细对齐且不溢出，原生按钮支持键盘展开和收起。 */
+async function assertConnectionDetails(page, controls) {
+  const detailToggle = controls.locator('button[data-obs-details-toggle]');
+  const details = controls.locator('[data-obs-details-panel]');
+  await expect(detailToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toHaveAttribute('hidden', '');
+  await assertDetailsAssociations(page);
+  await detailToggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(detailToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(details).toBeVisible();
+  await expect(details.getByText('配置端口', { exact: true })).toBeVisible();
+  await expect(details.getByText('4457', { exact: true })).toBeVisible();
+  const fullTime = details.locator('time[datetime]');
+  await expect(fullTime).toHaveCount(1);
+  assert.ok(Number.isFinite(Date.parse(await fullTime.getAttribute('datetime'))), 'connection details retain the original confirmation timestamp');
+  assert.match(await fullTime.innerText(), /\d{4}/, 'connection details expose the confirmation year');
+  assert.match(await fullTime.innerText(), /\d{1,2}:\d{2}:\d{2}/, 'connection details expose the complete confirmation time including seconds');
+  assert.equal(await controls.evaluate(element => element.querySelector('[data-obs-confirmed-time]').getAttribute('datetime') === element.querySelector('[data-obs-details-panel] time[datetime]').getAttribute('datetime')), true, 'summary and details use the same actual observation');
+  assert.equal(await details.getByText(/认证成功|延迟.*ms/).count(), 0, 'connection details do not invent authentication or latency measurements');
+  const facts = details.locator('dl');
+  await expect(facts).toHaveCount(1);
+  const rows = await facts.evaluate(list => [...list.children].map(row => {
+    const terms = row.querySelectorAll('dt'); const values = row.querySelectorAll('dd');
+    const term = terms[0]?.getBoundingClientRect(); const value = values[0]?.getBoundingClientRect();
+    return { terms: terms.length, values: values.length, label: terms[0]?.textContent.trim(), value: values[0]?.textContent.trim(), term: term && { x: term.x, y: term.y, right: term.right }, position: value && { x: value.x, y: value.y, right: value.right } };
+  }));
+  assert.ok(rows.length >= 3 && rows.every(row => row.terms === 1 && row.values === 1 && row.label && row.value), 'details present one nonempty term and value per fact');
+  const area = await details.boundingBox();
+  for (const row of rows) {
+    assert.ok(Math.abs(row.term.x - rows[0].term.x) < 2 && Math.abs(row.position.x - rows[0].position.x) < 2, 'fact labels and values retain consistent columns');
+    assert.ok(row.position.x >= row.term.right && Math.abs(row.position.y - row.term.y) < 2, 'fact values align beside their labels');
+    assert.ok(row.term.x >= area.x && row.position.right <= area.x + area.width + 1, 'fact columns remain within the detail region');
+  }
+  assert.equal(await details.evaluate(panel => panel.scrollWidth > panel.clientWidth + 1), false, 'expanded details do not overflow their region');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'expanded details do not create horizontal page overflow');
+  const width = page.viewportSize().width;
+  if (width === 1280 || width === 520) await captureReferenceRow(page, width, 'details');
+  await detailToggle.focus();
+  await page.keyboard.press('Space');
+  await expect(detailToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(details).toHaveAttribute('hidden', '');
+}
+
+/** 在当前页面直接截取检查步骤所在行，分别保存收起摘要与展开详情的桌面和窄屏参考图。 */
+async function captureReferenceRow(page, width, kind = 'row') {
+  await page.locator('#fixture-note').waitFor();
+  const row = page.locator('#obs-step-3-main').locator('xpath=ancestor::li[1]');
+  await row.scrollIntoViewIfNeeded();
+  await row.locator('[data-obs-status-group]').click();
+  await row.screenshot({ path: path.join(output, 'reference-' + kind + '-' + width + '.png'), animations: 'disabled' });
 }
 
 /** 手动结算示例诊断，验证即时反馈、去重、原实例路由和失败重试，不使用等待时间猜测请求阶段。 */
@@ -370,9 +453,11 @@ export async function runAcceptance(server) {
       await expect(ready.locator('#obs-detail-main [data-step-state="complete"]')).toHaveCount(5);
       await assertVerticalLayout(ready, 'main');
       await assertCompactReady(ready, ready.locator('#obs-step-panel-3-main .obs-instance-controls'));
+      await assertConnectionDetails(ready, ready.locator('#obs-step-panel-3-main .obs-instance-controls'));
       assert.equal(await ready.locator('.problem-card[role="alert"]:visible,.setup-feedback[role="alert"]:visible,.setup-feedback :is([role="alert"]):visible').count(), 0, 'fresh ready preview contains no product failure card or operation failure feedback');
       assert.equal(await ready.getByRole('alert').filter({ hasText: /示例：|未完成|失败|错误/ }).count(), 0, 'fresh ready preview contains no synthetic or product failure text');
       await capture(ready, 'ready-' + width);
+      if (width === 1280 || width === 520) await captureReferenceRow(ready, width);
       await assertRecheckFeedback(ready, width === 1280);
       assert.deepEqual(readyErrors, [], 'fresh preview has no browser errors');
       await ready.close();
