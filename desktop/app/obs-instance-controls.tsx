@@ -51,7 +51,7 @@ export default function ObsInstanceControls({ instance, check, snapshot, activit
     {!diagnosing && view.recovered && <p className={styles.notice}>{current?.problem?.code === "OBS_READY" ? "上次连接检查超时；刚刚重新检测到控制已连接。" : "上次连接检查未完成；刚刚重新检测到控制已连接。"}</p>}
     {!diagnosing && view.showFailure && current?.problem && <ProblemCard problem={current.problem} objectName={instance.name} />}
     {(view.ready || hasStartupDetails || diagnosing) && <ObsCheckDetails key={checking ? "checking" : view.ready ? "connected" : "history"}>
-      {checking ? <p>倒计时为本轮检查的超时上限。到期停止检查，不关闭 OBS，也不会自动开播。</p> :
+      {checking ? <><p>{checkView?.observation}</p><p>倒计时为本轮检查的超时上限。到期停止检查，不关闭 OBS，也不会自动开播。</p></> :
       view.ready ? <dl className={styles.detailFacts} aria-live="off">
         <div><dt>OBS 控制连接</dt><dd className={styles.connectedValue}>已连接</dd></div>
         <div><dt>配置端口</dt><dd>{instance.port}</dd></div>
