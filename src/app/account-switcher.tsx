@@ -3,6 +3,7 @@
 import { useRef, useState, type FormEvent } from "react";
 import { Popover, PopoverTrigger, PopoverContent } from "./components/ui/primitives";
 import { api } from "./client-request";
+import { ChevronDownIcon } from "./components/icons";
 import "./account-switcher.css";
 type User = { username: string; role: "admin" | "customer" };
 type Remembered = User & { current: boolean };
@@ -21,8 +22,8 @@ export function listenAccountChanges() {
 }
 /** 返回稳定入口；从管理员切到客户时回客户工作台，不延续管理员筛选参数。 */
 function destination(user: User) { return window.location.pathname === "/publishing" ? "/publishing" : user.role === "admin" ? "/admin" : "/workspace"; }
-/** 点击成员名称读取有效会话；侧栏菜单向上展开，密码只随首次登录请求发送。 */
-export default function AccountSwitcher({ user, placement = "default" }: { user?: User; placement?: "default" | "sidebar" }) {
+/** 点击入口读取有效会话；登录页使用低强调入口且不显示虚构头像，侧栏仍展示当前成员。 */
+export default function AccountSwitcher({ user, placement = "default" }: { user?: User; placement?: "default" | "sidebar" | "login" }) {
   const [open, setOpen] = useState(false);
   const [accounts, setAccounts] = useState<Remembered[]>([]); const [adding, setAdding] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
   const [reading, setReading] = useState(false); const [readError, setReadError] = useState(""); const readSequence = useRef(0);
@@ -53,8 +54,8 @@ export default function AccountSwitcher({ user, placement = "default" }: { user?
     catch (e) { setError((e as Error).message); setBusy(false); }
   }
   return <Popover open={open} onOpenChange={value => { if (busy) return; setOpen(value); if (value) void read(); else { readSequence.current++; setAdding(false); setError(""); } }}>
-    <PopoverTrigger asChild><button type="button" className="account-menu-trigger" aria-label="切换登录账号"><span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span><span className="account-menu-name">{user?.username || "选择已登录账号"}</span><span aria-hidden="true">{placement === "sidebar" ? "⌃" : "⌄"}</span></button></PopoverTrigger>
-    <PopoverContent aria-label="登录账号" side={placement === "sidebar" ? "top" : "bottom"} align={placement === "sidebar" ? "start" : "end"}>
+    <PopoverTrigger asChild><button type="button" className={`account-menu-trigger${placement === "login" ? " login-account-trigger" : ""}`} aria-label={placement === "login" ? "使用已登录账号" : "切换登录账号"}>{placement !== "login" && <span className="account-avatar" aria-hidden="true">{user?.username.slice(0, 1).toUpperCase() || "L"}</span>}<span className="account-menu-name">{placement === "login" ? "使用已登录账号" : user?.username || "选择已登录账号"}</span>{placement === "login" ? <ChevronDownIcon width="16" height="16" aria-hidden="true" /> : <span aria-hidden="true">{placement === "sidebar" ? "⌃" : "⌄"}</span>}</button></PopoverTrigger>
+    <PopoverContent aria-label="登录账号" side={placement === "sidebar" ? "top" : "bottom"} align={placement === "sidebar" ? "start" : placement === "login" ? "center" : "end"}>
     <div className="account-switcher-panel">
       <span className="account-switcher-caption">登录账号</span>
       {reading ? <p role="status">正在读取账号…</p> : readError ? <div role="alert"><p>{readError}</p><button type="button" className="btn-ghost" onClick={() => void read()}>重试读取账号</button></div> : <div className="account-switcher-list">{accounts.length ? accounts.map(account => <button key={account.username} type="button" disabled={busy || account.current} onClick={() => void choose(account.username)}><span><strong>{account.username}</strong><small>{account.role === "admin" ? "管理员" : "客户"}</small></span><span>{account.current ? "当前" : "切换"}</span></button>) : <p role="status">没有可切换的已登录账号。</p>}</div>}
