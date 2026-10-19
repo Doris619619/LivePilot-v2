@@ -82,7 +82,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   const busy = pending || state?.busy; const instances = state?.instances || []; const candidates = state?.candidates || [];
   const fresh = !readError && now-lastRead<20_000 ? state?.snapshots.filter(s => now - s.observedAt < 20_000) || [] : [];
   const obsConfigured = instances.length > 0 && instances.every(i => i.initialized);
-  // 只读检查的进行中反馈在原按钮与步骤标题呈现；失败仍保留完整问题卡。
+  // 只读复查在目标 OBS 中呈现真实阶段与倒计时；失败仍保留完整问题卡。
   const feedback = !activity || activity.action === "launch-obs" || (activity.action === "diagnose-obs" && activity.status === "running") ? null : activity.status === "failed" ? <ProblemCard problem={activity.problem || problem || makeProblem("DESKTOP",activity.message || "此步骤未完成",{target:{instanceId:activity.instanceId},stage:activity.stage,attemptId:activity.attemptId})} objectName={instances.concat(candidates).find(i=>i.id===activity.instanceId)?.name} disabled={!!busy} onRefresh={()=>void act(activity.instanceId ? "diagnose-obs" : "check",activity.instanceId ? {id:activity.instanceId} : undefined)} onHelp={()=>{setHelpTopic(activity.step===2?"obs":"recovery");setPage("帮助");}} /> : <SetupFeedback activity={activity} now={now} disabled={!!busy} help={()=>setPage("帮助")} />;
   /** 两处页面共享指定实例的启动与诊断状态；切换页面不会清掉仍在进行的检查。 */
   function controls(instance: DesktopState["instances"][number]) {

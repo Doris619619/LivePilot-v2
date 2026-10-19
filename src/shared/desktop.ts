@@ -21,7 +21,7 @@ export type LocalUpdateResult = { ok: boolean; state: LocalUpdateState; cancelle
 export type DesktopBridge = { readState?(): Promise<DesktopResult>; copyProblem?(problem: Problem): Promise<boolean>; session(): Promise<{ authenticated: boolean; username?: string }>; login(username: string, password: string): Promise<{ ok: boolean; message?: string }>; logout(): Promise<void>; state(): Promise<DesktopState>; act(action: DesktopAction, input?: Record<string, unknown>): Promise<DesktopResult>; updateState(): Promise<LocalUpdateState>; update(action: UpdateCommand): Promise<LocalUpdateResult> };
 
 /** 后台操作反馈不含输入或凭据，切换页面和重新登录后仍可恢复。 */
-export type DesktopActivity = { problem?: Problem; attemptId?: string; instanceId?: string; action: DesktopAction; step: number; status: "running" | "failed" | "complete" | "cancelled"; stage: string; startedAt: number; endedAt?: number; obsStartup?: ObsStartupProgress; message?: string };
+export type DesktopActivity = { problem?: Problem; attemptId?: string; instanceId?: string; action: DesktopAction; step: number; status: "running" | "failed" | "complete" | "cancelled"; stage: string; startedAt: number; endedAt?: number; obsStartup?: ObsStartupProgress; obsDiagnosis?: ObsStartupProgress; message?: string };
 /** 将配置操作定位到对应步骤，其他设置保留全局反馈。 */
 export function activityStep(action?: DesktopAction) {
   return action === "check" ? 1 : ["launch-obs", "diagnose-obs", "restore-candidate", "prepare", "add", "attach", "import-obs", "rename", "repair", "repair-managed", "discard"].includes(action || "") ? 2 : ["pair", "start"].includes(action || "") ? 3 : 0;

@@ -75,8 +75,11 @@ try {
     await page.keyboard.press('Enter');
     await expect(detailToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(details).toBeVisible();
-    await controls.getByText('本轮最多等待 60 秒；到期停止检查，不关闭 OBS，也不会自动开播。', { exact: true }).waitFor();
+    await controls.getByText('倒计时为本轮检查的超时上限。到期停止检查，不关闭 OBS，也不会自动开播。', { exact: true }).waitFor();
     await controls.getByText('OBS 已运行，控制服务尚未就绪，正在继续检查。', { exact: true }).waitFor();
+    await expect(controls.locator('[data-obs-check-elapsed]')).toContainText(/^已用 \d+ 秒$/);
+    await expect(controls.locator('[data-obs-check-remaining]')).toContainText(/^剩余检查时间 \d+ 秒$/);
+    await expect(controls.locator('[data-obs-check-progress]')).toBeVisible();
     await page.keyboard.press('Enter');
     await expect(detailToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(details).toBeHidden();

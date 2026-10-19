@@ -2,7 +2,7 @@
 .feedback { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; align-items: center; gap: 12px; margin: 12px 0 4px; width: 100%; min-width: 0; overflow-wrap: anywhere; }
 .feedback > *, .statusGroup, .actions { grid-column: 1 / -1; }
 .feedback [hidden] { display: none; }
-.feedback[data-startup-state="ready"] { grid-template-columns: minmax(0, 1fr) max-content max-content; gap: 12px 16px; margin: 0; padding-block: 4px; }
+.feedback[data-startup-state="ready"], .feedback[data-startup-state="diagnosing"] { grid-template-columns: minmax(0, 1fr) max-content max-content; gap: 12px 16px; margin: 0; padding-block: 4px; }
 .summary { display: contents; }
 .statusGroup { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .statusText { min-width: 0; }
@@ -11,16 +11,19 @@
 .readyBadge { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; flex-shrink: 0; color: var(--text-inverse, #fff); background: var(--success-green); border-radius: 50%; }
 .readyBadge svg { width: 24px; height: 24px; }
 .statusIcon { width: 20px; height: 20px; flex-shrink: 0; }
-.feedback[data-startup-state="ready"] .statusGroup { grid-column: 1; grid-row: 1; }
-.feedback[data-startup-state="ready"] .actions { grid-column: 2; grid-row: 1; }
-.feedback[data-startup-state="ready"] .detailToggle { grid-column: 3; grid-row: 1; }
+.feedback[data-startup-state="ready"] .statusGroup, .feedback[data-startup-state="diagnosing"] .statusGroup { grid-column: 1; grid-row: 1; }
+.feedback[data-startup-state="ready"] .actions, .feedback[data-startup-state="diagnosing"] .actions { grid-column: 2; grid-row: 1; }
+.feedback[data-startup-state="ready"] .detailToggle, .feedback[data-startup-state="diagnosing"] .detailToggle { grid-column: 3; grid-row: 1; }
+.progress { display: grid; width: 100%; gap: 14px; padding-block: 16px 4px; border-top: 1px solid var(--border-subtle); }
+.progressTiming { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.progressTiming strong { color: var(--text-primary); font-weight: 600; }
+.observation { margin: 0; max-width: 75ch; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
 .steps { display: flex; flex-wrap: wrap; gap: 10px 24px; list-style: none; padding: 0; margin: 0; font-size: 15px; color: var(--text-secondary); }
 .steps li { display: flex; align-items: center; gap: 8px; }
 .steps svg { width: 18px; height: 18px; flex-shrink: 0; }
 .steps [aria-current="step"] { color: var(--accent-primary); font-weight: 600; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border-default); border-top-color: currentColor; border-radius: 50%; animation: turn 1s linear infinite; flex-shrink: 0; }
 .pending { display: inline-block; width: 16px; height: 16px; border: 1px solid var(--border-default); border-radius: 50%; flex-shrink: 0; }
-.meta { color: var(--text-secondary); font-size: 14px; font-variant-numeric: tabular-nums; line-height: 1.6; }
 .notice { max-width: 60ch; line-height: 1.6; color: var(--text-primary); }
 .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin: 0; }
 .actions button, .detailToggle { min-height: 44px; }
@@ -45,9 +48,9 @@
 @media (prefers-reduced-motion: reduce) { .spinner, .recheck[aria-busy="true"] svg { animation: none; } }
 @media (max-width: 680px) {
   .steps { flex-direction: column; gap: 10px; }
-  .feedback[data-startup-state="ready"] { grid-template-columns: max-content max-content; gap: 12px 16px; }
-  .feedback[data-startup-state="ready"] .statusGroup { grid-column: 1 / -1; grid-row: 1; }
-  .feedback[data-startup-state="ready"] .actions { grid-column: 1; grid-row: 2; }
-  .feedback[data-startup-state="ready"] .detailToggle { grid-column: 2; grid-row: 2; }
+  .feedback[data-startup-state="ready"], .feedback[data-startup-state="diagnosing"] { grid-template-columns: max-content max-content; gap: 12px 16px; }
+  .feedback[data-startup-state="ready"] .statusGroup, .feedback[data-startup-state="diagnosing"] .statusGroup { grid-column: 1 / -1; grid-row: 1; }
+  .feedback[data-startup-state="ready"] .actions, .feedback[data-startup-state="diagnosing"] .actions { grid-column: 1; grid-row: 2; }
+  .feedback[data-startup-state="ready"] .detailToggle, .feedback[data-startup-state="diagnosing"] .detailToggle { grid-column: 2; grid-row: 2; }
   .detailFacts > div { grid-template-columns: 92px minmax(0, 1fr); gap: 12px; }
 }

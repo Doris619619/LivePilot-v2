@@ -13,7 +13,8 @@ const labels = ['准备 OBS', '连接网页', '检查 OBS', '连接频道', '准
 
 /** 在真实构建页面启动前安装隔离桥接；示例账号、频道和动作均不访问真实电脑或网络。 */
 function installFixture() {
-  const readyPreview = !['pairing', 'unpaired'].includes(new URLSearchParams(location.search).get('scenario'));
+  const scenario = new URLSearchParams(location.search).get('scenario');
+  const readyPreview = !['pairing', 'unpaired'].includes(scenario);
   const instances = ['main', 'second'].map((id, index) => ({ id, name: 'OBS ' + (index + 1), initialized: true, managed: index === 0 || readyPreview, exe: 'D:/示例数据/OBS-' + (index + 1) + '/bin/64bit/obs64.exe', port: 4457 + index * 2 }));
   const state = { version: '界面预览 · 示例数据', busy: false, dataRoot: 'D:/示例数据/LiveNest', dataLocationReady: true, paired: true, online: true, agentRunning: true, autoStart: false, instances,
     checks: instances.map(instance => ({ id: 'network-' + instance.id, instanceId: instance.id, label: instance.name, status: 'ready', controlReady: true, checkedAt: Date.now() })), snapshots: [], update: { status: 'idle' } };
@@ -39,19 +40,34 @@ function installFixture() {
     session: async () => ({ authenticated: true, username: '示例用户' }), logout: async () => {},
     state: async () => fixture.refresh(), readState: async () => { fixture.reads++; return { ok: true, state: fixture.refresh() }; }, updateState: async () => state,
     update: async () => ({ ok: true, state }),
-    /** 合成检查默认留出可见反馈；验收可暂停并手动返回成功或失败，不接触真实 OBS。 */
+    /** 只有预览桥接人为演示约六秒阶段；正式检查由真实观测推进，不使用这些延迟。 */
     act: async (action, input = {}) => {
       fixture.calls.push({ action, ...input });
       if (action === 'diagnose-obs') return new Promise(resolve => {
-        const startedAt = Date.now(); let settled = false;
+        const startedAt = Date.now(); let settled = false; const timers = [];
         fixture.pendingDiagnose = { id: input.id, startedAt };
         state.busy = true;
-        state.activity = { action, instanceId: input.id, step: 2, status: 'running', stage: '示例：正在检查 OBS 控制连接', startedAt };
+        state.activity = { action, instanceId: input.id, attemptId: 'fixture-diagnose-' + startedAt, step: 2, status: 'running', stage: '检查进程与端口', startedAt,
+          obsDiagnosis: { phase: 'process', deadlineAt: startedAt + 15_000, lastProbeAt: startedAt, probeCount: 0, observation: '示例：正在核对 OBS 进程与控制端口。' } };
+        /** 验收驱动与真实宿主一致的进度结构；覆盖时间戳可验证过期及超时显示。 */
+        fixture.diagnoseStage = (phase, options = {}) => {
+          if (settled) return;
+          const labels = { process: '检查进程与端口', control: '连接控制服务', verify: '读取 OBS 状态', ready: '检查完成' };
+          state.activity = { ...state.activity, stage: labels[phase], obsDiagnosis: { ...state.activity.obsDiagnosis, phase, lastProbeAt: Date.now(), probeCount: state.activity.obsDiagnosis.probeCount + 1, ...options } };
+        };
         /** 只结算本轮指定实例；失败保留原观测，不生成连接成功证据。 */
         const finish = (ok, options = {}) => {
           if (settled) return; settled = true;
-          delete fixture.finishDiagnose; delete fixture.pendingDiagnose;
+          timers.forEach(clearTimeout);
+          delete fixture.finishDiagnose; delete fixture.pendingDiagnose; delete fixture.diagnoseStage;
           const endedAt = Date.now(); state.busy = false;
+          if (options.timeout) {
+            // 真实宿主超时结算请求但返回未确认的 Check；移除目标旧快照以隔离检查证据。
+            Object.assign(state.checks.find(check => check.instanceId === input.id), { status: 'pending', code: 'OBS_DIAGNOSIS_TIMEOUT', controlReady: false, checkedAt: endedAt, action: 'retry', message: '示例：本次控制连接检查已超时，当前状态尚未确认。请重新检查。' });
+            state.snapshots = state.snapshots.filter(snapshot => snapshot.instance.id !== input.id);
+            state.activity = { ...state.activity, status: 'complete', stage: '检查结束', endedAt };
+            return resolve({ ok: true, state: fixture.refresh() });
+          }
           if (!ok) {
             const problem = { version: 1, source: 'desktop', code: 'SYNTHETIC_DIAGNOSE', domain: 'desktop', target: { instanceId: input.id }, severity: 'error', stage: '检查 OBS', outcome: 'rejected', observedAt: endedAt, actions: ['refresh'], message: '示例：本次 OBS 检查未完成，请重新检查。' };
             state.activity = { ...state.activity, status: 'failed', stage: '检查 OBS', endedAt, problem, message: problem.message };
@@ -59,11 +75,15 @@ function installFixture() {
           }
           const previous = state.checks.find(check => check.instanceId === input.id);
           fixture.setControl(input.id, options.controlReady ?? !!previous?.controlReady);
-          state.activity = { ...state.activity, status: 'complete', stage: '检查完成', endedAt };
+          state.activity = { ...state.activity, status: 'complete', stage: '检查完成', endedAt, obsDiagnosis: { ...state.activity.obsDiagnosis, phase: 'ready', lastProbeAt: endedAt, observation: '示例：本轮检查结束，显示本页内存中的控制连接结果。' } };
           resolve({ ok: true, state: fixture.refresh() });
         };
         fixture.finishDiagnose = finish;
-        if (!fixture.holdDiagnose) setTimeout(() => finish(true), 600);
+        if (!fixture.holdDiagnose) {
+          timers.push(setTimeout(() => fixture.diagnoseStage('control', { observation: '示例：进程与端口已核对，正在连接 OBS 控制服务。' }), 2000));
+          timers.push(setTimeout(() => fixture.diagnoseStage('verify', { observation: '示例：控制服务已回应，正在读取 OBS 状态。' }), 4000));
+          timers.push(setTimeout(() => finish(true), 6000));
+        }
       });
       await new Promise(resolve => setTimeout(resolve, 100));
       if (action === 'pair' && fixture.holdPair) return new Promise(resolve => {
@@ -86,6 +106,7 @@ function installFixture() {
     const note = document.createElement('aside'); note.id = 'fixture-note'; note.setAttribute('role', 'note'); note.textContent = '示例数据 · 未连接真实 OBS';
     note.style.cssText = 'position:fixed;right:12px;bottom:10px;z-index:9999;padding:7px 12px;border:1px solid #c9d8ec;border-radius:6px;background:#f4f8ff;color:#415979;font:13px/1.4 system-ui;box-shadow:0 2px 8px #20334a12;pointer-events:none';
     document.body.append(note);
+    if (scenario === 'checking') setTimeout(() => void window.liveNest.act('diagnose-obs', { id: 'main' }), 500);
   }, 100));
 }
 
@@ -297,6 +318,21 @@ async function assertRecheckFeedback(page, screenshots) {
   await expect(page.locator('.setup-feedback:visible')).toHaveCount(0);
   await assertVerticalLayout(page, 'main');
   await page.waitForFunction(() => window.obsStepsFixture.pendingDiagnose?.id === 'main');
+  const progress = controls.locator('[data-obs-check-progress]');
+  const remaining = progress.locator('[data-obs-check-remaining]');
+  await expect(progress).toBeVisible();
+  await expect(controls.getByText('控制已连接', { exact: true })).toHaveCount(0);
+  await expect(progress.locator('[aria-current="step"]')).toContainText('检查进程与端口');
+  await expect(remaining).toHaveText(/^剩余检查时间 \d+ 秒$/);
+  const initialRemaining = Number((await remaining.innerText()).match(/\d+/)[0]);
+  await expect.poll(async () => Number((await remaining.innerText()).match(/\d+/)[0])).toBeLessThan(initialRemaining);
+  await page.evaluate(() => window.obsStepsFixture.diagnoseStage('control', { observation: '示例：已确认进程与端口，正在建立控制连接。' }));
+  await expect(progress.locator('[aria-current="step"]')).toContainText('连接控制服务');
+  await expect(progress.getByText('示例：已确认进程与端口，正在建立控制连接。', { exact: true })).toBeVisible();
+  const width = page.viewportSize().width;
+  await captureReferenceRow(page, width, 'progress');
+  await page.evaluate(() => window.obsStepsFixture.diagnoseStage('verify', { observation: '示例：控制服务已回应，正在读取 OBS 状态。' }));
+  await expect(progress.locator('[aria-current="step"]')).toContainText('读取 OBS 状态');
   await recheck.evaluate(button => { button.click(); button.click(); });
   assert.deepEqual(await page.evaluate(() => window.obsStepsFixture.calls.filter(call => call.action === 'diagnose-obs')), [{ action: 'diagnose-obs', id: 'main' }], 'repeated clicks during one pending check submit only one original-instance request');
   if (screenshots) await capture(page, 'recheck-running');
@@ -305,11 +341,13 @@ async function assertRecheckFeedback(page, screenshots) {
   assert.equal(await page.evaluate(() => window.obsStepsFixture.pendingDiagnose.id), 'main', 'switching OBS never retargets the pending diagnosis');
   await navigate(page, '本机 OBS');
   await expect(page.locator('.obs-instance-controls[data-instance-id="main"]:visible').getByRole('button', { name: /重新检查 OBS 1$/ })).toHaveText('正在检查…');
+  await expect(page.locator('.obs-instance-controls[data-instance-id="main"]:visible [data-obs-check-progress] [aria-current="step"]')).toContainText('读取 OBS 状态');
   await expect(page.locator('.obs-instance-controls[data-instance-id="second"]:visible').getByText('正在检查…', { exact: true })).toHaveCount(0);
   await navigate(page, '设备配置');
   await selectStep(page, 'main', 3);
   await expect(recheck).toHaveText('正在检查…');
   await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true));
+  await expect(progress).toHaveCount(0);
   await assertCompactReady(page, controls, true);
   await expect(recheck).toBeEnabled();
   if (screenshots) await capture(page, 'recheck-complete');
@@ -340,6 +378,20 @@ async function assertRecheckFeedback(page, screenshots) {
   await expect(controls.getByText('控制已连接', { exact: true })).toHaveCount(0);
   assert.equal(await page.evaluate(() => window.obsStepsFixture.state.checks.find(check => check.instanceId === 'main').controlReady), false, 'completed diagnosis can report a disconnected OBS without inventing a connection success');
   assert.equal(await recheck.evaluate((button, original) => button === original && button.isConnected, originalRecheck), true, 'connection changes preserve the original recheck DOM node');
+  await recheck.click();
+  await page.waitForFunction(() => typeof window.obsStepsFixture.diagnoseStage === 'function');
+  await page.evaluate(() => window.obsStepsFixture.diagnoseStage('control', { lastProbeAt: Date.now() - 21_000, deadlineAt: Date.now() + 10_000 }));
+  await expect(controls.getByText('检查结果暂未更新', { exact: true })).toBeVisible();
+  await expect(controls.getByRole('button', { name: '重新读取状态', exact: true })).toBeVisible();
+  await assertVerticalLayout(page, 'main');
+  await page.evaluate(() => window.obsStepsFixture.diagnoseStage('verify', { deadlineAt: Date.now() - 1 }));
+  await expect(remaining).toHaveText('剩余检查时间 0 秒');
+  await expect(controls.getByText('控制已连接', { exact: true })).toHaveCount(0);
+  await page.evaluate(() => window.obsStepsFixture.finishDiagnose(true, { timeout: true }));
+  await expect(controls.getByText('本轮连接检查已超时', { exact: true })).toBeVisible();
+  await expect(recheck).toHaveText('重新检查');
+  await expect(progress).toHaveCount(0);
+  await expect(page.getByRole('alert').filter({ hasText: '示例：本次控制连接检查已超时' })).toHaveCount(1);
   await originalRecheck.dispose();
   assert.equal(await page.evaluate(() => window.obsStepsFixture.calls.some(call => call.action === 'launch-obs')), false, 'rechecking never launches OBS or begins a broadcast');
   await page.evaluate(() => { window.obsStepsFixture.holdDiagnose = false; });
@@ -472,6 +524,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (process.argv.includes('--serve')) {
     console.log('Preview URL: http://127.0.0.1:' + server.address().port + '/?scenario=ready');
     console.log('Pairing preview: http://127.0.0.1:' + server.address().port + '/?scenario=unpaired');
+    console.log('Checking preview: http://127.0.0.1:' + server.address().port + '/?scenario=checking');
     console.log('示例数据 · 未连接真实 OBS；所有操作仅修改本页内存。关闭此进程即可结束预览。');
     process.once('SIGINT', () => server.close()); process.once('SIGTERM', () => server.close());
   } else {

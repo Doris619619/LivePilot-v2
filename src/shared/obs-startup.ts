@@ -1,5 +1,6 @@
-/** 桌面 OBS 启动的公开进度；仅包含阶段与脱敏观测，不包含连接参数。 */
+/** 桌面 OBS 启动和只读复查的公开进度；仅包含阶段与脱敏观测，不包含连接参数。 */
 export const OBS_STARTUP_TIMEOUT_MS = 60_000;
+export const OBS_DIAGNOSIS_TIMEOUT_MS = 15_000;
 export const OBS_STARTUP_SLOW_MS = 30_000;
 export const OBS_OBSERVATION_FRESH_MS = 20_000;
 export type ObsStartupPhase = "process" | "control" | "verify" | "ready";
@@ -14,5 +15,11 @@ export const obsStartupLabels: Record<ObsStartupPhase, string> = {
   process: "正在检查并启动 OBS",
   control: "OBS 已运行，正在连接控制服务",
   verify: "控制服务已回应，正在确认 OBS 状态",
+  ready: "OBS 控制已连接",
+};
+export const obsDiagnosisLabels: Record<ObsStartupPhase, string> = {
+  process: "正在检查 OBS 进程与端口",
+  control: "正在连接 OBS 控制服务",
+  verify: "正在读取 OBS 状态",
   ready: "OBS 控制已连接",
 };
