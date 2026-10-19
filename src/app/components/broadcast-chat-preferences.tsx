@@ -1,21 +1,21 @@
-/** 文件用途：网页互动偏好编辑器，以单一人设选择、即时风格示例和分组高级设置编辑本场草稿。 */
+/** 文件用途：网页互动偏好编辑器，用独立功能面板编辑人设、接话规则、身份背景与回复风格。 */
 "use client";
 
 import type { ChangeEvent } from "react";
 import { chatPersonas, type ChatPersona } from "@/shared/chat-personas";
 import type { LiveChatConfig } from "@/shared/live-chat";
 import FieldCounter from "./field-counter";
+import BroadcastChatIcon from "./broadcast-chat-icon";
+import { ChevronDownIcon } from "./icons";
 import styles from "./broadcast-chat-preferences.module.css";
 
-/** 编辑完整偏好并保留启停状态；静态示例只展示当前人设，不触发试聊或真实发送。 */
+/** 编辑完整偏好并保留启停状态；关闭自动回复仍可编辑，各面板不触发试聊或真实发送。 */
 export default function BroadcastChatPreferences({ id, value, disabled, onChange }: {
   id: string;
   value: LiveChatConfig;
   disabled?: boolean;
   onChange(value: LiveChatConfig): void;
 }) {
-  const persona = chatPersonas[value.preset];
-
   /** 只合并被编辑的字段；首次编辑旧配置时补齐默认接话模式，其余值原样保留。 */
   function update(patch: Partial<LiveChatConfig>) {
     onChange({ ...value, ...patch, replyMode: patch.replyMode || value.replyMode || "responsive" });
@@ -45,73 +45,66 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
 
   return <fieldset className={styles.root} disabled={disabled}>
     <legend className="visually-hidden">互动偏好</legend>
-    <div className={styles.field}>
-      <label htmlFor={`chat-persona-${id}`}>互动人设</label>
-      <select id={`chat-persona-${id}`} name="preset" value={value.preset} onChange={handleFieldChange} aria-describedby={`chat-persona-sample-${id}`}>
+    <section className={styles.panel} aria-labelledby={`chat-persona-heading-${id}`}>
+      <h4 className={styles.panelHeading} id={`chat-persona-heading-${id}`}><BroadcastChatIcon name="persona" /><label htmlFor={`chat-persona-${id}`}>互动人设</label></h4>
+      <div className={`${styles.panelBody} ${styles.field}`}><select id={`chat-persona-${id}`} name="preset" value={value.preset} onChange={handleFieldChange}>
         {Object.entries(chatPersonas).map(([key, item]) => <option key={key} value={key}>{item.name}</option>)}
-      </select>
-      <div id={`chat-persona-sample-${id}`} className={styles.personaSample} aria-live="polite">
-        <p className={styles.hint}>{persona.description}</p>
-        <p className={styles.sampleLabel}>风格示例 · 非实际试聊结果</p>
-        <blockquote>{persona.example}</blockquote>
-      </div>
-    </div>
+      </select></div>
+    </section>
 
-    <fieldset className={styles.group}>
-      <legend>互动行为</legend>
+    <section className={styles.panel} aria-labelledby={`chat-behavior-${id}`}>
+      <h4 className={styles.panelHeading} id={`chat-behavior-${id}`}><BroadcastChatIcon name="behavior" />接话设置</h4>
+      <div className={styles.panelBody}>
       <div className={styles.paired}>
         <div className={styles.field}>
-          <label htmlFor={`chat-mode-${id}`}>什么时候接话</label>
+          <label htmlFor={`chat-mode-${id}`}>接话方式</label>
           <select id={`chat-mode-${id}`} name="replyMode" value={value.replyMode || "responsive"} onChange={handleFieldChange}>
-            <option value="responsive">尽量回应 · 有效留言优先</option>
-            <option value="natural">自然参与 · 不抢话</option>
-            <option value="addressed">被叫才回 · 昵称或明确对话</option>
+            <option value="responsive">尽量回应</option>
+            <option value="natural">自然参与</option>
+            <option value="addressed">被叫才回</option>
           </select>
         </div>
         <div className={styles.field}>
-          <label htmlFor={`chat-interval-${id}`}>发送间隔（秒）</label>
+          <label htmlFor={`chat-interval-${id}`}>发送间隔</label>
           <select id={`chat-interval-${id}`} name="intervalSeconds" value={value.intervalSeconds} onChange={handleFieldChange}>
-            {Array.from({ length: 56 }, (_, index) => index + 5).map(seconds => <option key={seconds} value={seconds}>{seconds}{seconds === 5 ? " · 活跃" : seconds === 15 ? " · 适中" : seconds === 30 ? " · 安静" : ""}</option>)}
+            {Array.from({ length: 56 }, (_, index) => index + 5).map(seconds => <option key={seconds} value={seconds}>{seconds} 秒</option>)}
           </select>
         </div>
       </div>
-      <div className={styles.questionField}>
         <label className={styles.checkbox} htmlFor={`chat-questions-${id}`}>
-          <input id={`chat-questions-${id}`} name="askQuestions" type="checkbox" checked={value.askQuestions ?? false} onChange={handleFieldChange} aria-describedby={`chat-questions-note-${id}`} />
+          <input id={`chat-questions-${id}`} name="askQuestions" type="checkbox" checked={value.askQuestions ?? false} onChange={handleFieldChange} />
           偶尔主动提问
         </label>
-        <p id={`chat-questions-note-${id}`} className={styles.hint}>必要的澄清始终允许。</p>
       </div>
-    </fieldset>
+    </section>
 
-    <details className={styles.advanced} open={value.preset === "custom" ? true : undefined}>
-      <summary>高级设置<span className={styles.summaryHint}>身份、背景与表达</span></summary>
-      <div className={styles.advancedBody}>
-        <fieldset className={styles.group}>
-          <legend>身份与背景</legend>
+    <details className={`${styles.panel} ${styles.collapsible}`} open={value.preset === "custom" ? true : undefined}>
+      <summary><span><BroadcastChatIcon name="identity" />身份与背景</span><ChevronDownIcon aria-hidden="true" /></summary>
+      <div className={styles.panelBody}>
           <div className={styles.field}>
             <label htmlFor={`chat-nickname-${id}`}>助手昵称</label>
             <input id={`chat-nickname-${id}`} name="nickname" maxLength={40} value={value.nickname || ""} placeholder="助手" onChange={handleFieldChange} />
           </div>
           <div className={styles.field}>
             <label htmlFor={`chat-facts-${id}`}>频道背景</label>
-            <textarea id={`chat-facts-${id}`} name="channelFacts" rows={3} maxLength={1500} value={value.channelFacts || ""} onChange={handleFieldChange} placeholder="只填已确认事实，例如音乐来源、是否命名。留空时不会猜测。" aria-describedby={`chat-facts-note-${id}`} />
+            <textarea id={`chat-facts-${id}`} name="channelFacts" rows={3} maxLength={1500} value={value.channelFacts || ""} onChange={handleFieldChange} placeholder="填写已确认的频道事实" />
             <button className={styles.factButton} type="button" onClick={fillMusicFacts}>填入「AI 音乐，未命名」</button>
-            <p id={`chat-facts-note-${id}`} className={styles.hint}>仅在符合本场内容时使用；不会推断版权、下载或点歌能力。</p>
           </div>
           <div className={styles.field}>
-            <label htmlFor={`chat-prompt-${id}`}>人设描述（可选）</label>
-            <textarea id={`chat-prompt-${id}`} name="customPrompt" rows={3} maxLength={2000} value={value.customPrompt} onChange={handleFieldChange} placeholder="写角色、喜欢的表达、禁用口头禅，以及两三组回复示例。" aria-describedby={`chat-count-${id}`} />
+            <label htmlFor={`chat-prompt-${id}`}>人设描述</label>
+            <textarea id={`chat-prompt-${id}`} name="customPrompt" rows={3} maxLength={2000} value={value.customPrompt} onChange={handleFieldChange} aria-describedby={`chat-count-${id}`} />
             <FieldCounter id={`chat-count-${id}`} count={value.customPrompt.length} limit={2000} />
           </div>
-        </fieldset>
-        <fieldset className={styles.group}>
-          <legend>表达风格</legend>
+      </div>
+    </details>
+    <details className={`${styles.panel} ${styles.collapsible}`}>
+      <summary><span><BroadcastChatIcon name="style" />回复风格</span><ChevronDownIcon aria-hidden="true" /></summary>
+      <div className={styles.panelBody}>
           <div className={styles.field}>
             <label htmlFor={`chat-length-${id}`}>回复长短</label>
             <select id={`chat-length-${id}`} name="verbosity" value={value.verbosity || "brief"} onChange={handleFieldChange}>
-              <option value="brief">简短接话</option>
-              <option value="balanced">需要时多说一句</option>
+              <option value="brief">简短</option>
+              <option value="balanced">适中</option>
             </select>
           </div>
           <div className={styles.paired}>
@@ -133,7 +126,6 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
               </select>
             </div>
           </div>
-        </fieldset>
       </div>
     </details>
   </fieldset>;

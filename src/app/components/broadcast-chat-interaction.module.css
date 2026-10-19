@@ -1,47 +1,51 @@
-/* 文件用途：限定于网页互动工作区的状态开关、双列设置与试聊布局，不改动其他页面或桌面样式。 */
-.root { container: broadcast-chat / inline-size; display: grid; gap: 24px; min-width: 0; }
+/* 文件用途：限定网页 AI 互动的独立功能面板、双列布局与试聊记录样式，不影响桌面或其他表单。 */
+.root { container: broadcast-chat / inline-size; display: grid; gap: 20px; min-width: 0; }
 .heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
 .heading h3 { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.4; }
 .heading button { min-height: 44px; padding: 6px 8px; font-size: 13px; }
-.activation { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 16px; background: var(--bg-subtle); border-radius: var(--radius-md); }
-.activationCopy { display: grid; gap: 4px; min-width: 0; }
-.activationCopy > strong { font-size: 15px; font-weight: 600; }
-.activationCopy > p { margin: 0; font-size: 13px; color: var(--text-secondary); }
-.stateSwitch { flex: none; min-height: 44px; padding: 4px; gap: 10px; border: 0; background: transparent; font-size: 14px; }
+.workspace { display: grid; gap: 20px; min-width: 0; align-items: start; }
+.settings { display: grid; gap: 16px; min-width: 0; }
+.activation { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-base); }
+.activationCopy { display: grid; gap: 6px; min-width: 0; }
+.activationCopy h4, .panelHeading { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 15px; font-weight: 600; line-height: 1.5; }
+.activationCopy h4 > svg, .panelHeading > svg { flex: none; color: var(--accent-primary); }
+.activationCopy > p { margin: 0; padding-left: 28px; font-size: 13px; color: var(--text-secondary); }
+.stateSwitch { flex: none; min-height: 44px; padding: 4px; gap: 8px; border: 0; background: transparent; font-size: 14px; }
 .stateSwitch:hover:not(:disabled) { background: transparent; }
 .switchTrack { display: block; flex: none; width: 44px; height: 26px; padding: 3px; border-radius: var(--radius-pill); background: var(--text-secondary); transition: background-color 160ms; }
 .switchTrack > span { display: block; width: 20px; height: 20px; border-radius: 50%; background: var(--surface-base); transition: transform 160ms; }
 .stateSwitch[aria-checked="true"] .switchTrack { background: var(--accent-primary); }
 .stateSwitch[aria-checked="true"] .switchTrack > span { transform: translateX(18px); }
-.workspace { display: grid; gap: 28px; min-width: 0; align-items: start; }
-.settings, .trial { display: grid; gap: 20px; min-width: 0; }
-.root .workspace h4 { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.5; }
-.trial { border-top: 1px solid var(--border-default); padding-top: 24px; }
-.root :global(.chat-preview-compact) { display: grid; gap: 24px; margin: 0; min-width: 0; }
-.root :global(.chat-preview-context) { display: grid; gap: 6px; }
-.root :global(.chat-preview-context) > strong { font-size: 13px; font-weight: 500; color: var(--text-secondary); }
+.trial { min-width: 0; border: 1px solid var(--border-default); border-radius: var(--radius-lg); background: var(--surface-base); overflow: hidden; }
+.panelHeading { padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); background: var(--surface-hover); }
+.trialBody { padding: 20px; }
+.root :global(.chat-preview-compact) { display: flex; flex-direction: column; gap: 16px; margin: 0; min-width: 0; }
 .root :global(.chat-preview-note) { margin: 0; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
 .root :global(.chat-preview-composer) { display: grid; gap: 12px; min-width: 0; }
 .root :global(.chat-preview-input) { display: grid; gap: 8px; min-width: 0; }
 .root :global(.chat-preview-input) > label { font-size: 14px; font-weight: 500; }
+.root :global(.chat-preview-input) > input { caret-color: var(--accent-primary); }
 .root :global(.chat-preview-samples) { gap: 8px; }
-.root :global(.chat-preview-samples) > button,
-.root :global(.chat-preview-more-samples) button { min-height: 44px; padding: 8px 10px; font-size: 13px; }
-.root :global(.chat-preview-more-samples) > summary { min-height: 44px; padding-block: 10px; font-size: 13px; cursor: pointer; }
-.root :global(.chat-preview-more-samples) > div { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.root :global(.chat-preview-samples) > button { min-height: 44px; padding: 8px 10px; font-size: 13px; }
 .root :global(.chat-preview-actions) { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
-.root :global(.chat-preview-history) { display: grid; gap: 12px; min-width: 0; padding-top: 20px; border-top: 1px solid var(--border-subtle); }
+.root :global(.chat-preview-history) { display: grid; gap: 12px; min-width: 0; }
 .root :global(.chat-preview-history-heading) { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.root :global(.chat-preview-history-heading) > h5 { margin: 0; font-size: 14px; font-weight: 600; }
 .root :global(.chat-preview-history-heading) > button { min-height: 44px; padding: 6px 8px; font-size: 13px; }
-.root :global(.chat-preview-turns) { display: grid; gap: 16px; margin: 0; padding: 0; max-height: 360px; }
-.root :global(.chat-preview-turns) > li { display: grid; gap: 8px; padding: 0 0 16px; }
-.root :global(.chat-preview-turns) > li > button { justify-self: start; max-width: 100%; white-space: normal; font-size: 13px; }
+.root :global(.chat-preview-turns) { display: grid; gap: 16px; margin: 0; padding: 0; max-height: 320px; scrollbar-width: thin; scrollbar-color: var(--border-default) transparent; }
+.root :global(.chat-preview-turns) > li { display: grid; gap: 8px; padding: 0; border: 0; }
+.root :global(.chat-preview-turns) > li > small { font-size: 12px; color: var(--text-secondary); }
+.root :global(.chat-preview-turns) > li > p { margin: 0; padding: 10px 12px; border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.root :global(.chat-preview-turns) > li > p:nth-of-type(1) { justify-self: end; background: var(--bg-subtle); max-width: 90%; }
+.root :global(.chat-preview-turns) > li > p:nth-of-type(2) { background: var(--accent-subtle); }
+.root :global(.chat-preview-turns) > li > button { justify-self: start; max-width: 100%; min-height: 44px; padding: 6px 8px; border: 0; color: var(--accent-primary); background: transparent; white-space: normal; font-size: 13px; }
 .root :global(.chat-preview-error) { margin: 0; color: var(--error-rose); font-size: 14px; }
 @container broadcast-chat (min-width: 800px) {
-  .workspace { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 32px; }
-  .trial { border-top: 0; border-left: 1px solid var(--border-default); padding: 0 0 0 28px; }
+  .workspace { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
 }
 @container broadcast-chat (max-width: 479px) {
+  .activation, .trialBody { padding: 16px; }
+  .panelHeading { padding-inline: 16px; }
   .root :global(.chat-preview-actions) > button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
