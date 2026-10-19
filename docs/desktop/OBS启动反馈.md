@@ -38,7 +38,7 @@
 
 `npm run verify` 检查类型、lint 和自动化回归；`npm run desktop:renderer` 后运行 `node scripts/desktop/obs-startup-feedback-acceptance.mjs`，使用 Edge、随机本机端口和合成桥接。
 
-2026-10-19 的成功态精简已通过 `npm run verify`（117 个测试文件、1137 项测试及 8 项部署检查），以及桌面渲染构建和 Electron 编译。合成验收在 390 / 780 / 1280px 全部通过，覆盖成功时默认收起、等待时展开的详情在成功后收起、键盘展开、耗时可查及成功后没有旧等待契约。三张成功态截图已同步；五步配置布局本轮仅调研，尚未改为纵向。
+2026-10-19 的成功态精简已通过 `npm run verify`（117 个测试文件、1137 项测试及 8 项部署检查），以及桌面渲染构建和 Electron 编译。合成验收在 390 / 780 / 1280px 全部通过，覆盖成功时默认收起、等待时展开的详情在成功后收起、键盘展开、耗时可查及成功后没有旧等待契约。三张成功态截图已同步。后续五步配置的纵向布局与验证单独记录在 [OBS 纵向配置](OBS纵向配置.md)。
 
 截图默认写入 `docs/desktop/screenshots/startup-feedback`；设置 `LIVENEST_STARTUP_SCREENSHOTS` 可把单次验收输出隔离到其他目录，避免覆盖已归档截图。
 

@@ -56,7 +56,8 @@ try {
       };
     });
     await page.goto('http://127.0.0.1:' + server.address().port);
-    const controls = page.locator('.obs-instance-controls[data-instance-id="main"]');
+    await selectControlStep(page, 'main');
+    const controls = page.locator('.obs-instance-controls[data-instance-id="main"]:visible');
     const details = controls.locator('details').filter({ has: page.locator('summary', { hasText: '查看检查详情' }) });
     const detailSummary = details.locator('summary');
     await controls.getByRole('button', { name: '启动并检查 OBS 1', exact: true }).click();
@@ -117,6 +118,7 @@ try {
     await controls.getByText('控制已连接', { exact: true }).waitFor();
     assert.equal(await details.getAttribute('open'), null, 'success collapses details previously opened while waiting');
     await navigate(page, '设备配置');
+    await selectControlStep(page, 'main');
     await controls.getByText('控制已连接', { exact: true }).waitFor();
     const title = await controls.getByText('控制已连接', { exact: true }).boundingBox();
     const button = await controls.getByRole('button', { name: '重新检查 OBS 1', exact: true }).boundingBox();
@@ -143,10 +145,17 @@ async function navigate(page, name) {
   if (await menu.isVisible()) await menu.click();
   await page.getByRole('button', { name, exact: true }).click();
 }
+/** 纵向步骤只展开当前面板；返回配置页后显式回访目标 OBS 的检查步骤。 */
+async function selectControlStep(page, id) {
+  const trigger = page.locator('#obs-step-3-' + id);
+  if (!await trigger.isVisible()) await page.locator('#setup-obs-' + id).getByRole('button', { name: /^(继续配置|查看配置)$/ }).click();
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click();
+  await page.locator('#obs-step-panel-3-' + id + ':visible').waitFor();
+}
 /** 截图保留模拟账号标识，验证无横向溢出以及可操作尺寸。 */
 async function capture(page, name) {
   await page.evaluate(() => { if (!document.getElementById('fixture-note')) { const note = document.createElement('div'); note.id = 'fixture-note'; note.textContent = '合成界面验收 · 未连接真实 OBS'; note.style.cssText = 'padding:8px;background:#254131;color:white'; document.body.prepend(note); } });
-  await page.locator('.obs-instance-controls[data-instance-id="main"]').scrollIntoViewIfNeeded();
+  await page.locator('.obs-instance-controls[data-instance-id="main"]:visible').scrollIntoViewIfNeeded();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   for (const button of await page.locator('.obs-instance-controls button:visible').all()) assert.ok((await button.boundingBox()).height >= 44);
   await page.screenshot({ path: path.join(output, name + '.png'), fullPage: true, animations: 'disabled' });
