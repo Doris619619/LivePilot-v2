@@ -140,6 +140,11 @@ export function AlertCircleIcon(props: IconProps) {
   );
 }
 
+/** 纯勾选标记，供带语义色的状态徽记使用。 */
+export function CheckMarkIcon(props: IconProps) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20" {...props}><polyline points="5 12 10 17 20 7" /></svg>;
+}
+
 /** 成功勾选 */
 export function CheckCircleIcon(props: IconProps) {
   return (

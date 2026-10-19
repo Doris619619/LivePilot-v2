@@ -28,6 +28,7 @@ import { separateCandidates, acceptCandidate, archiveCandidate } from "./candida
 import { repairManagedObs } from "./obs-repair";
 import { pairDesktop } from "./pairing";
 import { launchObs } from "./obs-launch";
+import { obsDiagnosisLabels } from "../src/shared/obs-startup";
 export class Manager {
   settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
   readonly activity = new Activity(); readonly discovery = new ObsDiscovery();
@@ -123,7 +124,14 @@ export class Manager {
       if (action === "firewall") await protectObs(this.settings, this.resources);
       else if (action === "check") this.checks = await diagnose(this.settings, this.resources);
       else if (action === "launch-obs") { const attemptId = this.activity.value!.attemptId!; const result = await launchObs(this.settings, idSchema.parse(input.id), (stage, progress) => this.activity.startup(attemptId, stage, progress)); this.checks = [...this.checks.filter(check => check.id !== result.id), result]; }
-      else if (action === "diagnose-obs") { const item=[...this.settings.instances,...(this.settings.candidates||[])].find(i=>i.id===input.id);if(!item)throw new AppError("DESKTOP", "请选择 OBS。");configureCore(()=>environment({...this.settings,instances:[...this.settings.instances.filter(i=>i.id!==item.id),item]}));const result=await checkObsNetwork(item);this.checks=[...this.checks.filter(c=>c.id!==result.id),result]; }
+      else if (action === "diagnose-obs") {
+        const item = [...this.settings.instances, ...(this.settings.candidates || [])].find(i => i.id === input.id);
+        if (!item) throw new AppError("DESKTOP", "请选择 OBS。");
+        configureCore(() => environment({ ...this.settings, instances: [...this.settings.instances.filter(i => i.id !== item.id), item] }));
+        const attemptId = this.activity.value!.attemptId!;
+        const result = await checkObsNetwork(item, { report: progress => this.activity.diagnosis(attemptId, obsDiagnosisLabels[progress.phase], progress) });
+        this.checks = [...this.checks.filter(c => c.id !== result.id), result];
+      }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
       else if (action === "start") await this.start();
       else if (action === "repair") await this.repair(input);

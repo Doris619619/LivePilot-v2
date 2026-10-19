@@ -5,7 +5,7 @@ import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import assert from 'node:assert/strict';
-const root = path.resolve('desktop/out'); const output = path.resolve('docs/screenshots/ux-simplification/desktop'); await mkdir(output, { recursive: true });
+const root = path.resolve('desktop/out'); const output = path.resolve(process.env.LIVENEST_READINESS_SCREENSHOTS || 'docs/screenshots/ux-simplification/desktop'); await mkdir(output, { recursive: true });
 /** 只读取本次构建的静态文件，模拟桥接不访问生产云端。 */
 const server = createServer(async (req, res) => {
   try { const file = path.resolve(root, '.' + new URL(req.url, 'http://localhost').pathname.replace(/\/$/, '/index.html')); if (!file.startsWith(root + path.sep)) throw Error(); res.setHeader('Content-Type', ({ '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' })[path.extname(file)] || 'application/octet-stream'); res.end(await readFile(file)); } catch { res.writeHead(404); res.end(); }
@@ -30,44 +30,45 @@ try {
   await page.evaluate(() => {}).catch(()=>{});
   await page.goto('http://127.0.0.1:' + server.address().port);
   await page.getByRole('heading',{name:'我的 OBS'}).waitFor();
-  for (const name of ['OBS 1','OBS 2']) assert.equal(await page.getByRole('navigation',{name:name+' 配置步骤'}).getByRole('button').count(),5);
-  assert.equal(await page.locator('#setup-obs-main').getByText('1 / 5 已完成',{exact:true}).count(),1);
-  assert.equal(await page.locator('#setup-obs-second').getByText('2 / 5 已完成',{exact:true}).count(),1);
+  for (const id of ['main','second']) assert.equal(await page.locator('#obs-detail-'+id+' button[id^="obs-step-"]').count(),5);
+  assert.equal(await page.locator('#obs-detail-main [data-step-state="complete"]').count(),1);
+  assert.equal(await page.locator('#obs-detail-second [data-step-state="complete"]').count(),2);
   assert.equal(await page.locator('.problem-card[role=alert]').count(),0);
-  await page.locator('#setup-obs-second').getByRole('button',{name:'继续配置'}).click();
-  await page.getByRole('navigation',{name:'OBS 2 配置步骤'}).getByRole('button',{name:/4.*连接频道/}).click();
+  await selectStep(page,'second',4);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-4-second');
-  await page.getByRole('navigation',{name:'OBS 2 配置步骤'}).getByRole('button',{name:/2.*连接网页/}).click();
+  await selectStep(page,'second',2);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-2-second');
-  await page.getByLabel('粘贴配对码').fill('模拟配对码');
+  await page.locator('[data-obs-step-panel]:visible').getByLabel('粘贴配对码').fill('模拟配对码');
   assert.equal(await page.getByRole('button',{name:'连接这台电脑',exact:true}).isEnabled(),true);
-  await page.getByRole('navigation',{name:'OBS 1 配置步骤'}).getByRole('button',{name:/1.*准备 OBS/}).click();
+  await selectStep(page,'main',1);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-1-main');
-  assert.deepEqual(await page.locator('#obs-detail-main [id^=obs-step-]').evaluateAll(items=>items.map(e=>e.id)),[1,2,3,4,5].map(n=>'obs-step-'+n+'-main'));
-  await page.getByRole('navigation',{name:'OBS 2 配置步骤'}).getByRole('button',{name:/2.*连接网页/}).click();
+  assert.deepEqual(await page.locator('#obs-detail-main button[id^="obs-step-"]').evaluateAll(items=>items.map(e=>e.id)),[1,2,3,4,5].map(n=>'obs-step-'+n+'-main'));
+  await selectStep(page,'second',2);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-2-second');
-  assert.equal(await page.getByLabel('粘贴配对码').inputValue(),'模拟配对码');
-  assert.equal(await page.locator('#obs-detail-main').count(),0);
+  assert.equal(await page.locator('[data-obs-step-panel]:visible').getByLabel('粘贴配对码').inputValue(),'模拟配对码');
+  assert.equal(await page.locator('#obs-detail-main').isVisible(),false);
   console.log('Rendered typography:',await page.locator('.connection-heading p,.pairing-source p,.pairing-submit p,.pairing-form textarea,.setup-progress small').evaluateAll(items=>items.map(e=>({element:e.tagName,size:getComputedStyle(e).fontSize})).slice(-8)));
-  await page.getByLabel('粘贴配对码').fill('');
+  await page.locator('[data-obs-step-panel]:visible').getByLabel('粘贴配对码').fill('');
   assert.equal(await page.locator('.problem-card[role=alert]').count(),0);
   assert.equal(await page.getByText('模拟：控制服务已响应，入站隔离待确认。',{exact:true}).isVisible(),false);
   await capture(page,'configuration-780');
   await page.setViewportSize({width:1280,height:900}); await capture(page,'configuration-1280');
-  await page.getByRole('button',{name:'重新检查 OBS 2',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('[aria-label="重新检查 OBS 2"]').disabled);
+  await selectStep(page,'second',3);
+  await page.getByRole('button',{name:/重新检查 OBS 2$/}).click();
+  await page.waitForFunction(()=>!document.querySelector('[aria-label$="重新检查 OBS 2"]').disabled);
   assert.deepEqual(await page.evaluate(()=>window.launchFixture.calls),[{action:'diagnose-obs',id:'second'}]);
   await page.getByRole('button',{name:'本机 OBS',exact:true}).click();
   await page.getByRole('button',{name:'配置 OBS 2',exact:true}).click();
   await page.waitForFunction(()=>document.activeElement?.id==='setup-obs-second');
   await page.evaluate(()=>{window.launchFixture.fail=true;});
+  await selectStep(page,'main',3);
   await page.getByRole('button',{name:'启动并检查 OBS 1',exact:true}).focus(); await page.keyboard.press('Enter');
   await page.locator('[data-instance-id="main"]').getByRole('alert').waitFor();
   assert.equal(await page.locator('[data-instance-id="second"]').getByRole('alert').count(),0);
   await capture(page,'blocking-failure');
   await page.evaluate(()=>{window.launchFixture.fail=false;});
-  await page.getByRole('button',{name:'重新检查 OBS 1',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('.problem-card[role="alert"]'));
+  await page.getByRole('button',{name:/重新检查 OBS 1$/}).click();
+  await expect(page.locator('#obs-step-panel-3-main .problem-card[role="alert"]')).toHaveCount(0);
   await page.getByRole('button',{name:'添加 OBS',exact:true}).click();
   await page.getByRole('heading',{name:'添加另一个 OBS',exact:true}).waitFor();
   await page.getByRole('button',{name:'添加 OBS',exact:true}).click();
@@ -76,16 +77,18 @@ try {
     s.snapshots=s.instances.map((instance,index)=>({instance,observedAt:Date.now(),dashboard:{busy:false,state:{phase:'idle',stage:'等待',updatedAt:new Date().toISOString()},obs:{ready:true,running:true,streaming:false},youtube:{connected:index===0,channel:index===0?'示例频道':''},media:{videos:index===0?['示例视频.mp4']:[],music:index===0?['示例音乐.mp3']:[]},configuration:{missing:[],privacy:'private',madeForKids:false}}}));
   });
   await page.locator('#setup-obs-main').getByText('准备完成',{exact:true}).waitFor();
-  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '重新检查 OBS 2', exact: true }).isVisible(), true);
+  await selectStep(page,'second',3);
+  assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: /重新检查 OBS 2$/ }).isVisible(), true);
   assert.equal(await page.locator('#obs-detail-second').getByRole('button', { name: '启动并检查 OBS 2', exact: true }).count(), 0);
-  assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),0);
+  assert.equal(await page.locator('#obs-detail-main').isVisible(),false);
   await page.locator('#setup-obs-main').getByRole('button',{name:'查看配置',exact:true}).click();
-  assert.equal(await page.locator('#setup-obs-main').getByText('5 / 5 已完成',{exact:true}).count(),1);
-  assert.equal(await page.locator('#setup-obs-second').getByText('3 / 5 已完成',{exact:true}).count(),1);
-  await page.getByRole('navigation',{name:'OBS 1 配置步骤'}).getByRole('button',{name:/2.*连接网页/}).click();
+  assert.equal(await page.locator('#obs-detail-main').isVisible(),true);
+  assert.equal(await page.locator('#obs-detail-main [data-step-state="complete"]').count(),5);
+  assert.equal(await page.locator('#obs-detail-second [data-step-state="complete"]').count(),3);
+  await selectStep(page,'main',2);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-2-main');
   assert.equal(await page.getByLabel('粘贴配对码').count(),0);
-  await page.getByRole('navigation',{name:'OBS 2 配置步骤'}).getByRole('button',{name:/4.*连接频道/}).click();
+  await selectStep(page,'second',4);
   await page.waitForFunction(()=>document.activeElement?.id==='obs-step-4-second');
   await capture(page,'two-obs-progress-1280');await page.setViewportSize({width:780,height:900});await capture(page,'two-obs-progress-780');
   assert.equal(await page.getByLabel('粘贴配对码').count(),0);
@@ -101,6 +104,14 @@ try {
   await expect(updateTrigger).toBeFocused();
   assert.deepEqual(errors,[]);console.log('PASS independent five-step flows per OBS, shared pairing without repeat, retained pairing input, target navigation, pairing form, target launch, neutral firewall advice, error recovery, keyboard, 780/1280px and centralized addition');
 } finally { await browser.close(); server.close(); }
+/** 通过纵向标题回访指定步骤；跨实例先展开卡片，再检查唯一可见面板。 */
+async function selectStep(page,id,number) {
+  const trigger=page.locator('#obs-step-'+number+'-'+id);
+  if(!await trigger.isVisible()) await page.locator('#setup-obs-'+id).getByRole('button',{name:/^(继续配置|查看配置)$/}).click();
+  if(await trigger.getAttribute('aria-expanded')!=='true') await trigger.click(); else await trigger.focus();
+  await expect(trigger).toHaveAttribute('aria-expanded','true');
+  assert.equal(await page.locator('[data-obs-step-panel]:visible').count(),1);
+}
 /** 验收截图明确为模拟数据，并检查页面和按钮尺寸。 */
 async function capture(page, name) {
   await page.evaluate(() => { if (!document.getElementById('fixture-note')) { const note = document.createElement('div'); note.id = 'fixture-note'; note.textContent = '模拟故障 / 隔离界面验收 · 未启动真实 OBS 或开播'; note.style.cssText = 'padding:8px;background:#254131;color:white'; document.body.prepend(note); } });

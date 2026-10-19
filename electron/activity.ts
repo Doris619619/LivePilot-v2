@@ -17,6 +17,11 @@ export class Activity {
     if (this.value?.action !== "launch-obs" || this.value.attemptId !== attemptId || this.value.status !== "running") return;
     this.value = { ...this.value, stage, obsStartup: progress }; this.rememberLaunch();
   }
+  /** 复查只接受当前实例操作轮次的真实进度；迟到回调不能覆盖终态或下一轮。 */
+  diagnosis(attemptId: string, stage: string, progress: ObsStartupProgress) {
+    if (this.value?.action !== "diagnose-obs" || this.value.attemptId !== attemptId || this.value.status !== "running") return;
+    this.value = { ...this.value, stage, obsDiagnosis: progress };
+  }
   /** 完成后让页面回到常规检查结果。 */
   complete() { if (this.value?.status === "running") { this.value = { ...this.value, status: "complete", endedAt: Date.now() }; this.rememberLaunch(); } }
   /** 调用方先过滤错误；保留失败时的阶段供就地修复。 */
