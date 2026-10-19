@@ -328,6 +328,12 @@ async function assertRecheckFeedback(page, screenshots) {
   await expect.poll(async () => Number((await remaining.innerText()).match(/\d+/)[0])).toBeLessThan(initialRemaining);
   await page.evaluate(() => window.obsStepsFixture.diagnoseStage('control', { observation: '示例：已确认进程与端口，正在建立控制连接。' }));
   await expect(progress.locator('[aria-current="step"]')).toContainText('连接控制服务');
+  if (page.viewportSize().width === 1280) {
+    const stagesBox = await progress.getByRole('list', { name: 'OBS 复查阶段' }).boundingBox();
+    const timingBox = await progress.locator('[data-obs-check-elapsed]').locator('..').boundingBox();
+    assert.ok(Math.abs(stagesBox.y + stagesBox.height / 2 - timingBox.y - timingBox.height / 2) < 2, 'wide check stages and timing share one row');
+    assert.ok(timingBox.x >= stagesBox.x + stagesBox.width, 'timing sits to the right of stages');
+  }
   await expect(progress.getByText('示例：已确认进程与端口，正在建立控制连接。', { exact: true })).toHaveCount(0);
   const checkDetails = controls.locator('[data-obs-details-panel]');
   const checkDetailsToggle = controls.locator('[data-obs-details-toggle]');

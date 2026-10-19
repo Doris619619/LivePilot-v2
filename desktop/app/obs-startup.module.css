@@ -14,18 +14,19 @@
 .feedback[data-startup-state="ready"] .statusGroup, .feedback[data-startup-state="diagnosing"] .statusGroup { grid-column: 1; grid-row: 1; }
 .feedback[data-startup-state="ready"] .actions, .feedback[data-startup-state="diagnosing"] .actions { grid-column: 2; grid-row: 1; }
 .feedback[data-startup-state="ready"] .detailToggle, .feedback[data-startup-state="diagnosing"] .detailToggle { grid-column: 3; grid-row: 1; }
-.progress { display: grid; width: 100%; gap: 14px; padding-block: 16px 4px; border-top: 1px solid var(--border-subtle); }
-.progressTiming { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; color: var(--text-secondary); font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.progress { display: flex; flex-wrap: wrap; align-items: center; width: 100%; min-width: 0; gap: 12px 24px; padding-block: 16px 4px; border-top: 1px solid var(--border-subtle); }
+.progressTiming { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px 16px; margin-inline-start: auto; color: var(--text-secondary); font-size: 14px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+.progressTiming > * { white-space: nowrap; }
 .progressTiming strong { color: var(--text-primary); font-weight: 600; }
-.observation { margin: 0; max-width: 75ch; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
-.steps { display: flex; flex-wrap: wrap; gap: 10px 24px; list-style: none; padding: 0; margin: 0; font-size: 15px; color: var(--text-secondary); }
-.steps li { display: flex; align-items: center; gap: 8px; }
+.observation { flex-basis: 100%; margin: 0; max-width: 75ch; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.steps { display: flex; flex: 1 1 max-content; flex-wrap: wrap; gap: 10px 24px; list-style: none; padding: 0; margin: 0; font-size: 15px; color: var(--text-secondary); }
+.steps li { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
 .steps svg { width: 18px; height: 18px; flex-shrink: 0; }
 .steps [aria-current="step"] { color: var(--accent-primary); font-weight: 600; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid var(--border-default); border-top-color: currentColor; border-radius: 50%; animation: turn 1s linear infinite; flex-shrink: 0; }
 .pending { display: inline-block; width: 16px; height: 16px; border: 1px solid var(--border-default); border-radius: 50%; flex-shrink: 0; }
 .notice { max-width: 60ch; line-height: 1.6; color: var(--text-primary); }
-.actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin: 0; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px 12px; margin: 0; min-width: 0; }
 .actions button, .detailToggle { min-height: 44px; }
 .actions button { white-space: normal; text-align: start; }
 .actions .recheck { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-width: 136px; padding: 10px 14px; border: 1px solid var(--accent-primary); border-radius: 6px; color: var(--accent-primary); background: var(--surface-base); font-size: 14px; font-weight: 500; white-space: nowrap; }
@@ -49,6 +50,7 @@
 @media (max-width: 680px) {
   .steps { flex-direction: column; gap: 10px; }
   .feedback[data-startup-state="ready"], .feedback[data-startup-state="diagnosing"] { grid-template-columns: max-content max-content; gap: 12px 16px; }
+  .feedback[data-startup-state="diagnosing"] { grid-template-columns: minmax(0, 1fr) max-content; }
   .feedback[data-startup-state="ready"] .statusGroup, .feedback[data-startup-state="diagnosing"] .statusGroup { grid-column: 1 / -1; grid-row: 1; }
   .feedback[data-startup-state="ready"] .actions, .feedback[data-startup-state="diagnosing"] .actions { grid-column: 1; grid-row: 2; }
   .feedback[data-startup-state="ready"] .detailToggle, .feedback[data-startup-state="diagnosing"] .detailToggle { grid-column: 2; grid-row: 2; }

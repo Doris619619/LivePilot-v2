@@ -52,6 +52,12 @@
 
 后续精简移除了阶段下方重复的正常观察句，常规观测只在“查看详情”中展示；主界面保留阶段、计时与异常说明。浏览器回归同步检查常规观测默认隐藏、展开详情后可查。
 
+宽窗口将阶段列表与计时合为一行：阶段在左，已用和剩余时间在右；空间不足时按组换行，窄窗口保留纵向阶段，文字不拆碎。异常说明始终独占一行。
+
+同行布局验收在 1280px 检查阶段与计时的实际几何对齐，并继续覆盖 780 / 520px 与状态过期后的无横向溢出。验证进程设置 `CIRCLE_NODE_TOTAL=3`，将 Next 构建限制为两个工作进程，避免本机提交内存不足；没有改动全局环境或产品配置。
+
+本次布局调整的两个浏览器验收均通过，桌面构建、类型检查和 lint 通过。完整 `verify` 实际结果为 117 个测试文件通过、1 个失败，1144 项通过、1 项失败：`publishing-accounts.test.ts` 的清理确认恢复测试超过其 4 秒等待限制；该文件随后单独重跑 12 项全部通过。未改动发布账号逻辑或放宽该测试，不能将这次完整 `verify` 记为通过。
+
 方案 3 的局部实际截图（示例数据）：[默认收起](screenshots/vertical-steps/reference-row-1280.png)、[展开明细](screenshots/vertical-steps/reference-details-1280.png)、[窄窗口收起](screenshots/vertical-steps/reference-row-520.png)、[窄窗口展开](screenshots/vertical-steps/reference-details-520.png)。
 
 执行 `node scripts/desktop/obs-steps-acceptance.mjs --serve` 可启动随机 `127.0.0.1` 端口的交互预览，终端输出已配置、待配对与检查过程三个地址。需要沿用已分享的预览地址时，可仅为该进程设置 `LIVENEST_STEPS_PORT`；自动验收仍使用随机端口。每页操作仅修改示例内存；关闭服务进程即可结束预览。
