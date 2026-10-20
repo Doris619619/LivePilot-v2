@@ -23,8 +23,10 @@ it("fails closed when the selected disk disappears",async()=>{const store=new Se
 it("relocates only the verified original root after a disk path change without replacing identity", async () => {
  const store=new SettingsStore();const original=await store.select(target);original.identity={agentId:"fixture",token:"synthetic",origin:"https://example.invalid"};original.instances=[{id:"main",name:"Main",managed:true,initialized:true,exe:path.join(target,"obs/main/bin/64bit/obs64.exe"),port:4455,password:"fixture"}];await store.write(original);
  const moved=target+"-moved";await import("node:fs/promises").then(fs=>fs.rename(target,moved));
- const before=await readFile(path.join(f.bootstrap,"data-location.json"),"utf8");const inspected=await store.inspectRecovery(moved);expect(inspected.identity).toEqual(original.identity);expect(inspected.encryptionKey).toBe(original.encryptionKey);expect(inspected.instances[0].exe).toBe(path.join(moved,"obs/main/bin/64bit/obs64.exe"));expect(await readFile(path.join(f.bootstrap,"data-location.json"),"utf8")).toBe(before);
- await store.restoreLocation(moved);expect((await store.read()).identity).toEqual(original.identity);expect((await store.read()).dataRoot).toBe(await realpath(moved));
+ // Windows 临时目录可能使用 8.3 短名；恢复结果应始终基于已解析的真实目标根。
+ const canonicalMoved=await realpath(moved);
+ const before=await readFile(path.join(f.bootstrap,"data-location.json"),"utf8");const inspected=await store.inspectRecovery(moved);expect(inspected.identity).toEqual(original.identity);expect(inspected.encryptionKey).toBe(original.encryptionKey);expect(inspected.instances[0].exe).toBe(path.join(canonicalMoved,"obs/main/bin/64bit/obs64.exe"));expect(await readFile(path.join(f.bootstrap,"data-location.json"),"utf8")).toBe(before);
+ await store.restoreLocation(moved);expect((await store.read()).identity).toEqual(original.identity);expect((await store.read()).dataRoot).toBe(canonicalMoved);
 });
 it("rejects an unrelated root and an available original rather than selecting a stale copy", async () => {
  const store=new SettingsStore();await store.select(target);const foreign=path.join(base,"foreign");await claimRoot(foreign);
