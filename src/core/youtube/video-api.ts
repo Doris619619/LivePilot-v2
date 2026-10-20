@@ -36,13 +36,19 @@ export class VideoApi implements VideoPort {
   constructor(private auth: YouTubeAuth, private charge: Charge) {}
   /** 固定 API 地址并重新取得短期 access token；不重放写请求。 */
   private async request(url: string, init: RequestInit = {}, units = 1, upload = false) {
-    await this.charge(units, upload); return this.fetchAuthorized(url, init);
+    await this.charge(units, upload); return this.fetchAuthorized(url, init, () => this.charge(units, upload));
   }
-  /** 过滤上游错误；网络中断被标记可恢复，副作用必须由 Runner 先核对。 */
-  private async fetchAuthorized(url: string, init: RequestInit) {
+  /** 首次401只刷新一次；GET可重读，写入和流式请求交回Runner核对检查点，不在HTTP层重放。 */
+  private async fetchAuthorized(url: string, init: RequestInit, chargeRead?: () => Promise<void>, recovered = false): Promise<Response> {
     const token = await this.auth.access(); let response: Response;
     try { response = await fetch(url, { ...init, headers: { ...init.headers, Authorization: "Bearer " + token.accessToken }, cache: "no-store", redirect: "manual", signal: init.signal || AbortSignal.timeout(30_000) }); }
     catch { throw new VideoApiError("VIDEO_NETWORK", "YouTube 网络中断，结果等待核对。", true); }
+    if (response.status === 401 && !recovered) {
+      await response.body?.cancel();
+      await this.auth.access(token.accessToken);
+      if (!init.method || init.method === "GET") { await chargeRead?.(); return this.fetchAuthorized(url, init, chargeRead, true); }
+      throw new VideoApiError("VIDEO_AUTH_REFRESHED", "授权已刷新，原操作等待核对后继续。", true);
+    }
     if (response.status === 308 || response.status === 404) return response;
     if (!response.ok) {
       if (response.status === 412) { await response.body?.cancel(); throw new VideoApiError("VIDEO_CHANGED", "视频状态已改变，请重新核对后再操作。"); }

@@ -1,14 +1,19 @@
 /** 文件用途：将网页开播区的多方状态归纳为一个结论，并限制不确定场次先核对再重试；不发送控制命令。 */
 import { broadcastActionMode, canStopBroadcast } from "@/shared/readiness";
+import { canResumeBroadcast, hasPendingBroadcast } from "@/shared/broadcast-recovery";
 import type { Dashboard } from "@/shared/types";
 import type { StatusType } from "./status-indicator";
 
 type RuntimeInput = { data?: Dashboard; stale: boolean; busy: boolean; live: boolean; error?: string; working?: string };
 export type RuntimeSummary = { status: StatusType; label: string; message: string };
 
-/** 已有推流、平台直播或未能读取的在途场次，优先只读核对；保留原有开始、停止和执行中保护。 */
+/** 恢复只沿已保存的原场次推进；已启动 OBS 的中断命令可显式再核对，不自动创建直播。 */
 export function runtimeActionMode({ data, stale, busy, live }: RuntimeInput) {
   const mode = broadcastActionMode(data, busy, stale, live);
+  if (!stale && !busy && !live && data) {
+    if (data.operation?.action === "launch" && data.operation.status === "interrupted" && !hasPendingBroadcast(data.state) && data.obs.ready && data.obs.streaming === false) return "confirm-obs";
+    if (canResumeBroadcast(data)) return "resume";
+  }
   if (mode === "retry" && data && (data.obs.streaming === true || data.youtube.lifecycle === "live" || data.youtube.query === "failed" && canStopBroadcast(data))) return "check";
   return mode;
 }
@@ -25,6 +30,7 @@ export function runtimeSummary(input: RuntimeInput): RuntimeSummary {
     : { status: "live", label: "直播中", message: "" };
   if (data.youtube.lifecycle === "live" && data.obs.streaming === false) return { status: "error", label: "推流中断", message: "OBS 未推流，YouTube 场次仍在直播。请先重新检查状态。" };
   if (data.obs.streaming === true) return { status: "error", label: "直播信号待确认", message: data.youtube.lifecycle === "complete" ? "OBS 仍在推流，YouTube 场次已结束。请重新检查状态。" : "OBS 正在推流，尚未确认 YouTube 收到直播信号。" };
+  if (data.obs.streaming === false && data.youtube.query !== "failed" && data.youtube.lifecycle === "complete" && hasPendingBroadcast(data.state)) return { status: "standby", label: "本场已结束", message: "确认结束后可更换下一场素材。" };
   if (data.youtube.lifecycle === "live" || runtimeActionMode(input) === "check") return { status: "error", label: "直播状态待核对", message: "尚未确认直播信号，请先重新检查状态。" };
   if (error || data.state.phase === "error" || data.operation?.status === "failed") return { status: "error", label: "操作未完成", message: "请查看上方原因，处理后重试。" };
   if (data.state.phase === "stopped") return { status: "standby", label: "本场已结束", message: "" };

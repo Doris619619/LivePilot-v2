@@ -8,13 +8,14 @@ type SessionResult = { session: string; protocol?: number; capabilities?: string
 export async function connectSession(transport: Transport, input: SessionInput): Promise<SessionResult> {
   const legacy = ["publishing-v1", "publishing-v2", "publishing-accounts-v1"];
   const body = { protocol: PROTOCOL, ...input };
-  try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2"] }); }
+  try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2", "publishing-recovery-v1"] }); }
   catch (error) {
     if (!(error instanceof AppError) || error.status !== 400) throw error;
-    try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1"] }); }
+    try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2"] }); }
     catch (fallback) {
       if (!(fallback instanceof AppError) || fallback.status !== 400) throw fallback;
-      return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy });
+      try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1"] }); }
+      catch (last) { if (!(last instanceof AppError) || last.status !== 400) throw last; return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy }); }
     }
   }
 }

@@ -19,7 +19,7 @@ import { ObsDiscovery, inspectObs } from "./obs-discovery";
 import { checkObsNetwork } from "./obs-network";
 import { firewallChecks, firewallFingerprint, protectObs } from "./obs-firewall";
 import { diagnose } from "./diagnostics";
-import { assertLocalIdle, initializeObs, newInstance } from "./obs-setup";
+import { assertLocalIdle, initializeObs, newInstance, type IdleEvidence } from "./obs-setup";
 import { Updates } from "./updates";
 import { runLocalUpdate } from "./local-update";
 import { isAppError, safeError, problemFor } from "../src/core/errors";
@@ -29,6 +29,7 @@ import { repairManagedObs } from "./obs-repair";
 import { pairDesktop } from "./pairing";
 import { launchObs } from "./obs-launch";
 import { obsDiagnosisLabels } from "../src/shared/obs-startup";
+import { restoreManagedProgram } from "./obs-program-recovery";
 export class Manager {
   settings!: Settings; readonly store = new SettingsStore(); readonly agent = new AgentHost(url => session.defaultSession.resolveProxy(url)); readonly updates = new Updates();
   readonly activity = new Activity(); readonly discovery = new ObsDiscovery();
@@ -57,12 +58,16 @@ export class Manager {
   }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
-    return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, obsLaunches: [...this.activity.obsLaunches.values()].filter(a => this.settings.instances.some(i => i.id === a.instanceId)), version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: [...this.checks, ...firewallChecks(this.settings.instances)], update: this.updates.state };
+    return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, obsLaunches: [...this.activity.obsLaunches.values()].filter(a => this.settings.instances.some(i => i.id === a.instanceId)), version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), retiredInstances: (this.settings.retiredInstances || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: [...this.checks, ...firewallChecks(this.settings.instances)], update: this.updates.state };
   }
   /** 核心错误已过滤敏感字段，未知第三方异常使用固定提示。 */
   private error(e: unknown) { return isAppError(e) ? safeError(e) : e instanceof z.ZodError ? "输入无效，请检查填写内容。" : safeError(e); }
   /** 建立目录后启动；维护恢复只在新会话心跳确认之后释放。 */
-  async start() {
+  async start(refreshNetwork = false) {
+    if (this.settings.retirementPending) {
+      if (this.agent.child) { await this.completeRetirement(); return; }
+      await this.recoverRetirement();
+    }
     if (!this.settings.dataRoot) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
     if (!this.settings.instances.length) throw new AppError("DESKTOP", "请先完成至少一个 OBS 的配置。");
     // 上次配置失败可能留下旧清单的活跃子进程；先在维护锁内同步，再重建会话。
@@ -72,6 +77,10 @@ export class Manager {
       await this.agent.stop(); this.activity.progress("正在等待旧连接结束（约 21 秒）"); await new Promise(r => setTimeout(r, 21_000));
     }
     for (const i of this.settings.instances) for (const kind of ["videos", "music"]) {const folder=path.join(this.settings.dataRoot,"media",i.id,kind);await ordinaryPath(folder);await mkdir(folder,{recursive:true});}
+    if (refreshNetwork && this.agent.child) {
+      this.activity.progress("正在排空 Agent 并重新读取网络配置（OBS 保持运行）");
+      await this.agent.stop(); await new Promise(r => setTimeout(r, 21_000));
+    }
     this.activity.progress("正在连接网页并等待设备在线");
     await this.agent.start(this.settings, this.resources, async google => { this.settings.google = google; await this.store.write(this.settings); });
     await this.agent.ready();
@@ -86,16 +95,16 @@ export class Manager {
     await this.agent.rpc("maintenance-begin", { token: this.settings.maintenance });
   }
   /** 云端确认释放后才删除凭据；失败保留凭据以便重连恢复。 */
-  private async releaseMaintenance() {
+  private async releaseMaintenance(idleSettings = this.settings) {
     if (!this.settings.maintenance) return;
-    await assertLocalIdle(this.settings);
+    await assertLocalIdle(idleSettings);
     await this.agent.rpc("maintenance-end", { token: this.settings.maintenance });
     const next = { ...this.settings }; delete next.maintenance; delete next.inventoryPending; await this.store.write(next); this.settings = next;
   }
   /** 验证失败未改变正式清单，安全放回旧实例，响应不明时明确保留维护。 */
-  private async recoverConfiguration(error: unknown): Promise<never> {
+  private async recoverConfiguration(error: unknown, idleSettings = this.settings): Promise<never> {
     if (this.settings.inventoryPending) throw new AppError("MAINTENANCE", this.error(error) + " 设备清单仍待确认，请重新连接网页完成同步。");
-    try { await assertLocalIdle(this.settings); await this.releaseMaintenance(); }
+    try { await assertLocalIdle(idleSettings); await this.releaseMaintenance(idleSettings); }
     catch { throw new AppError("MAINTENANCE", this.error(error) + " 维护恢复尚未确认，请点击重新连接网页；待配置 OBS 和原实例均已保留。"); }
     throw error;
   }
@@ -133,18 +142,31 @@ export class Manager {
         this.checks = [...this.checks.filter(c => c.id !== result.id), result];
       }
       else if (action === "pair") { if (!this.settings.instances.length || this.settings.instances.some(i => !i.initialized)) throw new AppError("DESKTOP", "请先完成 OBS 配置。"); await this.pair(input.invitation); }
-      else if (action === "start") await this.start();
+      else if (action === "start") await this.start(true);
+      else if (action === "rename") await this.rename(input);
+      else if (action === "restore-candidate") await this.restoreCandidate(input);
+      else if (action === "replace-candidate") await this.replaceCandidate(input);
+      else if (action === "retire") await this.retire(input);
+      else if (action === "restore-program") {
+        const item = this.settings.instances.find(i => i.id === input.id);
+        if (!item?.managed) throw new AppError("DESKTOP", "请选择正式内置 OBS。");
+        const wasRunning = !!this.agent.child; await this.agent.stop();
+        try { await restoreManagedProgram(item, this.settings.dataRoot, this.resources); }
+        finally { if (wasRunning) { this.activity.progress("正在恢复网页连接"); await new Promise(r => setTimeout(r, 21_000)); await this.start(); } }
+      }
       else if (action === "repair") await this.repair(input);
       else if (action === "discard") { archiveCandidate(this.settings, idSchema.parse(input.id)); await this.store.write(this.settings); if (this.settings.maintenance) await this.start(); }
       else if (action === "repair-managed") {
         const item = [...this.settings.instances, ...(this.settings.candidates || [])].find(i => i.id === input.id);
         if (!item?.managed) throw new AppError("DESKTOP", "只能修复本客户端管理的 OBS。");
         // 必须停止目标 OBS，才能绕过被其他程序占用的旧端口；其余实例仍完整检查。
-        const candidate = await repairManagedObs(this.settings, item, async () => this.maintenanceForRepair(item.id));
-        Object.assign(item, candidate); await this.store.write(this.settings);
-        await this.configure("prepare", { id: item.id });
+        try {
+          const candidate = await repairManagedObs(this.settings, item, evidence => this.maintenanceForRepair(item.id, evidence));
+          Object.assign(item, candidate); await this.store.write(this.settings);
+          await this.configure("prepare", { id: item.id });
+        } catch (error) { await this.recoverConfiguration(error); }
       }
-      else if (["prepare", "add", "attach", "rename", "import-obs", "restore-candidate"].includes(action)) await this.configure(action, input);
+      else if (["prepare", "add", "attach", "import-obs"].includes(action)) await this.configure(action, input);
       else if (action === "open-publishing") { const { ensurePublishingRoot } = await import("../src/core/publishing/packages"); const root = path.join(this.settings.dataRoot, "Publishing"); await ensurePublishingRoot(root); if (await shell.openPath(path.join(root, "Inbox"))) throw new AppError("DESKTOP", "无法打开发布目录，请检查文件夹访问权限。"); }
       else if (action === "open-data") { if (await shell.openPath(this.settings.dataRoot)) throw new AppError("DESKTOP", "无法打开数据目录，请检查文件夹是否存在及访问权限。"); }
       else if (action === "directory") {
@@ -157,7 +179,7 @@ export class Manager {
         if (action === "update-apply") await this.updates.download();
         const result = await runLocalUpdate({
           wasRunning: !!this.agent.child,
-          checkIdle: () => assertLocalIdle({ ...this.settings, instances: [...this.settings.instances, ...(this.settings.candidates || []), ...(this.settings.archivedCandidates || [])] }),
+          checkIdle: async () => { await assertLocalIdle({ ...this.settings, instances: [...this.settings.instances, ...(this.settings.candidates || []), ...(this.settings.archivedCandidates || [])] }); },
           stop: () => this.agent.stop(), flush: () => this.store.flush(),
           reconnect: () => this.agent.start(this.settings, this.resources, async google => { this.settings.google = google; await this.store.write(this.settings); }),
           install: prepare => this.updates.install(prepare, this.allowQuit),
@@ -213,20 +235,104 @@ export class Manager {
     if(failed) { const problem=problemFor(failure,{domain:"storage",stage:failureStage,outcome:this.settings.dataRoot!==originalRoot?"partial":"rejected"});throw new AppError(problem.code,problem.message,400,problem); }
   }
   /** 修复已停止的自有 OBS 时，只排除目标旧端口检查，云端维护仍必须确认。 */
-  private async maintenanceForRepair(id: string) {
-    await assertLocalIdle({ ...this.settings, instances: this.settings.instances.filter(i => i.id !== id) });
+  private async maintenanceForRepair(id: string, verifiedIdle?: IdleEvidence) {
+    await assertLocalIdle(this.settings, id);
     if (!this.settings.paired) return;
     this.settings.maintenance ||= randomBytes(32).toString("hex"); await this.store.write(this.settings);
-    await this.agent.rpc("maintenance-begin", { token: this.settings.maintenance });
+    try { await this.agent.rpc("maintenance-begin", { token: this.settings.maintenance, ...(verifiedIdle && { verifiedIdle }) }); }
+    catch (error) { if (verifiedIdle && isAppError(error) && [400, 404].includes(error.status) && ["ROUTE", "PROTOCOL", "CLOUD_REQUEST"].includes(error.code)) throw new AppError("CLOUD_VERSION", "Cloud 尚不支持本机空闲核验，请升级 Cloud 后重试；没有绕过维护保护。"); throw error; }
   }
-  /** 候选手动连接可修正；正式配对实例仍要求用户在 OBS 恢复原设置。 */
+  /** 先以新参数核对空闲与场景，正式实例经维护后原子替换；失败保留旧凭据。 */
   private async repair(input: Record<string, unknown>) {
     const value = z.object({ id: idSchema, port: z.number().int().min(1024).max(65535), password: z.string().min(1).max(256) }).parse(input);
-    const item = this.settings.candidates?.find(i => i.id === value.id);
-    if (!item || item.managed) throw new AppError("DESKTOP", "只能修正尚未提交的手动 OBS 连接信息。");
+    const item = [...this.settings.instances, ...(this.settings.candidates || [])].find(i => i.id === value.id);
+    if (!item || item.managed) throw new AppError("DESKTOP", "请选择手动接入的 OBS。");
     if ([...this.settings.instances, ...(this.settings.candidates || [])].some(i => i.id !== item.id && i.port === value.port)) throw new AppError("DESKTOP", "端口已被其他实例使用。");
-    Object.assign(item, { port: value.port, password: value.password }); await this.store.write(this.settings);
-    await this.configure("prepare", { id: item.id });
+    if (!item.initialized) {
+      const next = { ...this.settings, candidates: this.settings.candidates?.map(i => i.id === item.id ? { ...i, port: value.port, password: value.password } : i) };
+      await this.store.write(next); this.settings = next;
+      await this.configure("prepare", { id: item.id }); return;
+    }
+    const proposed = { ...item, port: value.port, password: value.password };
+    const next = { ...this.settings, instances: this.settings.instances.map(i => i.id === item.id ? proposed : i) };
+    const verified = await assertLocalIdle(next);
+    try {
+      await this.maintenanceForRepair(item.id, verified?.get(item.id));
+      next.maintenance = this.settings.maintenance;
+      await assertLocalIdle(next);
+      await initializeObs(next, proposed, this.resources, stage => this.activity.progress(stage));
+      await this.store.write(next); this.settings = next;
+    } catch (error) { await this.recoverConfiguration(error, next); }
+    await this.commitInstances();
+  }
+  /** 名称是显示元数据；无需维护或重启 Agent，磁盘/云端失败保留原名称供重试。 */
+  private async rename(input: Record<string, unknown>) {
+    const value = z.object({ id: idSchema, name: z.string().trim().min(1).max(80) }).parse(input);
+    const item = this.settings.instances.find(i => i.id === value.id);
+    if (!item) throw new AppError("DESKTOP", "OBS 不存在。");
+    const previous = this.settings;
+    const next = { ...previous, instances: previous.instances.map(i => i.id === value.id ? { ...i, name: value.name } : i) };
+    await this.store.write(next);
+    try { if (next.paired) await this.agent.rpc("instance-rename", value); }
+    catch (error) { await this.store.write(previous); throw error; }
+    this.settings = next;
+  }
+  /** 恢复仅恢复可编辑身份；不启动 OBS，也不依赖归档中的旧密码。 */
+  private async restoreCandidate(input: Record<string, unknown>) {
+    const id = idSchema.parse(input.id); const item = this.settings.archivedCandidates?.find(i => i.id === id);
+    if (!item || this.settings.instances.some(i => i.id === id) || this.settings.candidates?.some(i => i.id === id)) throw new AppError("DESKTOP", "候选已恢复或已有同名实例，请重新读取。");
+    if (this.settings.instances.length + (this.settings.candidates?.length || 0) >= 64) throw new AppError("DESKTOP", "同机最多 64 个实例。");
+    const next = { ...this.settings, archivedCandidates: this.settings.archivedCandidates?.filter(i => i !== item), candidates: [...(this.settings.candidates || []), item] };
+    await this.store.write(next); this.settings = next;
+  }
+  /** 首次手动候选从未提交云端时可显式改用内置方案；旧外部程序与记录完整保留。 */
+  private async replaceCandidate(input: Record<string, unknown>) {
+    const item = this.settings.archivedCandidates?.find(i => i.id === input.id);
+    if (!item || item.id !== "main" || item.managed || item.initialized || this.settings.paired || this.settings.instances.length || this.settings.candidates?.length) throw new AppError("DESKTOP", "仅未配对的首个手动候选可以改用内置 OBS。");
+    const candidate = await newInstance({ ...this.settings, instances: [] });
+    const next = { ...this.settings, candidates: [candidate], archivedCandidates: this.settings.archivedCandidates?.filter(i => i !== item), abandonedCandidates: [...(this.settings.abandonedCandidates || []), item] };
+    await this.store.write(next); this.settings = next;
+    await this.configure("prepare", { id: candidate.id });
+  }
+  /** 退休正式非 main 实例；维护核对后云端释放活跃归属，本机只归档记录、保留文件与授权。 */
+  private async retire(input: Record<string, unknown>) {
+    const id = idSchema.parse(input.id); const item = this.settings.instances.find(i => i.id === id);
+    if (!item || id === "main") throw new AppError("DESKTOP", "首个 OBS 保留为主实例，请修复或恢复其程序文件；只能退役其他实例。");
+    if (input.confirmed !== true) throw new AppError("INPUT", "请确认退役此 OBS，文件、授权与历史将保留。");
+    await this.maintenance();
+    const next = { ...this.settings, instances: this.settings.instances.filter(i => i.id !== id), retiredInstances: [...(this.settings.retiredInstances || []), item], retirementPending: id };
+    // 先保存恢复意图；网络回复丢失后仍能沿同一目标重试，不删除任何目录。
+    await this.store.write(next); this.settings = next;
+    await this.completeRetirement();
+  }
+  /** 云端退休幂等确认后才切换 Agent 清单，失败保留维护凭据与明确恢复意图。 */
+  private async completeRetirement() {
+    const id = this.settings.retirementPending; if (!id) return;
+    if (this.settings.paired) await this.agent.rpc("instance-retire", { id, token: this.settings.maintenance });
+    const next = { ...this.settings }; delete next.retirementPending;
+    await this.store.write(next); this.settings = next;
+    await this.commitInstances();
+  }
+  /** 重启后先只读核对云端库存，回复丢失不会让旧实例复活或永久卡住新会话。 */
+  private async recoverRetirement() {
+    const id = this.settings.retirementPending!;
+    if (!this.settings.paired || !this.settings.identity) {
+      const next = { ...this.settings }; delete next.retirementPending; await this.store.write(next); this.settings = next; return;
+    }
+    const identity = this.settings.identity;
+    const response = await net.fetch(identity.origin + "/api/agent/instance-inventory", { method: "POST", headers: { "Content-Type": "application/json", "x-livepilot-agent": identity.agentId, Authorization: "Bearer " + identity.token }, body: "{}" });
+    if (!response.ok) throw new AppError("MAINTENANCE", response.status === 404 ? "Cloud 尚不支持库存恢复，请升级 Cloud 后重新连接；退役记录与维护凭据已保留。" : "暂时无法确认云端库存，请恢复网络后重新连接；退役记录已保留。");
+    const parsed = z.object({ instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) })).min(1), retiredInstanceIds: z.array(idSchema) }).safeParse(await response.json());
+    if (!parsed.success || !parsed.data.instances.some(i => i.id === "main") || parsed.data.instances.some(i => parsed.data.retiredInstanceIds.includes(i.id))) throw new AppError("MAINTENANCE", "Cloud 库存恢复协议不匹配，请升级 Cloud 并重试；没有修改本机身份。");
+    const active = parsed.data.instances.some(i => i.id === id);
+    if (!active && !parsed.data.retiredInstanceIds.includes(id)) throw new AppError("MAINTENANCE", "云端尚未确认此实例的退役结果，请保留配置并联系支持。");
+    const saved = this.settings.retiredInstances?.find(i => i.id === id);
+    if (active && !saved) throw new AppError("MAINTENANCE", "缺少原实例恢复记录，未猜测或创建配置。");
+    const next = { ...this.settings, instances: active ? [...this.settings.instances, saved!] : this.settings.instances, retiredInstances: active ? this.settings.retiredInstances?.filter(i => i.id !== id) : this.settings.retiredInstances };
+    const local = next.instances.map(i => i.id).sort(); const remote = parsed.data.instances.map(i => i.id).sort();
+    if (JSON.stringify(local) !== JSON.stringify(remote)) throw new AppError("MAINTENANCE", "云端与原本机清单不一致，请保留配置并联系支持。");
+    delete next.retirementPending; await this.store.write(next); this.settings = next;
+    this.message = active ? "上次退役尚未提交，原实例已恢复；确认状态后可重新退役。" : "已核对上次退役完成，文件与授权保留。";
   }
   /** 仅在维护窗口改变实例；取消文件选择不留下维护锁。 */
   private async configure(action: string, input: Record<string, unknown>) {

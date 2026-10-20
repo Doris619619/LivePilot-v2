@@ -54,7 +54,7 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     queue.records = queue.records.filter(r => r.kind === "control" || !terminal(r.status) || r.updatedAt > Date.now() - 600_000 || !!activities["upload:" + uploadId(r)]);
     const record: TaskRecord = { ...target, customer: destination.owner, id, actor, kind: payload.kind, action: payload.kind === "control" ? payload.input.action : payload.kind, fingerprint: hash, payload: seal(payload), status: "queued", createdAt: Date.now(), updatedAt: Date.now(), expiresAt: Date.now() + ACCEPT_MS };
     if (payload.kind === "upload-status") record.uploadStable = !queue.records.some(r => uploadId(r) === payload.uploadId && r.kind !== "upload-status" && !terminal(r.status));
-    await trackActivity(target.agentId, payload.kind, target.instanceId, "uploadId" in payload ? payload.uploadId : undefined);
+    await trackActivity(target.agentId, payload.kind, target.instanceId, "uploadId" in payload ? payload.uploadId : undefined, id);
     queue.records.push(record); await store.write("tasks.json", queue); return record;
   }, "tasks.lock");
 }
@@ -106,7 +106,7 @@ export async function reportTasks(agentId: string, reports: TaskReport[]) {
         record.updatedAt = Date.now(); record.message = report.error; record.httpStatus = report.httpStatus; record.problem = report.problem && {...report.problem,target:{agentId,instanceId:record.instanceId},attemptId:record.id};
         if (report.status === "succeeded") {
           record.result = seal(resultFor(record, report.result)); const p = unseal<TaskPayload>(record.payload);
-          await finishActivity(agentId, p.kind, record.instanceId, "uploadId" in p ? p.uploadId : undefined);
+          await finishActivity(agentId, p.kind, record.instanceId, "uploadId" in p ? p.uploadId : undefined, queue.records, p.kind === "oauth-finish" ? p.cookie : undefined);
         }
       }
       if (terminal(record.status)) acknowledged.push(report.id);

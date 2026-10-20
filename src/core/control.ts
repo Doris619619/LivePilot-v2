@@ -1,6 +1,7 @@
 /** 本地运行核心：供 Windows Agent 和本地控制台共同使用。 */
 import { randomBytes } from "node:crypto";
 import type { ControlState, Selection } from "@/shared/types";
+import { hasPendingBroadcast } from "@/shared/broadcast-recovery";
 import type { ObsRuntime } from "./obs/runtime";
 import type { YouTubePort } from "./youtube/api";
 import { Store } from "./storage";
@@ -23,12 +24,16 @@ export class Control {
     try { return await this.storage.exclusive(fn); }
     finally { this.busy = false; }
   }
-  private async operation(fn: (state: ControlState) => Promise<void>) {
+  /** 开播前的只读校验失败保留上一场终态；一旦新场进入 starting，失败仍持久化为待恢复。 */
+  private async operation(fn: (state: ControlState) => Promise<void>, preserveTerminal = false) {
     return this.exclusive(async () => {
       const state = await this.state();
+      const wasTerminal = ["idle", "stopped"].includes(state.phase);
       try { await fn(state); }
       catch (error) {
-        await this.save(state, { phase: "error", error: safeError(error) });
+        if (!(preserveTerminal && wasTerminal && ["idle", "stopped"].includes(state.phase))) {
+          await this.save(state, { phase: "error", error: safeError(error) });
+        }
         throw error;
       }
       return state;
@@ -40,19 +45,20 @@ export class Control {
   /** 固化本次媒体与直播详情；详情准备失败时不启动推流，重试复用相同场次。 */
   async start(selection: Selection) {
     return this.operation(async state => {
+      const newSession = ["idle", "stopped"].includes(state.phase);
       const channel = await this.youtube.channel();
       if (state.channelId && state.channelId !== channel.id && state.phase !== "stopped") throw new AppError("CHANNEL", "请连接原直播使用的 Channel 后先结束该场次。");
-      let current = state.broadcastId ? await this.youtube.broadcast(state.broadcastId) : null;
-      if (state.broadcastId && (!current || current.status.lifeCycleStatus === "complete") && state.phase !== "stopped") {
+      let current = !newSession && state.broadcastId ? await this.youtube.broadcast(state.broadcastId) : null;
+      if (!newSession && state.broadcastId && (!current || current.status.lifeCycleStatus === "complete")) {
         throw new AppError("RECOVER", "该场次已结束或被删除。请先点击结束直播，确认 OBS 已停止后再创建下一场。");
       }
-      if (state.phase === "stopped" || state.phase === "idle") {
+      if (newSession) {
         const oldStream = state.channelId === channel.id ? state.streamId : undefined;
         Object.keys(state).forEach(key => { delete (state as unknown as Record<string, unknown>)[key]; });
         Object.assign(state, initialState(), { channelId: channel.id, streamId: oldStream });
         current = null;
       }
-      if (state.selection && state.broadcastTitle && JSON.stringify(state.selection) !== JSON.stringify(selection)) throw new AppError("RECOVER", "恢复当前场次时请保留原媒体与直播详情，或先结束当前场次再更换。");
+      if (state.selection && hasPendingBroadcast(state) && JSON.stringify(state.selection) !== JSON.stringify(selection)) throw new AppError("RECOVER", "恢复当前场次时请保留原媒体与直播详情，或先结束当前场次再更换。");
       const files = await this.media(selection);
       await this.applyChat?.(selection);
       await this.save(state, { phase: "starting", stage: "准备 OBS", error: undefined, channelId: channel.id, selection });
@@ -97,6 +103,14 @@ export class Control {
         await this.youtube.prepareBroadcast(state.broadcastId!, selection.broadcast);
         await this.save(state, { detailsApplied: true });
       }
+      let stream = state.streamId ? await this.youtube.stream(state.streamId) : null;
+      // 只有权威查询确认不存在且 OBS 已停、广播尚未开播，才替换失效引用；网络异常会原样向上抛出。
+      if (state.streamId && !stream) {
+        if (obs.streaming !== false || ["live", "liveStarting"].includes(current.status.lifeCycleStatus)) {
+          throw new AppError("RECOVER", "推流对象已不存在，但当前推流状态尚未安全结束。请先核对并结束原场次。");
+        }
+        await this.save(state, { streamId: undefined, streamTitle: undefined, streamIntent: false, stage: "修复失效的推流连接" });
+      }
       if (!state.streamId) {
         if (state.streamIntent) {
           const found = await this.youtube.findStream(state.streamTitle!);
@@ -109,7 +123,7 @@ export class Control {
           await this.save(state, { streamId: created.id, streamIntent: false });
         }
       }
-      const stream = await this.youtube.stream(state.streamId!);
+      stream ||= await this.youtube.stream(state.streamId!);
       if (!stream) throw new AppError("RECOVER", "当前推流对象已不存在，请先结束当前场次。");
       if (stream.status.streamStatus === "active" && !state.obsStartRequested) throw new AppError("INGEST_BUSY", "此推流对象已被其他推流占用，请先在 YouTube Studio 核对。");
       if (current.contentDetails?.boundStreamId !== state.streamId) {
@@ -135,7 +149,7 @@ export class Control {
       const confirmedObs = await this.obs.status();
       if (!confirmedObs.ready || !confirmedObs.streaming) throw new AppError("OBS_LOST", "YouTube 已开播，但 OBS 推流状态异常。请立即检查或结束该场次。");
       await this.save(state, { phase: "live", stage: "直播中", startedAt: live!.snippet.actualStartTime || new Date().toISOString(), error: undefined });
-    });
+    }, true);
   }
   async stop() {
     return this.operation(async state => {

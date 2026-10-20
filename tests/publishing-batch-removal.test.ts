@@ -9,7 +9,7 @@ vi.mock("@/cloud/tasks", async importOriginal => ({ ...await importOriginal<type
 import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, setAgentOwner } from "@/cloud/agents";
 import { cloudStore } from "@/cloud/store";
 import { accessStore, digest, emptyAccess } from "@/server/access";
-import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, confirmPublishingBatch, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingBatch, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, removePublishingBatch, reportPublishing, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
+import { acceptPublishingPrivacy, archivePublishingPlan, changePublishingJob, chargePublishing, confirmPublishingBatch, confirmPublishingPlan, confirmPublishingReschedule, previewPublishingBatch, previewPublishingPlan, previewPublishingReschedule, publishingStore, publishingTick, publishingView, removePublishingBatch, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy, savePublishingProfile, updatePublishingPlan } from "@/cloud/publishing";
 import { createPublishingAccount, claimPublishingAccount } from "@/cloud/publishing-accounts";
 import { finishBatchRemovals, safeRemovalJob, type BatchRemovalRecord } from "@/cloud/publishing-removal";
 import { POST } from "@/app/api/publishing/route";
@@ -103,8 +103,15 @@ it("removes an unconfirmed draft without creating tasks and never allows later c
   const { plan: p } = await plan(false); await expect(removePublishingBatch(alice, p.id)).resolves.toMatchObject({ state: "complete" });
   await expect(confirmPublishingPlan(alice, p.id, p.revision, false, true)).rejects.toMatchObject({ code: "BATCH_REMOVAL" }); expect((await saved()).jobs).toEqual([]);
 });
-it("retains an orphan pending marker after original authorization cleanup instead of declaring empty success", async () => {
+/** 授权失败保留原任务及删除意图，不会自动清理，也不能把待确认取消误判成完成。 */
+it("preserves original jobs and pending removal after an authorization failure without automatic cleanup", async () => {
   const b = await flat(); await removePublishingBatch(alice, b.id); await report(b.jobs[0], "needs_attention", { authorizationInvalid: true }); const view = await publishingView(alice);
+  expect(view.jobs).toHaveLength(3); expect(view.cleanups).toEqual([]); expect(view.accounts.find(account => account.id === profile.accountId)?.status).toBe("needs_reauthorization"); expect(view.removals).toEqual([{ batchId: b.id, requestedAt: Date.now(), name: profile.name }]);
+  await acceptPublishingPrivacy(alice, PRIVACY_VERSION); expect((await saved()).removals[0].completedAt).toBeUndefined(); expect((await saved()).removals[0].jobIds).toHaveLength(3);
+});
+/** 用户主动清理仍会移除授权数据；孤儿删除标记继续等待，不能以任务列表为空声称安全完成。 */
+it("retains an orphan pending marker after explicit authorization cleanup instead of declaring empty success", async () => {
+  const b = await flat(); await removePublishingBatch(alice, b.id); await requestPublishingAccountCleanup(alice, profile.accountId!); const view = await publishingView(alice);
   expect(view.jobs).toEqual([]); expect(view.cleanups[0].state).toBe("pending"); expect(view.removals).toEqual([{ batchId: b.id, requestedAt: Date.now(), name: profile.name }]);
   await acceptPublishingPrivacy(alice, PRIVACY_VERSION); expect((await saved()).removals[0].completedAt).toBeUndefined(); expect((await saved()).removals[0].jobIds).toHaveLength(3);
 });

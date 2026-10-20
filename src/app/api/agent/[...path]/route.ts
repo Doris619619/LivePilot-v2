@@ -19,6 +19,7 @@ import { pollTasks, reportTasks } from "@/cloud/tasks";
 import { claimChannel } from "@/cloud/bindings";
 import { downloadSlot } from "@/cloud/relay";
 import { beginMaintenance, changeMaintenance } from "@/cloud/maintenance";
+import { instanceInventory, renameInstance, retireInstance } from "@/cloud/instance-inventory";
 import { pollPreview, acceptPreview } from "@/cloud/preview-relay";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,7 +61,9 @@ export async function POST(request: Request, context: Context) {
       const customer = await authenticate(request, true);
       return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId, customer.username));
     }
-    const agent = await authenticateAgent(request, route !== "session");
+    const agent = await authenticateAgent(request, !["session", "instance-inventory"].includes(route));
+    // 只读库存可在会话建立前核对；仍要求当前设备 Bearer，任何写入仍要求有效会话。
+    if (route === "instance-inventory") { z.object({}).strict().parse(raw); return Response.json(await instanceInventory(agent.id), { headers: { "Cache-Control": "no-store" } }); }
     // 部署环境的 AI Key 仅交给已配对且持有有效会话的 Agent，不接受浏览器或缓存。
     if (route === "account-ai-environment") {
       z.object({}).strict().parse(raw);
@@ -77,7 +80,9 @@ export async function POST(request: Request, context: Context) {
     if (route === "publishing/quota") { const v = z.object({ id: uuidSchema, receipt: uuidSchema, units: z.number().int().min(0).max(400), upload: z.boolean() }).strict().parse(raw); return Response.json(await chargePublishing(agent.id, v.id, v.receipt, v.units, v.upload)); }
     if (route === "publishing/cleanup") { const v = z.object({ id: uuidSchema }).strict().parse(raw); return Response.json(await completePublishingCleanup(agent.id, v.id)); }
     // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。
-    if (route === "maintenance-begin") { const value = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(raw); return Response.json(await beginMaintenance(agent.id, value.token)); }
+    if (route === "maintenance-begin") { const value = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), verifiedIdle: z.object({ instanceId: idSchema, observedAt: z.number(), basis: z.enum(["obs-status", "process-stopped"]) }).strict().optional() }).strict().parse(raw); return Response.json(await beginMaintenance(agent.id, value.token, value.verifiedIdle)); }
+    if (route === "instance-rename") { const value = z.object({ id: idSchema, name: z.string().trim().min(1).max(80) }).strict().parse(raw); return Response.json(await renameInstance(agent.id, value.id, value.name)); }
+    if (route === "instance-retire") { const value = z.object({ id: idSchema, token: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(raw); return Response.json(await retireInstance(agent.id, value.id, value.token)); }
     if (route === "maintenance-end" || route === "instances") {
       const value = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64).optional() }).strict().parse(raw);
       if ((route === "instances") !== !!value.instances || (value.instances && new Set(value.instances.map(i => i.id)).size !== value.instances.length)) throw new AppError("INPUT", "实例清单无效。");
@@ -91,7 +96,7 @@ export async function POST(request: Request, context: Context) {
       return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret }, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2"])).max(5).optional() }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2", "publishing-recovery-v1"])).max(6).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
@@ -105,8 +110,8 @@ export async function POST(request: Request, context: Context) {
       return Response.json({ acknowledged });
     }
     if (route === "bindings") {
-      const value = z.object({ instanceId: idSchema, channelId: z.string().min(1).max(128), confirm: z.boolean() }).strict().parse(raw);
-      await claimChannel({ agentId: agent.id, instanceId: value.instanceId }, value.channelId, value.confirm); return Response.json({ ok: true });
+      const value = z.object({ instanceId: idSchema, channelId: z.string().min(1).max(128), confirm: z.boolean(), claimId: uuidSchema.optional() }).strict().parse(raw);
+      return Response.json(await claimChannel({ agentId: agent.id, instanceId: value.instanceId }, value.channelId, value.confirm, value.claimId));
     }
     throw new AppError("ROUTE", "设备接口不存在。", 404);
   } catch (e) { if (e instanceof z.ZodError) return failed(new AppError("PROTOCOL", "设备协议不匹配或请求无效。")); return failed(e); }

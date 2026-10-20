@@ -21,6 +21,7 @@ async function fixture() {
   let streaming = false;
   let broadcast: Broadcast | null = null;
   let stream: Stream | null = null;
+  let streamCount = 0;
   const obs: ObsRuntime = {
     status: vi.fn(async () => ({ ready: true, running: true, streaming })),
     ensureReady: vi.fn(async () => { events.push("ready"); }),
@@ -28,17 +29,17 @@ async function fixture() {
     setMedia: vi.fn(async () => { events.push("media"); }),
     setStream: vi.fn(async () => { events.push("settings"); }),
     startStream: vi.fn(async () => { events.push("obs-start"); streaming = true; if (stream) stream.status.streamStatus = "active"; }),
-    stopStream: vi.fn(async () => { events.push("obs-stop"); streaming = false; }),
+    stopStream: vi.fn(async () => { events.push("obs-stop"); streaming = false; if (stream) stream.status.streamStatus = "inactive"; }),
   };
   const yt: YouTubePort = {
     channel: vi.fn(async () => ({ id: "channel", title: "My channel" })),
     broadcast: vi.fn(async () => { events.push("read-broadcast"); return broadcast ? structuredClone(broadcast) : null; }),
     stream: vi.fn(async () => stream ? structuredClone(stream) : null),
     createBroadcast: vi.fn(async title => { events.push("create"); broadcast = { id: "b1", snippet: { title }, status: { lifeCycleStatus: "ready" }, contentDetails: {} }; return structuredClone(broadcast); }),
-    createStream: vi.fn(async title => { events.push("stream"); stream = { id: "s1", snippet: { title }, status: { streamStatus: "inactive" }, cdn: { ingestionInfo: { streamName: "SECRET_STREAM_KEY", rtmpsIngestionAddress: "rtmps://example.test/live" } } }; return structuredClone(stream); }),
+    createStream: vi.fn(async title => { events.push("stream"); stream = { id: "s" + ++streamCount, snippet: { title }, status: { streamStatus: "inactive" }, cdn: { ingestionInfo: { streamName: "SECRET_STREAM_KEY", rtmpsIngestionAddress: "rtmps://example.test/live" } } }; return structuredClone(stream); }),
     findBroadcast: vi.fn(async () => broadcast ? structuredClone(broadcast) : null),
     findStream: vi.fn(async () => stream ? structuredClone(stream) : null),
-    bind: vi.fn(async () => { events.push("bind"); broadcast!.contentDetails = { boundStreamId: "s1" }; }),
+    bind: vi.fn(async (_id, streamId) => { events.push("bind"); broadcast!.contentDetails = { boundStreamId: streamId }; }),
     transition: vi.fn(async (_, target) => { events.push(target); broadcast!.status.lifeCycleStatus = target; }),
   };
   const fastWait: typeof waitFor = async (read, accept, message) => {
@@ -48,7 +49,7 @@ async function fixture() {
   };
   const media = vi.fn(async () => ({ video: "D:/media/videos/study.mp4", music: "D:/media/music/lofi.mp3" }));
   const control = new Control(obs, yt, storage, media, fastWait);
-  return { control, storage, obs, yt, events, media, fastWait, setStreaming: (v: boolean) => { streaming = v; }, setLifecycle: (v: string) => { broadcast!.status.lifeCycleStatus = v; } };
+  return { control, storage, obs, yt, events, media, fastWait, setStreaming: (v: boolean) => { streaming = v; }, setLifecycle: (v: string) => { broadcast!.status.lifeCycleStatus = v; }, deleteStream: () => { stream = null; } };
 }
 describe("one-button lifecycle", () => {
   it("starts in order, confirms live, persists no stream key, completes before stopping OBS", async () => {
@@ -203,6 +204,32 @@ describe("one-button lifecycle", () => {
     const f = await fixture(); vi.mocked(f.yt.createBroadcast).mockRejectedValue(new AppError("NETWORK", "uncertain"));
     await expect(f.control.start(selection)).rejects.toThrow();
     await expect(f.control.start({ ...selection, videoAudio: true })).rejects.toThrow("保留原媒体");
+  });
+  /** 丢失推流对象只替换该引用；不得要求用户反复结束，也不额外创建待播广播。 */
+  it("repairs an authoritatively deleted stream on the next broadcast", async () => {
+    const f = await fixture(); await f.control.start(selection); await f.control.stop(); f.deleteStream();
+    const next = { ...selection, video: "second.mp4", music: "second.mp3", videoAudio: true };
+    expect((await f.control.start(next)).phase).toBe("live");
+    expect((await f.control.state()).streamId).toBe("s2");
+    expect(f.yt.createStream).toHaveBeenCalledTimes(2);
+    expect(f.yt.createBroadcast).toHaveBeenCalledTimes(2);
+    expect(f.yt.bind).toHaveBeenLastCalledWith("b1", "s2");
+  });
+  /** 读取暂时失败不是权威删除，不得替换原推流对象或重复创建场次。 */
+  it("retains a known stream when its lookup fails temporarily", async () => {
+    const f = await fixture(); await f.control.start(selection); await f.control.stop();
+    vi.mocked(f.yt.stream).mockRejectedValueOnce(new AppError("NETWORK", "暂时无法查询"));
+    await expect(f.control.start(selection)).rejects.toThrow("暂时无法查询");
+    expect((await f.control.state()).streamId).toBe("s1"); expect(f.yt.createStream).toHaveBeenCalledTimes(1);
+  });
+  /** 新命令尚未产生副作用时，前置读取失败不能撤销前一场的已结束事实。 */
+  it("preserves the completed session when the next channel preflight fails", async () => {
+    const f = await fixture(); await f.control.start(selection); await f.control.stop();
+    const old = await f.control.state(); vi.mocked(f.yt.channel).mockRejectedValueOnce(new AppError("NETWORK", "频道暂时不可读"));
+    const next = { ...selection, video: "second.mp4" };
+    await expect(f.control.start(next)).rejects.toThrow("频道暂时不可读");
+    expect(await f.control.state()).toEqual(old);
+    expect((await f.control.start(next)).selection?.video).toBe("second.mp4");
   });
   it("persisted errors retain the last real stage", async () => {
     const f = await fixture(); vi.mocked(f.obs.validate).mockRejectedValue(new Error("private raw error"));

@@ -7,7 +7,7 @@ import { seal, unseal, Store } from "../storage";
 import { AppError, safeError, sleep } from "../errors";
 import type { Service } from "../service";
 import { VideoApi, VideoApiError, type VideoPort, type VideoResource } from "../youtube/video-api";
-import { type JobSpec, type PublishingReport, type MediaAsset, type PackageBatch, type ContentPackage, jobSpecSchema, publishingTerminal } from "@/shared/publishing";
+import { type JobSpec, type PublishingReport, type MediaAsset, type PackageBatch, type ContentPackage, jobSpecSchema, publishingTerminal, samePublishingSourceProfile } from "@/shared/publishing";
 import { PublishingStore } from "./storage";
 import { validateAsset, resolvePublishingThumbnail } from "./assets";
 import { publishingMetadata } from "./metadata";
@@ -17,7 +17,7 @@ import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
 import type { YouTubeAuth } from "../youtube/auth";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
-type Entry = { preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number; precisionRecoveryCandidate?: string } };
+type Entry = { repairPending?: boolean; preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number; precisionRecoveryCandidate?: string } };
 type Reconciliation = { entry: Entry; revision: number; videoId?: string };
 type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
 /** YouTube 按秒回读排期；兼容旧毫秒候选和等价 RFC3339 格式，但不接受跨秒或无效时间。 */
@@ -85,7 +85,8 @@ export class PublishingRunner {
   private async applyOnce(value: JobSpec) {
     await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
-    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
+    const repairing = !!old && spec.repairRevision === spec.revision && old.report.state === "needs_attention" && !!old.report.videoId && spec.desired === "run" && samePublishingSourceProfile(old.spec.profile, spec.profile);
+    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || !repairing && JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
     // 查询修订只保存最新意图和持久查询请求，不能以 run 标记恢复暂停、异常或重做发布设置。
     if (spec.reconcileRevision === spec.revision) {
       const entry: Entry = old || { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "needs_attention", offset: 0, total: spec.reconcileTotal || spec.asset.size, updatedAt: this.now() }, expiredData: true, playlistsDone: [], failures: 0 };
@@ -100,7 +101,11 @@ export class PublishingRunner {
       const rescheduled = spec.desired !== "cancel" && old.spec.originalPublishAt !== spec.originalPublishAt;
       const rescheduleRejected = rescheduled && (publishingTerminal(old.report.state) || old.report.state === "needs_attention");
       if (rescheduled && !rescheduleRejected && old.report.videoId) old.reschedulePreviousAt ??= old.report.effectivePublishAt || old.spec.originalPublishAt;
-      old.spec = spec; if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
+      if (repairing) {
+        if (old.spec.profile.thumbnailMode !== spec.profile.thumbnailMode || old.spec.profile.thumbnailFilename !== spec.profile.thumbnailFilename) old.thumbnailDone = false;
+        old.playlistsDone = old.playlistsDone.filter(id => spec.profile.playlistIds.includes(id)); old.finalized = false; old.resumeState = "finalizing"; old.repairPending = true;
+      }
+      old.spec = spec; if (spec.desired === "run") old.report.authorizationInvalid = undefined; if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
       if (rescheduleRejected) { old.report.message = old.report.state === "published" ? "视频已公开，改期未应用。" : "任务已结束或需要人工处理，改期未应用。"; if (["published", "completed"].includes(old.report.state)) old.report.nextAttemptAt = this.now() + 25 * 86400_000; }
       else {
         if (spec.desired !== "run" && old.report.state === "needs_attention") old.report.state = old.report.videoId ? "processing" : "ready";
@@ -197,6 +202,12 @@ export class PublishingRunner {
     if (entry.spec.desired === "pause") { if (entry.report.state !== "paused") { entry.resumeState = entry.report.state === "retry_wait" ? entry.resumeState : entry.report.state; await this.update(entry, { state: "paused", nextAttemptAt: undefined }); } return; }
     if (entry.spec.contentPackage && !entry.finalUpload && !entry.report.videoId && (entry.session || entry.finalChunkPossible)) throw new AppError("UPLOAD_UNCERTAIN", "最终文件检查点缺失，禁止重新生成和重复上传。");
     const api = this.api(entry); await this.checkChannel(entry);
+    if (entry.repairPending && entry.report.videoId) {
+      const current = (await api.list([entry.report.videoId]))[0];
+      if (!current || current.snippet?.channelId && current.snippet.channelId !== entry.spec.profile.channelId) throw new AppError("REPAIR", "原视频暂时无法安全核对，请保留原任务并检查频道。", 409);
+      if (current.status?.privacyStatus === "public") { entry.repairPending = false; await this.alreadyPublic(entry); return; }
+      entry.repairPending = false; await this.save();
+    }
     if (entry.spec.desired === "cancel") {
       if (entry.report.state === "cancelled") return;
       const cancellingRevision = entry.spec.revision;

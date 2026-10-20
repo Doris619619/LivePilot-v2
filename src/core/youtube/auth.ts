@@ -105,11 +105,11 @@ export class YouTubeAuth {
     if (expectedChannel && channel.id !== expectedChannel) throw new AppError("CHANNEL", "当前有未结束场次，请重新授权原 Channel。");
     await this.save({ accessToken: reply.access_token!, refreshToken: reply.refresh_token, expiresAt: Date.now() + (reply.expires_in || 3600) * 1000, channelId: channel.id, channel: channel.snippet.title } satisfies Tokens);
   }
-  /** 返回有效授权或去重刷新；写入时避免覆盖已更新的频道凭据。 */
-  async access(): Promise<Tokens> {
+  /** 返回有效授权；API明确拒绝某个access token时受控刷新，新授权已替换的凭据不再刷新。 */
+  async access(rejectedAccessToken?: string): Promise<Tokens> {
     const tokens = await this.tokens();
     if (!tokens) throw new AppError("YOUTUBE_DISCONNECTED", "请先连接 YouTube。", 401);
-    if (tokens.expiresAt > Date.now() + 60_000) return tokens;
+    if (tokens.expiresAt > Date.now() + 60_000 && (!rejectedAccessToken || tokens.accessToken !== rejectedAccessToken)) return tokens;
     if (!this.refreshing) this.refreshing = (async () => {
       const c = config();
       const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, grant_type: "refresh_token", refresh_token: tokens.refreshToken });

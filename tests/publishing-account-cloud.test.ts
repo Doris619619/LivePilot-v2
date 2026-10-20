@@ -87,9 +87,9 @@ it("legacy cleanup preserves independent publishing records and directives shari
   expect((await publishingView(alice)).jobs.map(job => job.spec.id)).toEqual([independent.spec.id]); expect((await publishingView(alice)).jobs.some(job => job.spec.id === legacy.spec.id)).toBe(false); await completePublishingCleanup("pc", cleanup.id);
   expect((await agentStore("pc").read<{ records: { payload: string }[] }>("tasks.json"))?.records.map(record => publishingTaskAccountId(unseal<TaskPayload>(record.payload)))).toEqual([account.id]); expect((await agentPublishingAccounts("pc"))[0].status).toBe("connected");
 });
-it("turns an invalid grant into account-only cleanup without wiping peers", async () => {
+it("preserves both accounts and original work when one account needs reauthorization", async () => {
   const first = await connected("publish_a"); const second = await connected("publish_b"); const a = await jobFor(first); const b = await jobFor(second);
-  await reportPublishing("pc", [{ id: a.spec.id, revision: 1, sequence: 1, state: "needs_attention", offset: 0, total: a.spec.asset.size, updatedAt: Date.now(), authorizationInvalid: true }]); expect((await publishingView(alice)).jobs.map(job => job.spec.id)).toEqual([b.spec.id]); expect((await publishingAccountCleanups("pc"))[0].accountId).toBe(first.id);
+  await reportPublishing("pc", [{ id: a.spec.id, revision: 1, sequence: 1, state: "needs_attention", offset: 0, total: a.spec.asset.size, updatedAt: Date.now(), authorizationInvalid: true }]); expect((await publishingView(alice)).jobs.map(job => job.spec.id).sort()).toEqual([a.spec.id, b.spec.id].sort()); expect(await publishingAccountCleanups("pc")).toEqual([]); expect((await agentPublishingAccounts("pc")).find(account => account.id === first.id)?.status).toBe("needs_reauthorization");
 });
 it("never dispatches independent jobs to an old Agent or admits API work after token loss", async () => {
   const account = await connected("publish_a"); const job = await jobFor(account); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2"]); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();

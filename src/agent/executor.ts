@@ -34,9 +34,9 @@ export class Executor {
   constructor(private transport: Transport) {
     validateInstances();
     for (const id of instanceIds()) this.services.set(id, new Service(id, async (instanceId, tokens) => {
-      await transport.post("/api/agent/bindings", { instanceId, channelId: tokens.channelId, confirm: false });
+      const claim = await transport.post<{ claimId?: string }>("/api/agent/bindings", { instanceId, channelId: tokens.channelId, confirm: false });
       await saveChannelBinding(instanceId, tokens);
-      await transport.post("/api/agent/bindings", { instanceId, channelId: tokens.channelId, confirm: true });
+      await transport.post("/api/agent/bindings", { instanceId, channelId: tokens.channelId, confirm: true, ...(claim.claimId ? { claimId: claim.claimId } : {}) });
     }));
     this.publishingAccounts = new PublishingAccounts(async (accountId, instanceId, channel, confirm) => { await transport.post("/api/agent/publishing/accounts-binding", { accountId, instanceId, ...channel, confirm }); });
     this.publishing = new PublishingRunner(this.services, {

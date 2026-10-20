@@ -86,7 +86,7 @@ export class AgentHost {
     });
   }
   /** 维护 RPC 发送失败立即清理等待项，迟到的旧进程消息不影响新会话。 */
-  rpc<T>(route: "maintenance-begin" | "maintenance-end" | "instances", data: unknown): Promise<T> {
+  rpc<T>(route: "maintenance-begin" | "maintenance-end" | "instances" | "instance-rename" | "instance-retire", data: unknown): Promise<T> {
     const child = this.child;
     if (this.errorCode === "AGENT_AUTH") return Promise.reject(new AppError("AGENT_AUTH", this.message || "设备配对已失效，请在原电脑恢复配对后重试。"));
     if (!child?.connected) return Promise.reject(new AppError("AGENT_CONNECTION", "设备未连接，不能确认维护状态。"));

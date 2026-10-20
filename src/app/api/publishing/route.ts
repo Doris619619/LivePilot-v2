@@ -5,7 +5,7 @@ import { guard, failed } from "@/server/http";
 import { readJson } from "@/server/request-body";
 import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
-import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema } from "@/shared/publishing";
+import { profileSchema, policySchema, itemOverrideSchema, planRuleSchema, planItemSchema, publishingRepairSchema } from "@/shared/publishing";
 import { idSchema, uuidSchema } from "@/shared/remote";
 import { publishingView, publishingAssets, publishingPackages, previewPublishingPlan, updatePublishingPlan, previewPublishingReschedule, confirmPublishingReschedule, confirmPublishingPlan, archivePublishingPlan, removePublishingBatch, acceptPublishingPrivacy, savePublishingProfile, previewPublishingBatch, confirmPublishingBatch, changePublishingJob, savePublishingPolicy, requestPublishingCleanup, createPublishingAccount, connectPublishingAccount, requestPublishingAccountCleanup, publishingAccountPlaylists } from "@/cloud/publishing";
 import { publishingCopyOptionsSchema } from "@/shared/publishing-copy-options";
@@ -32,7 +32,7 @@ const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("profile"), profile: profileSchema }).strict(),
   z.object({ action: z.literal("preview"), profileId: uuidSchema, assetIds: z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1).max(1000) }).strict(),
   z.object({ action: z.literal("confirm"), batchId: uuidSchema, ai: z.boolean(), temporaryPrivateTitle: z.boolean(), overrides: z.array(itemOverrideSchema).max(1000).default([]) }).strict(),
-  z.object({ action: z.literal("job"), id: uuidSchema, operation: z.enum(["pause", "resume", "cancel", "reschedule", "reconcile"]), publishAt: z.string().datetime().optional() }).strict(),
+  z.object({ action: z.literal("job"), id: uuidSchema, operation: z.enum(["pause", "resume", "cancel", "reschedule", "reconcile", "repair"]), publishAt: z.string().datetime().optional(), repair: publishingRepairSchema.optional() }).strict(),
   z.object({ action: z.literal("policy"), policy: policySchema }).strict(),
   z.object({ action: z.literal("cleanup"), agentId: idSchema, instanceId: idSchema, confirmed: z.literal(true) }).strict(),
 ]);
@@ -62,7 +62,7 @@ export async function POST(request: Request) {
     else if (value.action === "profile") result = await savePublishingProfile(user, value.profile);
     else if (value.action === "preview") result = await previewPublishingBatch(user, value.profileId, value.assetIds);
     else if (value.action === "confirm") result = await confirmPublishingBatch(user, value.batchId, value.ai, value.temporaryPrivateTitle, value.overrides);
-    else if (value.action === "job") result = await changePublishingJob(user, value.id, value.operation, value.publishAt);
+    else if (value.action === "job") result = await changePublishingJob(user, value.id, value.operation, value.publishAt, value.repair);
     else if (value.action === "policy") result = await savePublishingPolicy(user, value.policy);
     else result = await requestPublishingCleanup(user, value.agentId, value.instanceId);
     return Response.json(result, { headers: { "Cache-Control": "no-store" } });

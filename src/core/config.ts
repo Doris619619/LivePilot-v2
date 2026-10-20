@@ -7,8 +7,8 @@ let environment: () => NodeJS.ProcessEnv = () => process.env;
 /** 在启动阶段安装配置来源，不在请求中修改其他设备的配置。 */
 export function configureCore(read: () => NodeJS.ProcessEnv) { environment = read; }
 /** 解析稳定实例 ID；ID 同时用于路由与存储目录，因此禁止路径字符。 */
-export function instanceIds(): string[] {
-  const ids = (environment().LIVEPILOT_INSTANCES || "main").split(",").map(id => id.trim());
+export function instanceIds(source = environment()): string[] {
+  const ids = (source.LIVEPILOT_INSTANCES || "main").split(",").map(id => id.trim());
   if (!ids.includes("main") || ids.some(id => !/^[a-z][a-z0-9_]{0,31}$/.test(id) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(id)) || new Set(ids).size !== ids.length) {
     throw new AppError("CONFIG", "LIVEPILOT_INSTANCES 必须包含 main，且使用不重复的小写字母、数字、下划线 ID。");
   }
@@ -16,8 +16,8 @@ export function instanceIds(): string[] {
 }
 
 /** 拒绝未知实例；任何写操作必须显式指定一个已配置的 ID。 */
-export function requireInstance(id: unknown): string {
-  if (typeof id !== "string" || !instanceIds().includes(id)) throw new AppError("INSTANCE", "实例不存在，请刷新设备列表；仍缺失时在原电脑的客户端检查 OBS 清单。", 400);
+export function requireInstance(id: unknown, source = environment()): string {
+  if (typeof id !== "string" || !instanceIds(source).includes(id)) throw new AppError("INSTANCE", "实例不存在，请刷新设备列表；仍缺失时在原电脑的客户端检查 OBS 清单。", 400);
   return id;
 }
 
@@ -25,12 +25,15 @@ export function requireInstance(id: unknown): string {
 export function instancePrefix(id: string) { return "LIVEPILOT_INSTANCE_" + id.toUpperCase() + "_"; }
 
 /** 读取指定实例配置；main 保留旧路径、授权及环境变量。Secret 仅供服务端使用。 */
-export function config(id = "main") {
-  requireInstance(id);
+export function config(id = "main") { return configFrom(id, environment()); }
+
+/** 解析调用方持有的配置快照，不改变进程配置来源；桌面并行检查不会删除其他目标。 */
+export function configFrom(id: string, source: NodeJS.ProcessEnv) {
+  requireInstance(id, source);
   const prefix = instancePrefix(id);
   /** main 兼容旧变量；其他实例绝不继承 main 的 OBS 密码或路径。 */
-  const obsValue = (suffix: string, legacy: string, fallback = "") => environment()[prefix + suffix] ?? (id === "main" ? environment()[legacy] : undefined) ?? fallback;
-  const origin = environment().LIVEPILOT_ORIGIN || "http://127.0.0.1:3010";
+  const obsValue = (suffix: string, legacy: string, fallback = "") => source[prefix + suffix] ?? (id === "main" ? source[legacy] : undefined) ?? fallback;
+  const origin = source.LIVEPILOT_ORIGIN || "http://127.0.0.1:3010";
   let publicUrl: URL;
   try { publicUrl = new URL(origin); } catch { throw new AppError("CONFIG", "LIVEPILOT_ORIGIN 地址无效。"); }
   if (publicUrl.origin !== origin || publicUrl.username || publicUrl.password || (publicUrl.protocol !== "https:" && !(publicUrl.protocol === "http:" && publicUrl.hostname === "127.0.0.1" && publicUrl.port))) throw new AppError("CONFIG", "公网地址必须使用 HTTPS；仅本机 127.0.0.1 允许 HTTP。");
@@ -38,18 +41,18 @@ export function config(id = "main") {
   let ws: URL | undefined;
   try { ws = wsUrl ? new URL(wsUrl) : undefined; } catch { throw new AppError("CONFIG", id + " 的 OBS WebSocket 地址格式无效。"); }
   if (ws && (ws.protocol !== "ws:" || ws.hostname !== "127.0.0.1" || !ws.port || ws.username || ws.password || ws.pathname !== "/" || ws.search || ws.hash)) throw new AppError("CONFIG", id + " 的 OBS WebSocket 必须使用 ws://127.0.0.1:端口。");
-  const privacy = environment().LIVEPILOT_PRIVACY || "public";
+  const privacy = source.LIVEPILOT_PRIVACY || "public";
   if (!["private", "unlisted", "public"].includes(privacy)) throw new AppError("CONFIG", "LIVEPILOT_PRIVACY 必须是 private、unlisted 或 public。");
-  const kids = environment().LIVEPILOT_MADE_FOR_KIDS || "false";
+  const kids = source.LIVEPILOT_MADE_FOR_KIDS || "false";
   if (!["true", "false"].includes(kids)) throw new AppError("CONFIG", "LIVEPILOT_MADE_FOR_KIDS 必须是 true 或 false。");
   return {
     origin, wsUrl, wsPort: ws ? Number(ws.port) : 0,
     obsExe: obsValue("OBS_EXE", "LIVEPILOT_OBS_EXE"),
     obsPassword: obsValue("OBS_WS_PASSWORD", "LIVEPILOT_OBS_WS_PASSWORD"),
-    mediaRoot: environment()[prefix + "MEDIA_ROOT"] || environment().LIVEPILOT_MEDIA_ROOT || "",
-    clientId: environment().GOOGLE_CLIENT_ID || "", clientSecret: environment().GOOGLE_CLIENT_SECRET || "",
-    encryptionKey: environment().LIVEPILOT_ENCRYPTION_KEY || "",
-    dataDir: id === "main" ? dataRoot() : path.join(dataRoot(), "instances", id),
+    mediaRoot: source[prefix + "MEDIA_ROOT"] || source.LIVEPILOT_MEDIA_ROOT || "",
+    clientId: source.GOOGLE_CLIENT_ID || "", clientSecret: source.GOOGLE_CLIENT_SECRET || "",
+    encryptionKey: source.LIVEPILOT_ENCRYPTION_KEY || "",
+    dataDir: id === "main" ? path.resolve(/* turbopackIgnore: true */ source.LIVEPILOT_DATA_ROOT || ".data") : path.join(path.resolve(/* turbopackIgnore: true */ source.LIVEPILOT_DATA_ROOT || ".data"), "instances", id),
     redirectUri: origin + "/api/youtube/callback", privacy, madeForKids: kids === "true",
   };
 }

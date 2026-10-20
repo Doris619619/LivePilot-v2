@@ -10,7 +10,7 @@ it("retries a rejected new capability list once with the existing capabilities",
   expect(await connectSession({ post } as unknown as Transport, input)).toEqual({ session: "old", capabilities: ["publishing-v1"] });
   expect(post).toHaveBeenCalledTimes(2);
   expect(post.mock.calls[0][1].capabilities).toContain("media-preview-v1");
-  expect(post.mock.calls[1][1]).toMatchObject({ ...input, capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1"] });
+  expect(post.mock.calls[1][1]).toMatchObject({ ...input, capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2"] });
 });
 it.each([401, 403, 503])("does not retry handshake failure %s with downgraded capabilities", async status => {
   const failure = new AppError("CLOUD_REQUEST", "fixture", status); const post = vi.fn().mockRejectedValue(failure);
@@ -28,5 +28,5 @@ it("falls back across both known Cloud generations without losing preview on 0.1
   await connectSession({ post } as unknown as Transport, input);
   expect(post.mock.calls[0][1].capabilities).toContain("publishing-consent-v2");
   expect(post.mock.calls[1][1].capabilities).toContain("media-preview-v1");
-  expect(post.mock.calls[2][1].capabilities).toEqual(["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+  expect(post.mock.calls[2][1].capabilities).toEqual(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1"]);
 });
