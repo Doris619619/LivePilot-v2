@@ -1,0 +1,652 @@
+{
+  "description": "Sanitized audit evidence, retained production facts and offline measurements; not a complete Google quota ledger.",
+  "baseline": "f713e6b0b52e57e9036061aefb7f98dc0f82bf76",
+  "auditNetworkBoundary": {
+    "youtubeApiCalls": 0,
+    "realBroadcastOperations": 0,
+    "businessSourceOrDeploymentMutations": 0,
+    "serverReadsAuthorizedByUser": true
+  },
+  "server": {
+    "observedAt": "2026-10-20T03:25:30.877975+00:00",
+    "version": "0.1.18",
+    "releaseCommit": "1fabef89cdd385d61b1805c0c835544a282a04f9",
+    "service": [
+      "NRestarts=0",
+      "ActiveState=active",
+      "ActiveEnterTimestamp=Sun 2026-10-18 08:16:30 UTC"
+    ],
+    "deployedSourceMatchesBaseline": {
+      "src/core/service.ts": true,
+      "src/core/live-chat/runner.ts": true,
+      "src/agent/runner.ts": true
+    },
+    "primaryAgentGoogleClientMatchesCloud": true,
+    "secondaryAgentGoogleProjectVerified": false,
+    "currentDevices": [
+      {
+        "alias": "primary-agent",
+        "configuredInstances": 3,
+        "heartbeatAt": "2026-10-20T03:25:26.263Z",
+        "snapshots": [
+          {
+            "phase": "idle",
+            "stateUpdatedAt": "2026-10-20T03:25:20.904Z",
+            "obsStreaming": false,
+            "youtubeProblem": null,
+            "youtubeCheckedAt": null,
+            "chatState": "waiting_live",
+            "chatSent": 0,
+            "chatUpdatedAt": 1792466721323
+          },
+          {
+            "phase": "idle",
+            "stateUpdatedAt": "2026-10-20T03:25:20.955Z",
+            "obsStreaming": false,
+            "youtubeProblem": null,
+            "youtubeCheckedAt": null,
+            "chatState": "waiting_live",
+            "chatSent": 0,
+            "chatUpdatedAt": 1792466721323
+          },
+          {
+            "phase": "error",
+            "stateUpdatedAt": "2026-10-19T07:04:32.332Z",
+            "obsStreaming": false,
+            "youtubeProblem": "YOUTUBE_DAILY_QUOTA",
+            "youtubeCheckedAt": null,
+            "chatState": "quota_wait",
+            "chatSent": 7,
+            "chatUpdatedAt": 1792466722843
+          }
+        ]
+      },
+      {
+        "alias": "secondary-agent",
+        "configuredInstances": 1,
+        "heartbeatAt": "2026-10-20T03:25:28.175Z",
+        "snapshots": [
+          {
+            "phase": "live",
+            "stateUpdatedAt": "2026-10-19T09:57:42.937Z",
+            "obsStreaming": true,
+            "youtubeProblem": "YOUTUBE_DAILY_QUOTA",
+            "youtubeCheckedAt": null,
+            "chatState": "quota_wait",
+            "chatSent": 3,
+            "chatUpdatedAt": 1792466726624
+          }
+        ]
+      }
+    ],
+    "historicalSnapshots": [
+      {
+        "backupAtUtc": "20261018T081612Z",
+        "alias": "primary-agent",
+        "heartbeatAt": "2026-10-18T08:16:12.376Z",
+        "snapshots": [
+          {
+            "observedAt": 1792311364768,
+            "phase": "stopped",
+            "stateUpdatedAt": "2026-10-18T06:27:05.087Z",
+            "obsStreaming": false,
+            "youtubeConnected": true,
+            "youtubeLifecycle": "complete",
+            "youtubeCheckedAt": "2026-10-18T08:16:07.098Z",
+            "youtubeProblem": null,
+            "chatState": "waiting_live",
+            "chatSent": 5
+          }
+        ]
+      },
+      {
+        "backupAtUtc": "20261018T081612Z",
+        "alias": "secondary-agent",
+        "heartbeatAt": "2026-10-12T00:00:31.424Z",
+        "snapshots": [
+          {
+            "observedAt": 1791763242453,
+            "phase": "live",
+            "stateUpdatedAt": "2026-10-02T10:12:28.953Z",
+            "obsStreaming": true,
+            "youtubeConnected": false,
+            "youtubeLifecycle": null,
+            "youtubeCheckedAt": null,
+            "youtubeProblem": "GOOGLE_AUTH",
+            "chatState": null,
+            "chatSent": null
+          }
+        ]
+      },
+      {
+        "backupAtUtc": "20261018T065506Z",
+        "alias": "primary-agent",
+        "heartbeatAt": "2026-10-18T06:55:01.910Z",
+        "snapshots": [
+          {
+            "observedAt": 1792306499667,
+            "phase": "stopped",
+            "stateUpdatedAt": "2026-10-18T06:27:05.087Z",
+            "obsStreaming": false,
+            "youtubeConnected": true,
+            "youtubeLifecycle": "complete",
+            "youtubeCheckedAt": "2026-10-18T06:54:38.350Z",
+            "youtubeProblem": null,
+            "chatState": "waiting_live",
+            "chatSent": 5
+          }
+        ]
+      },
+      {
+        "backupAtUtc": "20261018T065506Z",
+        "alias": "secondary-agent",
+        "heartbeatAt": "2026-10-12T00:00:31.424Z",
+        "snapshots": [
+          {
+            "observedAt": 1791763242453,
+            "phase": "live",
+            "stateUpdatedAt": "2026-10-02T10:12:28.953Z",
+            "obsStreaming": true,
+            "youtubeConnected": false,
+            "youtubeLifecycle": null,
+            "youtubeCheckedAt": null,
+            "youtubeProblem": "GOOGLE_AUTH",
+            "chatState": null,
+            "chatSent": null
+          }
+        ]
+      }
+    ],
+    "recentControlTimeline": [
+      {
+        "alias": "primary-agent",
+        "createdAt": "2026-10-18T05:02:49.352Z",
+        "updatedAt": "2026-10-18T05:03:28.874Z",
+        "action": "start",
+        "status": "succeeded",
+        "code": null
+      },
+      {
+        "alias": "primary-agent",
+        "createdAt": "2026-10-18T06:27:00.489Z",
+        "updatedAt": "2026-10-18T06:27:10.948Z",
+        "action": "stop",
+        "status": "succeeded",
+        "code": null
+      },
+      {
+        "alias": "primary-agent",
+        "createdAt": "2026-10-19T06:21:49.518Z",
+        "updatedAt": "2026-10-19T06:22:27.245Z",
+        "action": "start",
+        "status": "succeeded",
+        "code": null
+      },
+      {
+        "alias": "primary-agent",
+        "createdAt": "2026-10-19T07:04:31.787Z",
+        "updatedAt": "2026-10-19T07:04:33.974Z",
+        "action": "stop",
+        "status": "failed",
+        "code": "YOUTUBE_NETWORK"
+      },
+      {
+        "alias": "secondary-agent",
+        "createdAt": "2026-10-19T09:52:34.893Z",
+        "updatedAt": "2026-10-19T09:52:36.692Z",
+        "action": "stop",
+        "status": "succeeded",
+        "code": null
+      },
+      {
+        "alias": "secondary-agent",
+        "createdAt": "2026-10-19T09:57:16.045Z",
+        "updatedAt": "2026-10-19T09:57:44.164Z",
+        "action": "start",
+        "status": "succeeded",
+        "code": null
+      }
+    ],
+    "publishing": {
+      "policy": {
+        "otherUnitsPerDay": 5000,
+        "uploadsPerDay": 30,
+        "processingPollSeconds": 60,
+        "scheduledPollSeconds": 1800
+      },
+      "quota": [
+        {
+          "day": "2026-10-07",
+          "units": 4,
+          "uploads": 0,
+          "receipts": 4
+        }
+      ],
+      "jobs": {
+        "published": 2
+      }
+    },
+    "logging": {
+      "liveNestNginxAccessLogEnabled": false,
+      "journalWindowFromUtc": "2026-10-17T00:00:00Z",
+      "journalEntries": 28,
+      "journalQuotaCodeCounts": {},
+      "perYoutubeRequestHistoryAvailable": false
+    }
+  },
+  "primaryLocal": {
+    "observedAt": "2026-10-20T03:23:40.536Z",
+    "authorizedInstanceCount": 1,
+    "unauthorizedInstanceCount": 2,
+    "main": [
+      {
+        "phase": "error",
+        "updatedAt": "2026-10-19T07:04:32.332Z",
+        "retainedBroadcastId": true,
+        "retainedStreamId": true,
+        "chatEnabled": true,
+        "sendIntervalSeconds": 5,
+        "cumulativeSuccessfulSends": 7,
+        "retainedSuccessfulReceiptTimes": [
+          "2026-10-18T05:10:19.313Z",
+          "2026-10-18T05:10:26.503Z",
+          "2026-10-18T05:10:49.150Z",
+          "2026-10-18T05:11:00.059Z",
+          "2026-10-18T05:11:15.635Z",
+          "2026-10-19T06:42:46.883Z",
+          "2026-10-19T06:42:58.095Z"
+        ],
+        "quotaBlockCode": "CHAT_QUOTA",
+        "blockedUntilUtc": "2026-10-20T07:00:00.000Z"
+      }
+    ],
+    "publishing": {
+      "total": 2,
+      "states": {
+        "published": 2
+      },
+      "jobs": [
+        {
+          "state": "published",
+          "failures": 1,
+          "nextAttemptAt": 1793518492118,
+          "remoteCheckedAt": 1791358492117,
+          "policy": {
+            "processingPollSeconds": 60,
+            "scheduledPollSeconds": 1800,
+            "otherUnitsPerDay": 5000
+          }
+        },
+        {
+          "state": "published",
+          "failures": 1,
+          "nextAttemptAt": 1793518493612,
+          "remoteCheckedAt": 1791358493612,
+          "policy": {
+            "processingPollSeconds": 60,
+            "scheduledPollSeconds": 1800,
+            "otherUnitsPerDay": 5000
+          }
+        }
+      ]
+    }
+  },
+  "priorSingleRequestEvidence": {
+    "at": "2026-10-20T02:58:06.921Z",
+    "http": 403,
+    "reasons": [
+      "quotaExceeded"
+    ],
+    "boundary": "Retained from preceding diagnosis; current audit did not repeat Google request."
+  },
+  "validation": {
+    "fullVerifyPassed": true,
+    "vitestFiles": 124,
+    "vitestTests": 1183,
+    "deploymentTests": 8,
+    "addedVitestAuditTests": 21,
+    "serviceMockAssertions": {
+      "stoppedRetainedIdsRequestsPerHour": 360,
+      "authorizedWithoutIdsRequestsPerHour": 120,
+      "unauthorizedRequests": 0,
+      "twentyConcurrentReadersAcrossTwoWindowsByInstances": [
+        {
+          "instances": 1,
+          "requests": 6
+        },
+        {
+          "instances": 10,
+          "requests": 60
+        },
+        {
+          "instances": 50,
+          "requests": 300
+        },
+        {
+          "instances": 100,
+          "requests": 600
+        }
+      ],
+      "tenColdServicesRequests": 30,
+      "tenCredentialResetsRequests": 30,
+      "channelQuotaOrNetworkFailureAttemptsPerHour": 120
+    },
+    "agentMockAssertions": {
+      "rejectedCloudSessionWindowSeconds": 12,
+      "sessionAttempts": 4,
+      "snapshotReads": 3,
+      "snapshotOffsetsSeconds": [
+        0,
+        5,
+        10
+      ]
+    },
+    "chatMockCounts": [
+      {
+        "scenario": "empty-batch-eof-60s",
+        "calls": 61,
+        "offsetsMs": [
+          0,
+          1000,
+          2000,
+          3000,
+          4000,
+          5000,
+          6000,
+          7000,
+          8000,
+          9000,
+          10000,
+          11000,
+          12000,
+          13000,
+          14000,
+          15000,
+          16000,
+          17000,
+          18000,
+          19000,
+          20000,
+          21000,
+          22000,
+          23000,
+          24000,
+          25000,
+          26000,
+          27000,
+          28000,
+          29000,
+          30000,
+          31000,
+          32000,
+          33000,
+          34000,
+          35000,
+          36000,
+          37000,
+          38000,
+          39000,
+          40000,
+          41000,
+          42000,
+          43000,
+          44000,
+          45000,
+          46000,
+          47000,
+          48000,
+          49000,
+          50000,
+          51000,
+          52000,
+          53000,
+          54000,
+          55000,
+          56000,
+          57000,
+          58000,
+          59000,
+          60000
+        ]
+      },
+      {
+        "scenario": "no-batch-network-60s",
+        "calls": 6,
+        "offsetsMs": [
+          0,
+          1000,
+          3000,
+          7000,
+          15000,
+          31000
+        ]
+      },
+      {
+        "scenario": "explicit-quota-61s",
+        "calls": 1,
+        "offsetsMs": [
+          0
+        ]
+      },
+      {
+        "scenario": "default-send-rate-60s",
+        "calls": 12,
+        "offsetsMs": [
+          0,
+          5000,
+          10000,
+          15000,
+          20000,
+          25000,
+          30000,
+          35000,
+          40000,
+          45000,
+          50000,
+          55000
+        ]
+      }
+    ],
+    "publishingMockAssertions": {
+      "processingSameChannel100JobsTwoDueWindowsRequests": 4,
+      "windowSeconds": 60,
+      "differentChannels100JobsFirstWindowRequests": 100,
+      "published2JobsAfterInitialReadAdditionalRequests24h": 0,
+      "quotaRetrySeconds": 30
+    },
+    "ui": {
+      "passed": true,
+      "cases": [
+        {
+          "scenario": "one-active-hook-10s",
+          "internalStatusReads": 3
+        },
+        {
+          "scenario": "unmounted-30s",
+          "additionalInternalReads": 0
+        },
+        {
+          "scenario": "ten-remounts-then-unmounted-30s",
+          "additionalInternalReads": 0
+        },
+        {
+          "scenario": "inactive-workspace",
+          "intervalSeconds": 15
+        },
+        {
+          "scenario": "twenty-same-target-hooks",
+          "initialInternalReads": 20,
+          "externalRequests": 0
+        }
+      ],
+      "boundary": "Real Hook and browser timers; mocked internal HTTP. Google request coalescing is verified separately at Service level."
+    }
+  },
+  "offlineModel": {
+    "description": "Offline capacity estimates, not production usage measurements",
+    "sourceAsOf": "2026-10-19",
+    "assumptions": {
+      "idealCacheSeconds": 30,
+      "dashboardReadsWithIds": 3,
+      "channelReadWithoutIds": 1,
+      "chatStreamCallUnits": 5,
+      "chatSendUnits": 20,
+      "defaultSendSeconds": 5,
+      "generalDailyDefault": 10000,
+      "uploadCallsDailyDefault": 100,
+      "searchCallsDailyDefault": 100
+    },
+    "scenarios": [
+      {
+        "name": "retained-ids-or-live-no-chat",
+        "scales": [
+          {
+            "instances": 1,
+            "unitsPerHour": 360,
+            "unitsPer24Hours": 8640,
+            "secondsTo10000IgnoringReset": 100000
+          },
+          {
+            "instances": 10,
+            "unitsPerHour": 3600,
+            "unitsPer24Hours": 86400,
+            "secondsTo10000IgnoringReset": 10000
+          },
+          {
+            "instances": 50,
+            "unitsPerHour": 18000,
+            "unitsPer24Hours": 432000,
+            "secondsTo10000IgnoringReset": 2000
+          },
+          {
+            "instances": 100,
+            "unitsPerHour": 36000,
+            "unitsPer24Hours": 864000,
+            "secondsTo10000IgnoringReset": 1000
+          }
+        ]
+      },
+      {
+        "name": "authorized-no-ids",
+        "scales": [
+          {
+            "instances": 1,
+            "unitsPerHour": 120,
+            "unitsPer24Hours": 2880,
+            "secondsTo10000IgnoringReset": 300000
+          },
+          {
+            "instances": 10,
+            "unitsPerHour": 1200,
+            "unitsPer24Hours": 28800,
+            "secondsTo10000IgnoringReset": 30000
+          },
+          {
+            "instances": 50,
+            "unitsPerHour": 6000,
+            "unitsPer24Hours": 144000,
+            "secondsTo10000IgnoringReset": 6000
+          },
+          {
+            "instances": 100,
+            "unitsPerHour": 12000,
+            "unitsPer24Hours": 288000,
+            "secondsTo10000IgnoringReset": 3000
+          }
+        ]
+      },
+      {
+        "name": "default-send-queue-saturated-plus-status",
+        "scales": [
+          {
+            "instances": 1,
+            "unitsPerHour": 14760,
+            "unitsPer24Hours": 354240,
+            "secondsTo10000IgnoringReset": 2439.024390243903
+          },
+          {
+            "instances": 10,
+            "unitsPerHour": 147600,
+            "unitsPer24Hours": 3542400,
+            "secondsTo10000IgnoringReset": 243.90243902439025
+          },
+          {
+            "instances": 50,
+            "unitsPerHour": 738000,
+            "unitsPer24Hours": 17712000,
+            "secondsTo10000IgnoringReset": 48.78048780487806
+          },
+          {
+            "instances": 100,
+            "unitsPerHour": 1476000,
+            "unitsPer24Hours": 35424000,
+            "secondsTo10000IgnoringReset": 24.39024390243903
+          }
+        ]
+      },
+      {
+        "name": "one-second-empty-batch-eof-plus-status",
+        "scales": [
+          {
+            "instances": 1,
+            "unitsPerHour": 18360,
+            "unitsPer24Hours": 440640,
+            "secondsTo10000IgnoringReset": 1960.7843137254904
+          },
+          {
+            "instances": 10,
+            "unitsPerHour": 183600,
+            "unitsPer24Hours": 4406400,
+            "secondsTo10000IgnoringReset": 196.07843137254903
+          },
+          {
+            "instances": 50,
+            "unitsPerHour": 918000,
+            "unitsPer24Hours": 22032000,
+            "secondsTo10000IgnoringReset": 39.21568627450981
+          },
+          {
+            "instances": 100,
+            "unitsPerHour": 1836000,
+            "unitsPer24Hours": 44064000,
+            "secondsTo10000IgnoringReset": 19.607843137254903
+          }
+        ]
+      }
+    ],
+    "failedDashboardAttempts": {
+      "name": "first-channel-request-quota-or-network-failure",
+      "billedUnits": null,
+      "note": "Count attempts only. Pre-send failure can cost zero; uncertain or rejected request billing requires provider evidence. Do not compute depletion time after quota is exhausted.",
+      "scales": [
+        {
+          "instances": 1,
+          "attemptsPerHour": 120,
+          "attemptsPer24Hours": 2880
+        },
+        {
+          "instances": 10,
+          "attemptsPerHour": 1200,
+          "attemptsPer24Hours": 28800
+        },
+        {
+          "instances": 50,
+          "attemptsPerHour": 6000,
+          "attemptsPer24Hours": 144000
+        },
+        {
+          "instances": 100,
+          "attemptsPerHour": 12000,
+          "attemptsPer24Hours": 288000
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "No Google Cloud project historical quota metrics were available.",
+    "Historical snapshots prove continued stopped-state querying, not per-method total consumption.",
+    "Secondary device had a stale heartbeat in Oct 18 backups; do not count it as continuously active yesterday.",
+    "Mock short-stream reconnect risk is reproduced; no production connection trace proves it occurred yesterday.",
+    "Nominal documented units are estimates; actual rejected or uncertain network request billing requires provider data."
+  ]
+}
