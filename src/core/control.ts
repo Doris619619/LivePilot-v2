@@ -4,14 +4,17 @@ import type { ControlState, Selection } from "@/shared/types";
 import type { ObsRuntime } from "./obs/runtime";
 import type { YouTubePort } from "./youtube/api";
 import { Store } from "./storage";
-import { AppError, safeError, waitFor } from "./errors";
+import { AppError, isAppError, safeError, waitFor } from "./errors";
+import { makeProblem } from "@/shared/problems";
 export const initialState = (): ControlState => ({ phase: "idle", stage: "等待开始", updatedAt: new Date().toISOString() });
 export class Control {
   busy = false;
+  /** 实例级互斥控制依赖；停止意图通过独立回调立即取消聊天，避免平台收尾失败后仍发送。 */
   constructor(readonly obs: ObsRuntime, readonly youtube: YouTubePort, readonly storage: Store,
     private media: (selection: Selection) => Promise<{ video: string; music: string }>,
     private wait: typeof waitFor = waitFor,
-    private applyChat?: (selection: Selection) => Promise<void>) {}
+    private applyChat?: (selection: Selection) => Promise<void>,
+    private stopChat?: () => Promise<void>) {}
   async state() { return await this.storage.read<ControlState>("control.json") || initialState(); }
   private async save(state: ControlState, patch: Partial<ControlState>) {
     Object.assign(state, patch, { updatedAt: new Date().toISOString() });
@@ -40,6 +43,7 @@ export class Control {
   /** 固化本次媒体与直播详情；详情准备失败时不启动推流，重试复用相同场次。 */
   async start(selection: Selection) {
     return this.operation(async state => {
+      if (state.platformClosePending || state.stopRequested && state.phase !== "stopped") throw new AppError("RECOVER", "上一场仍待结束，请先完成 YouTube 场次收尾后再开播。");
       const channel = await this.youtube.channel();
       if (state.channelId && state.channelId !== channel.id && state.phase !== "stopped") throw new AppError("CHANNEL", "请连接原直播使用的 Channel 后先结束该场次。");
       let current = state.broadcastId ? await this.youtube.broadcast(state.broadcastId) : null;
@@ -137,10 +141,21 @@ export class Control {
       await this.save(state, { phase: "live", stage: "直播中", startedAt: live!.snippet.actualStartTime || new Date().toISOString(), error: undefined });
     });
   }
-  async stop() {
+  /** 先取消聊天并停止属于本场的 OBS；平台失败保留收尾意图，本机应急停止不访问 YouTube。 */
+  async stop(options: { localOnly?: boolean } = {}) {
     return this.operation(async state => {
-      await this.save(state, { phase: "stopping", stage: "确认 YouTube 场次", error: undefined });
-      if (state.broadcastId || state.broadcastIntent) {
+      await this.save(state, { phase: "stopping", stage: "停止 OBS 推流", stopRequested: true, platformClosePending: !!(state.broadcastId || state.broadcastIntent), error: undefined });
+      // 聊天先取消 socket 与发送；检查点保存失败不能阻止本机停止推流。
+      try { await this.stopChat?.(); } catch { /* 状态和检查点问题由聊天状态回报。 */ }
+      let obs = await this.obs.status();
+      if (obs.streaming && !state.obsStartRequested) throw new AppError("OBS_FOREIGN", "OBS 存在不属于此场次的推流，请到 OBS 核对；本应用没有停止它。");
+      if (obs.streaming === null || (obs.running && !obs.ready)) throw new AppError("OBS_OFFLINE", "无法确认 OBS 状态。请恢复 WebSocket 后再次结束直播；必要时在 OBS 手动停止推流。");
+      if (obs.streaming) await this.obs.stopStream();
+      obs = await this.wait(() => this.obs.status(), value => value.streaming === false, "OBS 尚未确认停止推流。请恢复连接后重试，必要时在 OBS 手动停止。", 30_000, 1500);
+      if (obs.streaming !== false) throw new AppError("OBS_STOP", "OBS 未确认停止。");
+      await this.save(state, { obsStartRequested: false, obsStoppedAt: new Date().toISOString(), stage: state.platformClosePending ? "OBS 已停止；YouTube 场次待结束" : "已结束" });
+      if (options.localOnly && state.platformClosePending) return;
+      try { if (state.broadcastId || state.broadcastIntent) {
         const channel = await this.youtube.channel();
         if (channel.id !== state.channelId) throw new AppError("CHANNEL", "请连接创建此场次的原 YouTube Channel。");
         if (!state.broadcastId) {
@@ -151,23 +166,18 @@ export class Control {
         const current = await this.youtube.broadcast(state.broadcastId!);
         // Missing means the user has deleted the pending broadcast in Studio.
         if (current && current.status.lifeCycleStatus !== "complete") {
-          try {
-            await this.save(state, { stage: "结束 YouTube 直播" });
-            await this.youtube.transition(state.broadcastId!, "complete");
-            await this.wait(() => this.youtube.broadcast(state.broadcastId!), value => value?.status.lifeCycleStatus === "complete", "YouTube 未确认结束。");
-          } catch {
-            throw new AppError("STOP_YOUTUBE", "YouTube 未确认 complete，OBS 尚未停止。请到 YouTube Studio 手动结束直播（未开播场次请删除），然后再次点击结束直播。");
-          }
+          await this.save(state, { stage: "结束 YouTube 直播" });
+          await this.youtube.transition(state.broadcastId!, "complete");
+          await this.wait(() => this.youtube.broadcast(state.broadcastId!), value => value?.status.lifeCycleStatus === "complete", "YouTube 未确认结束。");
         }
+      } } catch (error) {
+        await this.save(state, { stage: "OBS 已停止；YouTube 场次待结束", platformClosePending: true });
+        const code = isAppError(error) ? error.code : "STOP_YOUTUBE";
+        const message = "OBS 已停止推流，YouTube 场次尚未确认结束。请恢复配额或网络后重试结束，或到 YouTube Studio 核对并手动结束（未开播场次请删除）。";
+        const retryAt = isAppError(error) ? error.problem?.context?.retryAt : undefined;
+        throw new AppError(code, message, 502, makeProblem(code, message, { domain: "youtube", stage: "结束 YouTube 场次", outcome: "partial", ...(retryAt === undefined ? {} : { context: { retryAt } }) }));
       }
-      await this.save(state, { stage: "停止 OBS 推流" });
-      let obs = await this.obs.status();
-      if (obs.streaming && !state.obsStartRequested) throw new AppError("OBS_FOREIGN", "OBS 存在不属于此场次的推流，请到 OBS 核对；本应用没有停止它。");
-      if (obs.streaming === null || (obs.running && !obs.ready)) throw new AppError("OBS_OFFLINE", "YouTube 已处理，但无法确认 OBS 状态。请恢复 WebSocket 后再次结束直播；必要时在 OBS 手动停止推流。");
-      if (obs.streaming) await this.obs.stopStream();
-      obs = await this.wait(() => this.obs.status(), v => v.streaming === false, "OBS 尚未确认停止推流。请恢复连接后重试，必要时在 OBS 手动停止。", 30_000, 1500);
-      if (obs.streaming !== false) throw new AppError("OBS_STOP", "OBS 未确认停止。");
-      await this.save(state, { phase: "stopped", stage: "已结束", obsStartRequested: false, error: undefined });
+      await this.save(state, { phase: "stopped", stage: "已结束", platformClosePending: false, obsStartRequested: false, error: undefined });
     });
   }
   async clearUncertain() {

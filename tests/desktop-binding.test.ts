@@ -67,3 +67,30 @@ it("retains a consumed invitation only until its active target is deleted", asyn
   expect((await remoteInstances()).agents.find(a => a.id === "invitation")?.pairedTo).toBe("original");
   await deleteAgent("original"); expect((await remoteInstances()).agents).toEqual([]);
 });
+
+/** 本机停止只继承本次登录已验证的绑定，断网无需重新发起云端请求。 */
+it("permits only a verified current session to stop local OBS while cloud is unavailable", async () => {
+  const f = await fixture(); const stopLocal = vi.fn().mockResolvedValue(undefined); f.manager.stopLocal = stopLocal;
+  await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await f.access.require(); f.request.mockRejectedValue(new Error("synthetic cloud outage")); const calls = f.request.mock.calls.length;
+  await f.access.stopLocal("main"); expect(stopLocal).toHaveBeenCalledWith("main"); expect(f.request).toHaveBeenCalledTimes(calls);
+  await expect(f.access.require()).rejects.toMatchObject({ code: "CLOUD_NETWORK" });
+  f.manager.settings.identity!.token = "f".repeat(64);
+  await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+it("revokes offline-stop permission after logout, expiry or an explicit binding rejection", async () => {
+  const f = await fixture(); f.manager.stopLocal = vi.fn(); await f.access.require();
+  f.request.mockResolvedValue(new Response(null, { status: 403 })); await expect(f.access.require()).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await f.auth.logout(); await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "AUTH" });
+});
+it("does not inherit offline-stop permission when the same username logs in again", async () => {
+  const f = await fixture(); f.manager.stopLocal = vi.fn(); await f.access.require(); await f.auth.login("Liang", "fixture");
+  await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+it("locks local stop when the previously verified login expires while offline", async () => {
+  const f = await fixture(); f.manager.stopLocal = vi.fn(); await f.access.require();
+  vi.useFakeTimers();
+  try { vi.setSystemTime(Date.now() + 60_001); await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "AUTH" }); expect(f.manager.stopLocal).not.toHaveBeenCalled(); }
+  finally { vi.useRealTimers(); }
+});

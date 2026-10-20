@@ -20,6 +20,9 @@ import { claimChannel } from "@/cloud/bindings";
 import { downloadSlot } from "@/cloud/relay";
 import { beginMaintenance, changeMaintenance } from "@/cloud/maintenance";
 import { pollPreview, acceptPreview } from "@/cloud/preview-relay";
+import { admitYouTube, reportYouTubeResult } from "@/cloud/youtube-usage";
+import { ingestYouTubeUsage } from "@/cloud/youtube-usage-events";
+import { youtubeAdmitSchema, youtubeResultSchema, youtubeUsageBatchSchema } from "@/shared/youtube-usage";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -61,6 +64,9 @@ export async function POST(request: Request, context: Context) {
       return Response.json(await pairAgent(value.agentId, value.code, value.token, value.currentAgentId, customer.username));
     }
     const agent = await authenticateAgent(request, route !== "session");
+    if (route === "youtube-quota/admit") return Response.json(await admitYouTube(agent.id, youtubeAdmitSchema.parse(raw)), { headers: { "Cache-Control": "no-store" } });
+    if (route === "youtube-quota/result") return Response.json(await reportYouTubeResult(agent.id, youtubeResultSchema.parse(raw)), { headers: { "Cache-Control": "no-store" } });
+    if (route === "youtube-usage") return Response.json(await ingestYouTubeUsage(agent.id, youtubeUsageBatchSchema.parse(raw).events), { headers: { "Cache-Control": "no-store" } });
     // 部署环境的 AI Key 仅交给已配对且持有有效会话的 Agent，不接受浏览器或缓存。
     if (route === "account-ai-environment") {
       z.object({}).strict().parse(raw);
@@ -88,15 +94,15 @@ export async function POST(request: Request, context: Context) {
     if (route === "bootstrap") {
       z.object({}).strict().parse(raw); const c = config();
       if (!c.clientId || !c.clientSecret) throw new AppError("CONFIG", "云端尚未配置 Google 应用，请联系管理员。", 503);
-      return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret }, { headers: { "Cache-Control": "no-store" } });
+      return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret, youtubeProject: "current-project" }, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2"])).max(5).optional() }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2", "youtube-quota-v1", "youtube-usage-v1"])).max(7).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       const session = await openSession(agent.id, value.bootId, value.instances); await agentStore(agent.id).write("capabilities.json", value.capabilities || []);
-      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1", "account-ai-v1"] });
+      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1", "account-ai-v1", "youtube-quota-v1", "youtube-usage-v1"] });
     }
     if (route === "heartbeat") {
       const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);

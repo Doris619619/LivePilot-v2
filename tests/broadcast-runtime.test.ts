@@ -7,6 +7,12 @@ const idle: Dashboard = { busy: false, state: { phase: "idle", stage: "等待", 
 const conflict: Dashboard = { ...idle, state: { ...idle.state, phase: "error", stage: "直播中", broadcastId: "example-id", broadcastTitle: "本场", error: "请求超时" }, youtube: { connected: true, lifecycle: "live", ingest: "active" } };
 const input = { stale: false, busy: false, live: false };
 
+it("shows confirmed OBS stop independently of pending platform cleanup", () => {
+  const data = { ...conflict, state: { ...conflict.state, platformClosePending: true, stopRequested: true } };
+  expect(runtimeSummary({ ...input, data })).toMatchObject({ label: "OBS 已停止，平台待结束" });
+  expect(runtimeActionMode({ ...input, data })).toBe("check");
+});
+
 it("explains YouTube live with no OBS signal and requires a read-only check before retry", () => {
   expect(runtimeSummary({ ...input, data: conflict })).toMatchObject({ status: "error", label: "推流中断" });
   expect(runtimeSummary({ ...input, data: conflict }).message).toContain("OBS 未推流，YouTube 场次仍在直播");

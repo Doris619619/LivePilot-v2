@@ -18,6 +18,7 @@ export function runtimeSummary(input: RuntimeInput): RuntimeSummary {
   const { data, stale, error, live, working } = input;
   if (stale) return { status: "stale", label: "状态待更新", message: "连接已中断，当前是否在播尚不确定。请重新检查状态。" };
   if (!data) return { status: "busy", label: "正在读取状态", message: "" };
+  if (data.state.platformClosePending && data.obs.streaming === false) return { status: "error", label: "OBS 已停止，平台待结束", message: "YouTube 场次尚未确认结束。恢复配额或网络后重试结束，或到 YouTube Studio 手动核对。" };
   if (runtimeActionMode(input) === "working") return { status: "busy", label: working === "stop" || data.state.phase === "stopping" ? "正在结束直播" : "正在处理", message: "等待设备确认，请勿重复操作。" };
   if (data.obs.reconnecting) return { status: "error", label: "推流重连中", message: "OBS 正在恢复连接，直播信号可能中断。" };
   if (live) return error || data.state.error

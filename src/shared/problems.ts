@@ -17,6 +17,10 @@ type Guidance = { title: string; steps: string[]; actions: ProblemAction[] };
 const obsSettings = "在对应直播电脑的 OBS 中打开“工具 → WebSocket 服务器设置”，核对启用状态、端口和密码，再重新检查。";
 const network = "在直播电脑检查系统网络与代理是否能访问该服务；网页能打开不代表直播电脑能访问。处理后重新查询。";
 const catalog: Record<string, Guidance> = {
+  YOUTUBE_PROTECTION_OFFLINE: { title: "YouTube 配额保护暂不可用", steps: ["恢复直播电脑与控制端的连接，并确认两端均支持配额保护。已有 OBS 推流继续，本地停止仍可用。"], actions: ["refresh", "support"] },
+  YOUTUBE_PROTECTION_WAIT: { title: "YouTube 请求正在等待预算", steps: ["查看管理员数据台的暂停原因及恢复时间；不要反复点击重试或重新授权。"], actions: ["refresh", "support"] },
+  YOUTUBE_PROTECTION_STORAGE: { title: "配额保护记录暂不可读", steps: ["保留原数据，检查直播电脑日志目录及控制端账本的磁盘和权限。新的平台请求暂停，已有推流继续。"], actions: ["refresh", "support"] },
+  YOUTUBE_LOG_STORAGE: { title: "调用日志暂未完整同步", steps: ["查看管理员数据台的最后同步时间与记录缺口，检查日志目录空间和控制端连接。"], actions: ["refresh", "support"] },
   CHAT_ENVIRONMENT: { title: "AI 互动配置暂未同步", steps: ["客户端会自动重试。持续失败时请联系管理员检查 AI 服务配置；直播控制不受影响。"], actions: ["support"] },
   AUTH: {title:"需要重新登录",steps:["使用客户账号重新登录。登录状态变化不会停止 OBS。"],actions:["login"]},
   FORBIDDEN: {title:"当前账号无权访问这台电脑",steps:["核对当前登录账号。仍绑定其他客户的设备需要使用对应客户账号，或由管理员确认归属。"],actions:["login","refresh"]},

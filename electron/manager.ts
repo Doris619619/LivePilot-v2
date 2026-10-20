@@ -35,6 +35,14 @@ export class Manager {
   busy = false; message = ""; checks: DesktopState["checks"] = [];
   /** 用户数据与安装资源分离，更新不覆盖素材和 OBS 配置。 */
   constructor(readonly resources: string, private allowQuit: () => void, private customerHeaders: () => Record<string, string> = () => ({})) {}
+  /** 受信入口只允许停止已初始化的本机实例，返回真实控制状态，不复用云端维护 RPC。 */
+  async stopLocal(instanceId: string) {
+    const id = idSchema.parse(instanceId);
+    if (!this.settings.identity || !this.settings.paired || !this.settings.instances.some(instance => instance.id === id && instance.initialized)) throw new AppError("INSTANCE", "本机实例不存在或尚未准备完成。", 404);
+    const result = await this.agent.localStop(id);
+    this.agent.snapshots = this.agent.snapshots.map(snapshot => snapshot.instance.id === id ? { ...snapshot, observedAt: Date.now(), dashboard: { ...snapshot.dashboard, state: result, obs: { ...snapshot.dashboard.obs, streaming: false } } } : snapshot);
+    return result;
+  }
   /** 启动只连接 Agent，不启动推流，失败留在可恢复界面。 */
   async init() {
     this.settings = await this.store.read(); separateCandidates(this.settings); await this.store.write(this.settings); this.busy = true;

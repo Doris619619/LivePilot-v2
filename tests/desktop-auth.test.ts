@@ -22,7 +22,7 @@ it("requires enrolled token AND a valid device session, rejects browser origin a
   const { session } = await openSession("pc_test", randomUUID(), [{ id: "main", name: "Main" }]); const authenticated = { ...headers, "x-livepilot-session": session };
   expect((await bootstrap({ ...authenticated, origin: "https://cloud.example.com" })).status).toBe(403);
   expect((await bootstrap({ ...authenticated, host: "evil.example" })).status).toBe(403);
-  const result = await bootstrap(authenticated); expect(result.status).toBe(200); expect(result.headers.get("cache-control")).toBe("no-store"); expect(await result.json()).toEqual({ clientId: "fixture", clientSecret: "fixture-secret" });
+  const result = await bootstrap(authenticated); expect(result.status).toBe(200); expect(result.headers.get("cache-control")).toBe("no-store"); expect(await result.json()).toEqual({ clientId: "fixture", clientSecret: "fixture-secret", youtubeProject: "current-project" });
   await revokeAgent("pc_test"); expect((await bootstrap(authenticated)).status).toBe(401);
 });
 it("delivers the deployment chat key only to enrolled Agents with a valid session and without cache", async () => {

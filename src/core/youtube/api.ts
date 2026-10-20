@@ -5,6 +5,8 @@ import { Store } from "../storage";
 import { config } from "../config";
 import { AppError } from "../errors";
 import { YouTubeAuth } from "./auth";
+import { youtubeMethodSchema } from "@/shared/youtube-usage";
+import { youtubeFetch, YouTubePageGuard } from "./usage";
 export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string; scheduledStartTime?: string; liveChatId?: string }; status: { lifeCycleStatus: string; madeForKids?: boolean; selfDeclaredMadeForKids?: boolean }; contentDetails?: { boundStreamId?: string } };
 export type Stream = { id: string; snippet: { title: string }; status: { streamStatus: string }; cdn?: { ingestionInfo?: { streamName?: string; rtmpsIngestionAddress?: string } } };
 type List<T> = { items?: T[]; nextPageToken?: string };
@@ -34,16 +36,17 @@ export interface YouTubePort {
 export class YouTubeApi implements YouTubePort {
   constructor(readonly auth: YouTubeAuth, private storage = new Store(config().dataDir)) {}
   /** 固定服务端请求并过滤诊断；明确每日配额耗尽独立分类，临时限流保留旧错误协议。 */
-  private async request<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown): Promise<T> {
+  private async request<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown, safetySignal?: AbortSignal): Promise<T> {
     const token = await this.auth.access();
+    const apiMethod = youtubeMethodSchema.parse(resource.includes("/") ? resource.replace("/", ".") : resource + "." + (method === "GET" ? "list" : method === "POST" ? "insert" : "update"));
     let response: Response;
     try {
-      response = await fetch("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), {
+      response = await youtubeFetch(apiMethod, { ...this.auth.requestContext, purpose: "interactive", trigger: resource === "playlists" ? "playlists" : "unknown" }, () => fetch("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), {
         method, headers: { Authorization: "Bearer " + token.accessToken, "Content-Type": "application/json" },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(20_000), cache: "no-store",
-      });
-    } catch { throw new AppError("YOUTUBE_NETWORK", "YouTube 请求超时或网络中断，结果尚未确认。请检查网络后重试，应用会先核对已有场次。", 502); }
+        signal: safetySignal ? AbortSignal.any([safetySignal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000), cache: "no-store",
+      }));
+    } catch (error) { if (error instanceof AppError) throw error; throw new AppError("YOUTUBE_NETWORK", "YouTube 请求超时或网络中断，结果尚未确认。请检查网络后重试，应用会先核对已有场次。", 502); }
     if (!response.ok) {
       const data = await response.json().catch(() => ({})) as { error?: { errors?: { reason?: string }[] } };
       const errorReasons = (data.error?.errors || []).flatMap(error => typeof error.reason === "string" ? [error.reason] : []);
@@ -79,8 +82,11 @@ export class YouTubeApi implements YouTubePort {
   async playlists(): Promise<Playlist[]> {
     const playlists: Playlist[] = [];
     let pageToken = "";
+    const pages = new YouTubePageGuard();
     do {
-      const page = await this.request<List<{ id: string; snippet: { title: string } }>>("playlists", { part: "snippet", mine: "true", maxResults: "50", ...(pageToken ? { pageToken } : {}) });
+      pages.next(pageToken);
+      const page = await this.request<List<{ id: string; snippet: { title: string } }>>("playlists", { part: "snippet", mine: "true", maxResults: "50", ...(pageToken ? { pageToken } : {}) }, "GET", undefined, pages.signal);
+      pages.check();
       playlists.push(...(page.items || []).map(item => ({ id: item.id, title: item.snippet.title })));
       pageToken = page.nextPageToken || "";
       if (playlists.length > 1000) throw new AppError("YOUTUBE_API", "频道播放列表超过当前支持数量，请在 Studio 中管理。");
@@ -104,12 +110,16 @@ export class YouTubeApi implements YouTubePort {
       const token = await this.auth.access();
       let response: Response;
       try {
-        response = await fetch("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?" + new URLSearchParams({ videoId: id, uploadType: "media" }), {
+        response = await youtubeFetch("thumbnails.set", { ...this.auth.requestContext, purpose: "interactive", trigger: "unknown" }, () => fetch("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?" + new URLSearchParams({ videoId: id, uploadType: "media" }), {
           method: "POST", headers: { Authorization: "Bearer " + token.accessToken, "Content-Type": thumbnail.mime },
           body: Buffer.from(thumbnail.data, "base64"), signal: AbortSignal.timeout(30_000), redirect: "error",
-        });
-      } catch { throw new AppError("YOUTUBE_NETWORK", "封面上传未确认，请检查网络后重试开播。", 502); }
-      if (!response.ok) { await response.body?.cancel(); throw new AppError("YOUTUBE_API", "YouTube 未接受封面，请检查频道自定义缩略图权限后重试。", 502); }
+        }));
+      } catch (error) { if (error instanceof AppError) throw error; throw new AppError("YOUTUBE_NETWORK", "封面上传未确认，请检查网络后重试开播。", 502); }
+      if (!response.ok) {
+        const result = await response.json().catch(() => null) as { error?: { errors?: { reason?: string }[] } } | null;
+        const daily = result?.error?.errors?.some(item => ["quotaExceeded", "dailyLimitExceeded"].includes(item.reason || ""));
+        throw new AppError(daily ? "YOUTUBE_DAILY_QUOTA" : "YOUTUBE_API", daily ? reasons.quotaExceeded : "YouTube 未接受封面，请检查频道自定义缩略图权限后重试。", 502);
+      }
       await response.body?.cancel();
     }
     for (const playlistId of new Set(details.playlistIds)) {
@@ -125,8 +135,11 @@ export class YouTubeApi implements YouTubePort {
   private async find<T extends { id: string; snippet: { title: string } }>(resource: string, title: string, params: Record<string, string>) {
     let pageToken = "";
     const matches: T[] = [];
+    const pages = new YouTubePageGuard();
     do {
-      const data = await this.request<List<T>>(resource, { ...params, maxResults: "50", ...(pageToken ? { pageToken } : {}) });
+      pages.next(pageToken);
+      const data = await this.request<List<T>>(resource, { ...params, maxResults: "50", ...(pageToken ? { pageToken } : {}) }, "GET", undefined, pages.signal);
+      pages.check();
       matches.push(...(data.items || []).filter(item => item.snippet.title === title));
       pageToken = data.nextPageToken || "";
     } while (pageToken);

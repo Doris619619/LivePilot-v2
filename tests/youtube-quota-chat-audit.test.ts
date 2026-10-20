@@ -7,6 +7,8 @@ import { LiveChatRunner } from "../src/core/live-chat/runner";
 import { AppError } from "../src/core/errors";
 import type { LiveChatBatch, LiveChatPorts } from "../src/shared/live-chat";
 import { defaultLiveChatConfig } from "../src/shared/live-chat";
+import { admitYouTubeCall, installYouTubeRuntime } from "../src/core/youtube/usage";
+import { youtubeCost } from "../src/shared/youtube-usage";
 
 class MemoryStore extends Store {
   files = new Map<string, unknown>();
@@ -58,11 +60,13 @@ it("100 repeated starts do not duplicate a stable stream, and stop prevents late
   await vi.advanceTimersByTimeAsync(60_000); expect(f.attempts).toHaveLength(1);
   await f.runner.stop(); await vi.advanceTimersByTimeAsync(60_000); expect(f.attempts).toHaveLength(1);
 });
-it("an empty batch followed by EOF resets the failure count and repeatedly returns to short reconnect delay", async () => {
+it("empty batches cannot reset retries and five short streams trigger a fifteen-minute cooldown", async () => {
   const f = fixture("empty-eof"); f.runner.start(); await vi.advanceTimersByTimeAsync(60_000);
-  expect(f.attempts.length).toBeGreaterThan(30);
+  expect(f.attempts.length).toBe(5);
   const gaps = f.attempts.slice(1).map((at, i) => at - f.attempts[i]);
-  expect(Math.max(...gaps)).toBeLessThanOrEqual(1500);
+  expect(gaps[1]).toBeGreaterThanOrEqual(2000); expect(gaps[2]).toBeGreaterThanOrEqual(4000); expect(gaps[3]).toBeGreaterThanOrEqual(8000);
+  const status = await f.runner.status(); expect(status.nextRetryAt).toBeGreaterThanOrEqual(f.attempts[4] + 900_000);
+  await f.runner.keyChanged(); await f.runner.configure(defaultLiveChatConfig); await vi.advanceTimersByTimeAsync(60_000); expect(f.attempts).toHaveLength(5);
   measurements.push({ scenario: "empty-batch-eof-60s", calls: f.attempts.length, offsetsMs: f.attempts.map(at => at - f.attempts[0]) });
   console.log("QUOTA_AUDIT empty-batch-eof 60s calls=" + f.attempts.length + " gapsMs=" + [...new Set(gaps)].join(","));
 });
@@ -71,6 +75,12 @@ it("network failures without a successful batch do increase backoff", async () =
   expect(f.attempts.length).toBeLessThanOrEqual(7);
   measurements.push({ scenario: "no-batch-network-60s", calls: f.attempts.length, offsetsMs: f.attempts.map(at => at - f.attempts[0]) });
   console.log("QUOTA_AUDIT no-batch-network 60s calls=" + f.attempts.length + " offsetsMs=" + f.attempts.map(at => at - f.attempts[0]).join(","));
+});
+it("each real stream retry has its own attempt and explicit retry count", async () => {
+  const retries: number[] = []; const f = fixture("empty-eof");
+  installYouTubeRuntime({ async admit(attempt) { retries.push(attempt.retryCount || 0); return { allowed: true, attemptId: attempt.attemptId, project: "synthetic", quotaDay: "2026-10-20", ...youtubeCost(attempt.method), remaining: 9000, backgroundRemaining: 2000, activeInstances: 1, resetAt: Date.now() + 86400_000 }; }, async record() {} });
+  f.ports.stream = async function* () { const call = await admitYouTubeCall("liveChatMessages.streamList", { instanceId: "main", purpose: "chat-stream", trigger: "chat-connect" }); await call.finish({ outcome: "succeeded" }); yield { messages: [] }; };
+  f.runner.start(); await vi.advanceTimersByTimeAsync(60_000); expect(retries).toEqual([0, 1, 2, 3, 4]);
 });
 it("explicit chat quota errors persist a midnight block even across credentials refresh and reconfiguration", async () => {
   const f = fixture("quota"); f.runner.start(); await vi.advanceTimersByTimeAsync(1000);

@@ -1,4 +1,5 @@
 /** 发布包计划集成回归：真实文件事务与权限，Agent 扫描/归档采用合成短 RPC。 */
+import { seedTestYouTubeBaseline } from "./youtube-usage-baseline";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -41,6 +42,8 @@ beforeEach(async () => {
   remote.rpc.mockReset(); remote.rpc.mockImplementation(async (_target, _actor, payload) => payload.kind === "publishing-archive" ? { state: "complete", destination: "Synthetic/Publishing/Completed/Batch01" } : { root: "Synthetic/Publishing/Inbox", batches: [structuredClone(batch)], thumbnails: [], channelId: "channel_one", channel: "Test" });
 });
 /** 删除仅属于本次测试的临时目录，不接触用户源视频。 */
+/** 新配额保护要求显式合成基线，不能依赖生产默认放行。 */
+beforeEach(async () => { await seedTestYouTubeBaseline(); });
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-plans-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 默认创建完整包快照，便于测试后续修订和确认。 */
 async function preview() { return previewPublishingPlan(alice, profile.id, batch.id, rule); }

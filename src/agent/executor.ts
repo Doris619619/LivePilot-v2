@@ -21,6 +21,7 @@ import type { PublishingAccount } from "@/shared/publishing";
 import { audit } from "@/core/audit";
 import { AgentPreviewSessions } from "@/core/preview/session";
 import { MediaPreviewConnection } from "./media-preview";
+import { withYouTubeContext } from "@/core/youtube/usage";
 export class Executor {
   readonly mediaPreview: MediaPreviewConnection;
   readonly services = new Map<string, Service>();
@@ -106,7 +107,13 @@ export class Executor {
     const observedAt = Date.now(); const snapshot = { instance, dashboard: await app.dashboard(), observedAt }; this.observed.set(id, snapshot); return snapshot;
   }
   /** 上传与控制独立执行；同实例控制仍由 Commands/Control 锁保护。 */
-  async execute(task: RemoteTask): Promise<unknown> {
+  execute(task: RemoteTask): Promise<unknown> {
+    const payload = task.payload;
+    const accountId = payload.kind === "publishing-apply" ? payload.job.profile.accountId : "accountId" in payload ? payload.accountId : undefined;
+    return withYouTubeContext({ instanceId: task.instanceId, operationId: task.id, accountId, purpose: payload.kind === "control" ? "control" : payload.kind.includes("oauth") ? "authorization" : "interactive", trigger: payload.kind === "control" ? payload.input.action === "start" ? "control-start" : payload.input.action === "stop" ? "control-stop" : "control-recover" : payload.kind.includes("oauth") ? "oauth-finish" : payload.kind.startsWith("publishing-") ? "publishing-command" : payload.kind === "broadcast-playlists" ? "playlists" : "unknown" }, () => this.executeScoped(task));
+  }
+  /** 白名单操作继承已认证任务的来源，后台循环不借用人工控制预留。 */
+  private async executeScoped(task: RemoteTask): Promise<unknown> {
     if (task.agentId !== this.transport.agentId) throw new AppError("AGENT", "任务不属于这台设备。", 403);
     const app = this.services.get(task.instanceId); if (!app) throw new AppError("INSTANCE", "实例不存在。", 404);
     const p = task.payload;

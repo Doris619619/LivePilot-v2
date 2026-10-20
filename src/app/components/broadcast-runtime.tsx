@@ -27,7 +27,7 @@ export default function BroadcastRuntime({ id, data, stale, durationMs, summary,
       <div className={styles.summary} role="status"><StatusBadge status={summary.status} label={summary.label} />{summary.message && <p>{summary.message}</p>}</div>
       <dl className={styles.signals}>
         <div><dt>OBS 推流</dt><dd>{obs}</dd></div>
-        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
+        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : data?.state.platformClosePending ? "待确认结束" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
       </dl>
       {readiness && <p className={styles.readiness}>{readiness}</p>}
     </div>

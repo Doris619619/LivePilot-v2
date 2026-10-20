@@ -11,10 +11,11 @@ import ObsCheckProgress from "./obs-check-progress";
 import styles from "./obs-startup.module.css";
 
 /** 按不可变实例 ID 发起操作；状态与时刻组成一组，复查和详情分级，操作完成不等同于连接成功。 */
-export default function ObsInstanceControls({ instance, check, snapshot, activity, diagnosis, disabled, act, help, now, readFresh, refresh }: {
+export default function ObsInstanceControls({ instance, check, snapshot, activity, diagnosis, disabled, act, help, now, readFresh, refresh, localStopAvailable }: {
   instance: PublicInstance; check?: Check; snapshot?: AgentSnapshot; activity?: DesktopActivity; diagnosis?: DesktopActivity; disabled: boolean;
   now: number; readFresh: boolean; refresh: () => void;
   act: (action: DesktopAction, input?: Record<string, unknown>) => Promise<boolean>; help: () => void;
+  localStopAvailable?: boolean;
 }) {
   const current = activity?.action === "launch-obs" && activity.instanceId === instance.id ? activity : undefined;
   const view = obsStartupView(instance.id, current, check, snapshot, now, readFresh);
@@ -42,6 +43,7 @@ export default function ObsInstanceControls({ instance, check, snapshot, activit
     <span role="status" aria-live="polite" className="visually-hidden">{diagnosing ? "正在检查 " + instance.name + " 的控制连接" : diagnosisResult ? instance.name + " " + diagnosisResult : ""}</span>
     {view.running && checkView?.unknown && <button onClick={refresh}>重新读取状态</button>}
     {!view.ready && <button className="btn-ghost" onClick={help}>连接帮助</button>}
+    {localStopAvailable && <button disabled={disabled} onClick={() => { if (window.confirm("停止此实例的本机 OBS 推流？YouTube 场次可能仍需在网页或 Studio 结束。")) void act("stop-local", { id: instance.id }); }}>本机停止推流</button>}
   </div>;
   return <div className={"obs-instance-controls " + styles.feedback} data-instance-id={instance.id} data-startup-state={diagnosing ? "diagnosing" : view.running ? view.unknown ? "unknown" : view.slow ? "slow" : "running" : view.recovered ? "recovered" : view.ready ? "ready" : view.showFailure ? "failed" : "idle"}>
     <div className={styles.summary}>{heading}{actions}</div>

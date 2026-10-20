@@ -7,6 +7,7 @@ import GroupedList from "./grouped-list";
 import Assignment from "./assignment";
 import Accounts from "./accounts";
 import DisplaySettings from "./display-settings";
+import YouTubeUsage from "./youtube-usage";
 import { groupOverview, searchOverview, scopes, validTimeZone, type Overview, type Scope } from "./view-model";
 import "./admin.css";
 const zoneKey = "livenest-admin-timezone";
@@ -18,7 +19,7 @@ function savedZone() {
 }
 /** 五秒刷新不覆盖筛选与时区；获取失败保留数据并标明过期。 */
 export default function Admin() {
-  const [tab, setTab] = useState<"devices" | "accounts">("devices");
+  const [tab, setTab] = useState<"devices" | "accounts" | "youtube">("devices");
   const [data, setData] = useState<Overview>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -58,7 +59,7 @@ export default function Admin() {
   ];
   return <main className="main-wrapper admin-page" id="workspace">
     <div className="workspace-heading admin-heading"><h1>管理员总览</h1><div className="admin-heading-actions"><DisplaySettings timeZone={timeZone} zones={zones} labels={zoneLabels} onChange={chooseZone} /></div></div>
-    <Tabs value={tab} onValueChange={value => setTab(value as "devices" | "accounts")}><TabsList aria-label="管理员功能"><TabsTrigger value="devices">设备总览</TabsTrigger><TabsTrigger value="accounts">客户账号</TabsTrigger></TabsList><TabsContent value="accounts"><Accounts /></TabsContent><TabsContent value="devices">
+    <Tabs value={tab} onValueChange={value => setTab(value as "devices" | "accounts" | "youtube")}><TabsList aria-label="管理员功能"><TabsTrigger value="devices">设备总览</TabsTrigger><TabsTrigger value="accounts">客户账号</TabsTrigger><TabsTrigger value="youtube">YouTube 配额</TabsTrigger></TabsList><TabsContent value="youtube"><YouTubeUsage active={tab === "youtube"} timeZone={timeZone} /></TabsContent><TabsContent value="accounts"><Accounts /></TabsContent><TabsContent value="devices">
     {error && <div className="banner error" role="alert">{error} · 以下为上次获取的数据，不能视为实时状态。</div>}
     {!data ? <p role="status">正在读取设备状态…</p> : <>
       <div className="admin-metrics">{metrics.map(metric => <button key={metric.scope} className="admin-metric" aria-pressed={scope === metric.scope} aria-controls="admin-results" disabled={!!error} title={scope === metric.scope ? "再次点击查看全部电脑" : undefined} onClick={() => chooseScope(metric.scope)}><span>{metric.label}</span><strong>{error ? "—" : metric.value}</strong></button>)}</div>
