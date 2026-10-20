@@ -18,6 +18,7 @@ import ObsInstanceControls from "./obs-instance-controls";
 import { obsLaunchFor } from "./obs-startup-state";
 import { obsInstanceProblems } from "./obs-instance-problems";
 import ManualConnection from "./manual-connection";
+import { InstanceName, InstanceRetirement } from "./instance-metadata";
 import { UpdateProvider, useLocalUpdates } from "./local-updates";
 declare global { interface Window { liveNest?: DesktopBridge } }
 const pages = ["设备配置", "本机 OBS", "帮助", "设置"] as const;
@@ -99,7 +100,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   }
   /** 配置入口集中在设备配置；日常启动页只提供返回该实例的链接。 */
   function instanceSettings(i: DesktopState["instances"][number]) {
-    return <details className="advanced-settings"><summary>高级设置</summary><div className="advanced-settings-body"><dl className="advanced-settings-meta"><div><dt>程序路径</dt><dd className="desktop-path">{i.exe}</dd></div><div><dt>控制端口</dt><dd>{i.port}</dd></div></dl><label className="field-group">实例名称<input aria-label={i.name+"名称"} disabled={busy} defaultValue={i.name} maxLength={80} onBlur={e=>{if(e.target.value.trim() && e.target.value!==i.name)void act("rename",{id:i.id,name:e.target.value});}} /></label>{i.managed?<button disabled={busy} onClick={()=>void act("repair-managed",{id:i.id})}>修复连接（先关闭 OBS）</button>:<ManualConnection instances={[i]} disabled={!!busy} act={act}/>}</div></details>;
+    return <details className="advanced-settings"><summary>高级设置</summary><div className="advanced-settings-body"><dl className="advanced-settings-meta"><div><dt>程序路径</dt><dd className="desktop-path">{i.exe}</dd></div><div><dt>控制端口</dt><dd>{i.port}</dd></div></dl><InstanceName instance={i} disabled={!!busy} act={act}/>{i.managed?<><button disabled={busy} onClick={()=>void act("repair-managed",{id:i.id})}>修复连接（先关闭 OBS）</button><button disabled={busy} onClick={()=>void act("restore-program",{id:i.id})}>恢复缺失程序（先关闭所有 OBS）</button></>:<ManualConnection instances={[i]} disabled={!!busy} act={act}/>}<InstanceRetirement instance={i} disabled={!!busy} act={act}/></div></details>;
   }
   /** 配对属于整台电脑；各实例面板保留独立 DOM 标识并共享未提交的配对码。 */
   function computerConnection(instanceId: string) {
@@ -118,7 +119,8 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
       <ObsSetupList state={state} snapshots={fresh} now={now} online={online} busy={!!busy} activity={activity} selected={selectedObs} onSelect={setSelectedObs} act={act} controls={controls} checks={instanceChecks} settings={instanceSettings} feedback={(activity?.step === 2 || activity?.step === 3) && feedback} connection={computerConnection} additions={<>
         <ObsPicker state={state} busy={!!busy} act={act}/>
         {!!candidates.length && <section className="desktop-form"><h3>待配置 OBS</h3>{candidates.map(i => <div className="obs-config-row" key={i.id}><strong>{i.name}</strong><button disabled={busy} onClick={()=>void act("prepare", {id:i.id})}>继续配置</button><button disabled={busy} onClick={()=>void act("discard", {id:i.id})}>撤销新增</button></div>)}{!!candidates.filter(i=>!i.managed).length && <ManualConnection instances={candidates.filter(i=>!i.managed)} disabled={!!busy} act={act}/>}</section>}
-        {!!state.archivedCandidates?.length && <details><summary>已撤销的 OBS</summary>{state.archivedCandidates.map(i=><div key={i.id}><strong>{i.name}</strong><button disabled={busy} onClick={()=>void act("restore-candidate",{id:i.id})}>恢复配置</button></div>)}</details>}
+        {!!state.archivedCandidates?.length && <details><summary>已撤销的 OBS</summary>{state.archivedCandidates.map(i=><div key={i.id}><strong>{i.name}</strong><button disabled={busy || instances.some(item=>item.id===i.id) || candidates.some(item=>item.id===i.id)} onClick={()=>void act("restore-candidate",{id:i.id})}>恢复编辑</button>{i.id==="main" && !i.managed && !state.paired && !instances.length && !candidates.length && <button disabled={busy} onClick={()=>void act("replace-candidate",{id:i.id})}>改用内置 OBS</button>}</div>)}</details>}
+        {!!state.retiredInstances?.length && <details><summary>已退役的 OBS</summary>{state.retiredInstances.map(i=><p key={i.id}>{i.name} · 文件与授权保留<span className="desktop-path">{i.exe}</span></p>)}</details>}
       </>}/>
       {state.checks.filter(c=>!c.instanceId && ["directory","node","system"].includes(c.id) && ["missing","error"].includes(c.status)).map(c=><ProblemCard key={c.id} problem={makeProblem("CONFIG",c.message || "本机配置需要检查",{source:"desktop",stage:c.label})} onRefresh={()=>void act("check")} onHelp={()=>setPage("帮助")} />)}
       <details className="technical-report"><summary>电脑技术报告</summary><p className="desktop-path">数据位置：{state.dataRoot}</p>{state.checks.filter(c=>!c.instanceId).map(c=><p key={c.id}>{c.label} · {c.status === "ready" ? "正常" : "待核对"} {c.message}</p>)}<button disabled={busy} onClick={()=>void act("check")}>重新检查电脑</button><button disabled={busy} onClick={()=>void act("firewall")}>自动配置 OBS 本机保护</button>{activity?.step === 1 && feedback}</details>

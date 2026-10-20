@@ -11,7 +11,7 @@ export function publishingUploadReview(profile: Pick<PublishingProfile, "agentId
   for (const item of items) {
     if (item.excluded) continue;
     const pkg = packages.find(value => value.id === item.packageId); if (!pkg) continue;
-    const previous = jobs.filter(job => job.spec.profile.agentId === profile.agentId && job.spec.profile.channelId === profile.channelId && job.spec.contentPackage?.id === pkg.id);
+    const previous = jobs.filter(job => job.spec.profile.agentId === profile.agentId && job.spec.profile.channelId === profile.channelId && job.spec.contentPackage?.id === pkg.id && !(job.sourceArchivedAt && job.spec.contentPackage.version !== pkg.version));
     const completed = previous.filter(job => canRepublishPublishingJob(job) && (!owner || job.spec.owner === owner));
     const blocked = previous.filter(job => {
       if (completed.includes(job)) return false;

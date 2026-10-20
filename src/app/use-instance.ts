@@ -10,6 +10,7 @@ import { defaultLiveChatConfig } from "@/shared/live-chat";
 import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
+import { hasPendingBroadcast } from "@/shared/broadcast-recovery";
 import { useWorkbenchActive } from "./components/workbench-context";
 
 /** 保存实例媒体与公开直播详情，不保存路径、图片原始数据或授权信息。 */
@@ -38,26 +39,26 @@ export function useInstance(instance: InstanceDescriptor) {
   const initialized = useRef(false);
   const fetching = useRef(false);
   const acting = useRef(false);
-  /** 只读取所属实例；失败时保留旧值但标记过期，禁止基于旧值控制。 */
+  /** 只读取所属实例；仅固定已创建场次的素材，创建前错误不得覆盖后来编辑的草稿。读取失败仍禁用旧状态控制。 */
   const refresh = useCallback(async () => {
     if (fetching.current) return;
     fetching.current = true;
     try {
       const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { signal: AbortSignal.timeout(60_000) });
       setReadAt(Date.now()); synchronize(result);
-      if (result.operation?.id === failedRequest.current && ["succeeded", "failed"].includes(result.operation?.status || "")) { setError(""); setProblem(undefined); failedRequest.current = undefined; }
+      if (result.operation?.id === failedRequest.current && ["succeeded", "failed", "interrupted", "expired"].includes(result.operation?.status || "")) { setError(""); setProblem(undefined); failedRequest.current = undefined; }
       // 状态读取确认过受理记录后解除“响应丢失”标记，后续显式恢复使用新请求。
       try {
         const key = "livepilot-request-" + id;
         const saved = JSON.parse(sessionStorage.getItem(key) || "null");
         if (saved?.requestId === result.operation?.id) sessionStorage.removeItem(key);
       } catch { /* 禁用浏览器存储不影响真实状态显示。 */ }
-      if (result.state.selection && !["idle", "stopped"].includes(result.state.phase)) {
+      if (result.state.selection && hasPendingBroadcast(result.state)) {
         const actual = result.state.selection;
         setSelection(previous => JSON.stringify(previous) === JSON.stringify(actual) ? previous : actual);
       }
       if (!initialized.current) {
-        const active = result.state.phase !== "stopped" && result.state.phase !== "idle";
+        const active = hasPendingBroadcast(result.state);
         const saved = (active ? result.state.selection : readDraft(id)) || result.state.selection;
         const defaults = !saved ? (await api<{ value: BroadcastDefaults }>("/api/broadcast-defaults")).value : undefined;
         const initial = saved || { video: result.media.videos.length === 1 ? result.media.videos[0] : "", music: result.media.music.length === 1 ? result.media.music[0] : "", videoAudio: defaults?.videoAudio ?? false };
@@ -116,7 +117,7 @@ export function useInstance(instance: InstanceDescriptor) {
   }
   const busy = !!working || !!data?.busy;
   const live = !stale && data?.youtube.lifecycle === "live" && data.obs.streaming === true && data.youtube.ingest === "active";
-  const pending = !!data?.state.broadcastTitle && data.state.phase !== "stopped";
+  const pending = !!data && hasPendingBroadcast(data.state);
   const locked = busy || live || pending;
   const uncertain = problem?.outcome === "unknown" && !!problem.attemptId;
   const blocker = uncertain ? "上次操作结果尚未确认，请先查询原任务。" : data?.operation && data.operation.status === "uncertain" ? "原任务状态尚未确认，请先查询。" : startBlocker(data, selection, busy, stale, live);
