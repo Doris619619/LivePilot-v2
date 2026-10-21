@@ -61,6 +61,15 @@ it("passes the resolved system proxy to the spawned Node process", async () => {
   const options = vi.mocked(spawn).mock.calls[0][2]; expect(options?.env?.HTTPS_PROXY).toBe("http://127.0.0.1:7890");
   expect(vi.mocked(spawn).mock.calls[0][1]).toContain("--use-env-proxy");
 });
+it("adopts changed system proxy only after the old Agent has drained and closed", async () => {
+  vi.stubEnv("HTTPS_PROXY", ""); vi.stubEnv("https_proxy", "");
+  let proxy = "PROXY 127.0.0.1:7890"; const resolve = vi.fn(async () => proxy); const host = new AgentHost(resolve);
+  await host.start(settings, "fixture", async () => {}); proxy = "PROXY 127.0.0.1:7891";
+  await host.start(settings, "fixture", async () => {}); expect(resolve).toHaveBeenCalledTimes(1);
+  const stopped = host.stop(); child.emit("close"); await stopped; child = new Child();
+  await host.start(settings, "fixture", async () => {}); expect(resolve).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(spawn).mock.calls[1][2]?.env?.HTTPS_PROXY).toBe("http://127.0.0.1:7891");
+});
 it("does not spawn when proxy resolution fails and permits corrected retry", async () => {
   vi.stubEnv("HTTPS_PROXY", ""); vi.stubEnv("https_proxy", "");
   const resolve = vi.fn().mockRejectedValueOnce(new Error("secret")).mockResolvedValue("DIRECT"); const host = new AgentHost(resolve);

@@ -1,7 +1,7 @@
 /** 批次执行默认显示逐视频阶段并分页；操作和诊断按需展开，归档等待真实完成。 */
 "use client";
 import { useState } from "react";
-import type { PublishingBatchRemoval, PublishingPlan, VideoJob } from "@/shared/publishing";
+import type { PublishingBatchRemoval, PublishingPlan, PublishingRepair, VideoJob } from "@/shared/publishing";
 import BatchRemoval, { type BatchRemovalOperation } from "./batch-removal";
 import JobList from "./job-list";
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
@@ -9,7 +9,7 @@ import { publicationBucket } from "./publishing-overview";
 import { executionCounts, executionMetrics } from "./batch-execution-data";
 import { publishingRemovalFeedback, type PublishingDevice } from "./publishing-removal-feedback";
 /** 返回 Cloud 是否接受操作；true 不代表 Agent 或 YouTube 已经应用。 */
-export type JobOperation = (id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string) => Promise<boolean>;
+export type JobOperation = (id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile" | "repair", publishAt?: string, repair?: PublishingRepair) => Promise<boolean>;
 /** 当前修订的持久公开/完成事实不因 API 观察字段过期消失。 */
 function remoteComplete(job: VideoJob) { return ["published", "completed"].includes(publicationBucket(job)); }
 /** 按本轮真实报告统计，再次发布独立标记，不把受理、上传结束或时间已到认作公开。 */

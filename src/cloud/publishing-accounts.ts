@@ -8,7 +8,7 @@ import { agentStore, listAgents, requireTarget } from "./agents";
 import { cloudStore, transaction } from "./store";
 
 export type PublishingAccountCleanup = { id: string; accountId: string; owner: string; actor: string; agentId: string; instanceId: string; createdAt: number; deadline: number; state: "pending" | "complete"; completedAt?: number };
-type AccountRecord = { value: PublishingAccount; candidateChannelId?: string; candidateChannel?: string; candidateCheckedAt?: number; claimedAt?: number };
+type AccountRecord = { value: PublishingAccount; reauthorizationEpoch?: string; candidateChannelId?: string; candidateChannel?: string; candidateCheckedAt?: number; claimedAt?: number };
 type AccountState = { accounts: AccountRecord[]; cleanups: PublishingAccountCleanup[] };
 const file = "publishing-accounts.json";
 
@@ -88,7 +88,7 @@ export async function claimPublishingAccount(agentId: string, accountId: string,
     if (channelCheckedAt !== undefined && (!Number.isFinite(channelCheckedAt) || channelCheckedAt < 0 || channelCheckedAt > Date.now() + 60_000)) throw new AppError("REPORT", "频道 API 核对时间无效。", 409);
     record.candidateChannelId = channelId; record.claimedAt ??= Date.now(); account.updatedAt = Date.now();
     if (channel && channelCheckedAt !== undefined && channelCheckedAt > Date.now() - 30 * 86400_000 && channelCheckedAt >= (account.channelCheckedAt || 0)) { record.candidateChannel = channel; record.candidateCheckedAt = channelCheckedAt; account.channelCheckedAt = channelCheckedAt; if (confirm) account.channel = channel; }
-    if (confirm) { account.channelId = channelId; account.status = "connected"; account.connectedAt ??= Date.now(); if (record.candidateChannel && record.candidateCheckedAt && record.candidateCheckedAt > Date.now() - 30 * 86400_000) { account.channel = record.candidateChannel; account.channelCheckedAt = record.candidateCheckedAt; } }
+    if (confirm && (account.status !== "needs_reauthorization")) { account.channelId = channelId; account.status = "connected"; account.connectedAt ??= Date.now(); if (record.candidateChannel && record.candidateCheckedAt && record.candidateCheckedAt > Date.now() - 30 * 86400_000) { account.channel = record.candidateChannel; account.channelCheckedAt = record.candidateCheckedAt; } }
     return { ok: true };
   });
 }
@@ -99,10 +99,37 @@ export async function syncPublishingAccounts(agentId: string, reports: Publishin
     if (!account || account.agentId !== agentId || account.instanceId !== report.instanceId) throw new AppError("ACCOUNT", "本机发布账号报告不属于此设备。", 403);
     if (["cleanup_pending", "deleted"].includes(account.status)) continue;
     if (report.cleanupPending) { await beginPublishingAccountCleanup(agentId, report.id, account.owner); continue; }
+    if (account.status === "needs_reauthorization") continue;
     if (report.channelId && !report.cleanupPending) await claimPublishingAccount(agentId, report.id, report.instanceId, report.channelId, report.channel, true, report.channelCheckedAt);
     else if (account.status === "connected") await edit(state => { const current = state.accounts.find(record => record.value.id === report.id)!.value; if (current.status === "connected") { current.status = "unbound"; current.updatedAt = Date.now(); } });
   }
   return agentPublishingAccounts(agentId);
+}
+/** 授权异常只停用新API操作并生成服务端代际，保留工作；设备心跳和旧OAuth事务均不能解除。 */
+export async function requirePublishingReauthorization(agentId: string, accountId: string) {
+  return edit(state => {
+    const record = state.accounts.find(value => value.value.id === accountId && value.value.agentId === agentId);
+    if (!record) throw new AppError("ACCOUNT", "发布账号不存在。", 404);
+    const account = record.value;
+    if (["cleanup_pending", "deleted"].includes(account.status)) return;
+    // 调用方先按任务sequence去重；每个新失效事件都作废在途恢复事务，包括持续needs期间的新错误。
+    record.reauthorizationEpoch = randomUUID(); account.status = "needs_reauthorization"; account.updatedAt = Date.now();
+  });
+}
+/** 新浏览器OAuth事务捕获当前服务端代际，不根据Agent时钟或本地旧令牌推断新授权。 */
+export async function publishingReauthorizationEpoch(agentId: string, accountId: string) {
+  const record = (await readState()).accounts.find(value => value.value.id === accountId && value.value.agentId === agentId);
+  if (!record) throw new AppError("ACCOUNT", "发布账号不存在。", 404);
+  return record.value.status === "needs_reauthorization" ? record.reauthorizationEpoch : undefined;
+}
+/** 仅原浏览器的新OAuth完成可恢复相同代际；确认丢失保留重新授权入口，不用迟到register解锁。 */
+export async function completePublishingReauthorization(agentId: string, accountId: string, epoch?: string) {
+  return edit(state => {
+    const record = state.accounts.find(value => value.value.id === accountId && value.value.agentId === agentId);
+    if (!record) throw new AppError("ACCOUNT", "发布账号不存在。", 404);
+    if (record.value.status !== "needs_reauthorization" || !epoch || record.reauthorizationEpoch !== epoch) return;
+    record.value.status = "connected"; record.value.connectedAt = Date.now(); record.value.updatedAt = Date.now(); delete record.reauthorizationEpoch;
+  });
 }
 /** 清理意图与账号停用原子持久化；离线也保留七日截止时间，绝不声称本机已删除。 */
 export async function beginPublishingAccountCleanup(agentId: string, accountId: string, actor: string) {

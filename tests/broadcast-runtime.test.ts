@@ -19,6 +19,11 @@ it("explains YouTube live with no OBS signal and requires a read-only check befo
   expect(runtimeActionMode({ ...input, data: conflict })).toBe("check");
   expect(runtimeDuration(conflict, false, 0)).toBe("—");
 });
+it("allows the next session after both OBS and platform cleanup completed while preserving the stop audit flag", () => {
+  const data: Dashboard = { ...idle, state: { ...idle.state, phase: "stopped", stopRequested: true, platformClosePending: false } };
+  expect(runtimeActionMode({ ...input, data })).toBe("start");
+  expect(runtimeSummary({ ...input, data })).toMatchObject({ label: "本场已结束" });
+});
 it("does not trust the internal live stage without external confirmation", () => {
   expect(runtimeSummary({ ...input, data: { ...conflict, state: { ...conflict.state, phase: "live", error: undefined }, youtube: { connected: true } } }).label).toBe("直播状态待核对");
 });
@@ -46,6 +51,11 @@ it("distinguishes verified live, reconnecting, idle and ended states", () => {
   expect(runtimeSummary({ ...input, data: { ...data, obs: { ...data.obs, reconnecting: true } }, live: true }).label).toBe("推流重连中");
   expect(runtimeSummary({ ...input, data: idle }).label).toBe("等待开播");
   expect(runtimeSummary({ ...input, data: { ...idle, state: { ...idle.state, phase: "stopped" } } }).label).toBe("本场已结束");
+  const ended = { ...conflict, youtube: { connected: true, query: "ready" as const, lifecycle: "complete" } };
+  expect(runtimeSummary({ ...input, data: ended })).toMatchObject({ status: "standby", label: "本场已结束", message: "确认结束后可更换下一场素材。" });
+  expect(runtimeSummary({ ...input, data: { ...ended, state: { ...ended.state, platformClosePending: true, stopRequested: true } } }).label).toBe("本场已结束");
+  expect(runtimeSummary({ ...input, stale: true, data: ended }).label).toBe("状态待更新");
+  expect(runtimeSummary({ ...input, data: { ...ended, youtube: { ...ended.youtube, query: "failed" } } }).label).toBe("直播状态待核对");
   expect(runtimeSummary(input).label).toBe("正在读取状态");
 });
 it("shows an actual OBS duration and rejects absent or invalid samples", () => {

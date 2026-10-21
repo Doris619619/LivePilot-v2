@@ -1,4 +1,4 @@
-/** 运行在隔离本地预览上；合成场次覆盖开播、执行中、未知、失败和恢复，不发送真实命令。 */
+/** 文件用途：在隔离真实网页中检查开播、继续、解锁与中断恢复入口，所有状态为合成数据且控制请求被拒绝。 */
 import { chromium } from 'playwright';
 import { expect } from 'playwright/test';
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 let mode = 'idle';
-const output = 'docs/screenshots/broadcast-controls';
+const output = process.env.RECOVERY_SCREENSHOTS || '.data/recovery-screenshots';
 await mkdir(output, { recursive: true });
 await page.route('**/api/control', route => route.fulfill({ status: 409, json: { error: '此验收不发送开播命令' } }));
 await page.route('**/api/status?**', route => {
@@ -23,17 +23,22 @@ await page.route('**/api/status?**', route => {
     state.youtube.lifecycle = 'ready';
   }
   if (mode === 'running') state.busy = true;
+  if (mode === 'late') { state.obs.streaming = true; state.youtube.ingest = 'active'; }
+  if (mode === 'ended') { state.state.phase = 'live'; state.youtube.lifecycle = 'complete'; }
+  if (mode === 'intent') { delete state.state.broadcastId; state.state.broadcastIntent = true; state.state.phase = 'error'; }
+  if (mode === 'unknown-read') { state.youtube.query = 'failed'; state.youtube.lifecycle = 'complete'; state.youtube.error = '演示：平台状态尚未确认'; }
+  if (mode === 'launch-interrupted') { state.state = { phase: 'idle', stage: '等待', updatedAt: new Date().toISOString(), selection: state.state.selection }; state.operation = { id: 'synthetic', action: 'launch', status: 'interrupted', actor: '演示', updatedAt: new Date().toISOString() }; }
   if (mode === 'live') { state.obs.streaming = true; state.youtube.lifecycle = 'live'; state.youtube.ingest = 'active'; }
   return route.fulfill({ json: state });
 });
 try {
   for (const width of [390, 780, 1440]) {
     await page.setViewportSize({ width, height: 960 });
-    for (mode of ['idle', 'running', 'unknown', 'failed', 'live']) {
+    for (mode of ['idle', 'running', 'unknown', 'failed', 'live', 'late', 'ended', 'intent', 'unknown-read', 'launch-interrupted']) {
       await page.goto(origin + '/workspace');
       const card = page.locator('#instance-preview_liang-main');
       await expect(card).toBeVisible();
-      if (mode === 'idle') {
+      if (mode === 'idle' || mode === 'launch-interrupted') {
         const expand = card.getByRole('button', { name: '展开详情', exact: true });
         if (await expand.isVisible()) await expand.click();
         await card.getByRole('tab', { name: /开播$/ }).click();
@@ -44,9 +49,11 @@ try {
       const launch = card.locator('.workflow-launch');
       await expect(launch).toBeVisible();
       await expect(card.locator('.compact-actions-col .btn-primary')).toHaveCount(0);
-      await expect(launch.getByRole('button', { name: '重试开播', exact: true })).toHaveCount(mode === 'failed' ? 1 : 0);
+      await expect(launch.getByRole('button', { name: '继续本场开播', exact: true })).toHaveCount(['unknown', 'failed', 'late', 'intent'].includes(mode) ? 1 : 0);
       if (mode === 'running') await expect(launch.getByRole('button', { name: '正在处理…', exact: true })).toBeDisabled();
-      if (mode === 'unknown') await expect(launch.getByRole('button', { name: '重新检查状态', exact: true })).toBeVisible();
+      if (mode === 'unknown-read') { await expect(launch.getByRole('button', { name: '重新检查状态', exact: true })).toBeVisible(); await expect(card.getByRole('button', { name: '解锁素材', exact: true })).toHaveCount(0); await expect(launch.getByRole('button', { name: '确认结束并解锁素材', exact: true })).toHaveCount(0); }
+      if (mode === 'ended') { await expect(launch.getByText('本场已结束', { exact: true })).toBeVisible(); await expect(launch.getByRole('button', { name: '确认结束并解锁素材', exact: true })).toBeEnabled(); await expect(card.getByRole('button', { name: '解锁素材', exact: true })).toBeEnabled(); }
+      if (mode === 'launch-interrupted') await expect(launch.getByRole('button', { name: '确认 OBS 已启动', exact: true })).toBeEnabled();
       if (mode === 'idle') await expect(launch.getByRole('button', { name: '开始直播', exact: true })).toBeEnabled();
       if (mode === 'live') await expect(launch.getByRole('button', { name: '结束直播', exact: true })).toBeEnabled();
       const layout = await card.evaluate(el => {
@@ -67,5 +74,5 @@ try {
     }
   }
   assert.deepEqual(errors, []);
-  console.log('Broadcast controls: 3 widths × 5 states and recovery passed (synthetic).');
+  console.log('Broadcast controls: 3 widths × 10 states and recovery passed (synthetic).');
 } finally { await browser.close(); }

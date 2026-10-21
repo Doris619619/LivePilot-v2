@@ -5,7 +5,7 @@ import { randomBytes } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
-import { config, configureCore } from "../src/core/config";
+import { configFrom } from "../src/core/config";
 import { ObsController } from "../src/core/obs/controller";
 import { ObsProcessManager } from "../src/core/obs/process";
 import { LocalObsRuntime } from "../src/core/obs/runtime";
@@ -16,18 +16,21 @@ import { environment, type Settings } from "./settings";
 import { freePort } from "./obs-ports";
 export { freePort } from "./obs-ports";
 const exec = promisify(execFile);
+export type IdleEvidence = { instanceId: string; observedAt: number; basis: "obs-status" | "process-stopped" };
 /** 即使尚未配对云端，也必须确认本机实例没有推流/录制后才能维护。 */
-export async function assertLocalIdle(settings: Settings) {
-  configureCore(() => environment(settings));
-  for (const instance of settings.instances) {
+export async function assertLocalIdle(settings: Settings, excludeId?: string) {
+  const source = environment(settings);
+  const evidence = new Map<string, IdleEvidence>();
+  for (const instance of settings.instances.filter(item => item.id !== excludeId)) {
     if (!await access(instance.exe).then(() => true, error => {if(error.code==="ENOENT")return false;throw error;})) { if (instance.initialized) throw new AppError("OBS_MAINTENANCE", instance.name + " 的运行文件缺失，无法确认状态。"); continue; }
-    const read = () => config(instance.id); const status = await new ObsProcessManager(read).inspect();
+    const read = () => configFrom(instance.id, source); const status = await new ObsProcessManager(read).inspect();
     if (status.portPid && status.portPid !== status.pid) throw new AppError("OBS_MAINTENANCE", instance.name + " 的端口被占用，无法确认状态，请处理后重试。");
-    if (!status.pid) continue;
+    if (!status.pid) { evidence.set(instance.id, { instanceId: instance.id, observedAt: Date.now(), basis: "process-stopped" }); continue; }
     const controller = new ObsController(read);
-    try { if ((await controller.call("GetStreamStatus")).outputActive || (await controller.call("GetRecordStatus")).outputActive) throw new AppError("OBS_MAINTENANCE", instance.name + " 正在推流或录制，请结束后重试。"); }
+    try { if ((await controller.call("GetStreamStatus")).outputActive || (await controller.call("GetRecordStatus")).outputActive) throw new AppError("OBS_MAINTENANCE", instance.name + " 正在推流或录制，请结束后重试。"); evidence.set(instance.id, { instanceId: instance.id, observedAt: Date.now(), basis: "obs-status" }); }
     finally { await controller.disconnect(); }
   }
+  return evidence;
 }
 /** 生成身份后先持久化，解压失败仍可用相同密码继续。 */
 export async function newInstance(settings: Settings): Promise<DesktopInstance> {
@@ -83,8 +86,8 @@ export async function prepareFiles(instance: DesktopInstance, resources: string,
 }
 /** 启动后通过真实 WebSocket 创建标准媒体源，人工 OBS 只做检查。 */
 export async function initializeObs(settings: Settings, instance: DesktopInstance, resources: string, report: (stage: string) => void = () => {}) {
-  await prepareFiles(instance, resources, report); configureCore(() => environment(settings));
-  const read = () => config(instance.id); const controller = new ObsController(read, { id: instance.id, scene: "LIVE", video: "VIDEO", music: "MUSIC" });
+  await prepareFiles(instance, resources, report); const source = environment(settings);
+  const read = () => configFrom(instance.id, source); const controller = new ObsController(read, { id: instance.id, scene: "LIVE", video: "VIDEO", music: "MUSIC" });
   try {
     report("正在启动 OBS 并检查端口 " + instance.port + "（连接检查最多约 60 秒）");
     await new LocalObsRuntime(controller, new ObsProcessManager(read)).ensureReady();

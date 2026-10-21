@@ -13,6 +13,7 @@ import { DesktopAccess } from "./desktop-access";
 import { problemSchema, problemSummary } from "../src/shared/problems";
 import { UpdateAccess } from "./update-access";
 import { installWindowZoom } from "./window-zoom";
+import { initializeWithRecovery } from "./data-recovery";
 const auth = new DesktopAuth((url, init) => net.fetch(url, init));
 protocol.registerSchemesAsPrivileged([{ scheme: "livenest", privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setName("LiveNest"); app.setAppUserModelId("com.doris619619.livenest");
@@ -52,7 +53,17 @@ async function launch() {
     /** 只有 Agent 已退出才放行 Electron 生命周期，防止再次弹出退出确认。 */
     finish: () => { quitting = true; app.quit(); },
   });
-  await manager.init();
+  const loaded = await initializeWithRecovery(() => manager.init(), manager.store, {
+    /** 原生恢复窗口在数据加载前可用；不暴露凭据或自动重置身份。 */
+    choose: async (message, location) => {
+      const result = await dialog.showMessageBox({ type: "error", title: "恢复 LiveNest 数据", message: "原数据尚未加载", detail: "原位置：" + location + "\n" + message, buttons: ["重试原位置", "重新定位原数据", "复制诊断", "退出"], defaultId: 0, cancelId: 3 });
+      return (["retry", "locate", "copy", "quit"] as const)[result.response] || "quit";
+    },
+    locate: async () => { const result = await dialog.showOpenDialog({ title: "选择原 LiveNest 数据文件夹", properties: ["openDirectory"] }); return result.canceled ? undefined : result.filePaths[0]; },
+    confirm: async location => (await dialog.showMessageBox({ type: "question", message: "已核验原数据归属与 Windows 账户", detail: "重新使用：" + location + "\n原身份、频道授权与文件保留。不要同时连接旧副本。", buttons: ["取消", "使用原数据"], defaultId: 0, cancelId: 0 })).response === 1,
+    copy: value => clipboard.writeText(value),
+  });
+  if (!loaded) { quitting = true; app.quit(); return; }
   protocol.handle("livenest", serve); session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
   window = new BrowserWindow({ width: 1280, height: 880, minWidth: 780, minHeight: 620, show: false, backgroundColor: "#ffffff", title: "LiveNest", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true, webSecurity: true } });
   installWindowZoom(window.webContents);
@@ -68,7 +79,7 @@ async function launch() {
   ipcMain.handle("desktop:state", async event => { trusted(event); await access.require(false); return manager.state(); });
   ipcMain.handle("desktop:read-state", event => { trusted(event); return access.read(); });
   ipcMain.handle("desktop:copy-problem", (event, value) => { trusted(event); clipboard.writeText(problemSummary(problemSchema.parse(value))); return true; });
-  const action = z.enum(["launch-obs", "restore-candidate", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "open-publishing", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
+  const action = z.enum(["launch-obs", "restore-candidate", "replace-candidate", "retire", "restore-program", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "open-publishing", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
     try { trusted(event); if (name === "stop-local") {
         const value = z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) }).strict().parse(input);

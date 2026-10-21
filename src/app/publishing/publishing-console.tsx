@@ -8,7 +8,7 @@ import SidebarGroup from "../components/sidebar-group";
 import { WorkspaceUserContext } from "../components/workspace-account";
 import { api } from "../client-request";
 import { RefreshIcon } from "../components/icons";
-import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob } from "@/shared/publishing";
+import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob, type PublishingRepair } from "@/shared/publishing";
 import type { InstanceDescriptor } from "@/shared/types";
 import type { PublishingDevice } from "./publishing-removal-feedback";
 import type { OAuthResult } from "@/server/oauth-result";
@@ -146,9 +146,9 @@ export default function PublishingConsole() {
     await perform(async () => { await post({ action: "account-cleanup", accountId: id, confirmed: true }); await refresh(); if (accountId === id) { setProfileId(""); setIndex(undefined); setDraftEpoch(value => value + 1); } setNotice("已请求清理发布账号，等待设备确认"); });
   }
   /** 返回明确受理结果并先显示已保存的修订；列表刷新失败不撤销成功受理，远端结果仍等待 Agent。 */
-  async function operate(id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string): Promise<boolean> {
+  async function operate(id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile" | "repair", publishAt?: string, repair?: PublishingRepair): Promise<boolean> {
     return !!await perform(async () => {
-      const updated = await post<VideoJob>({ action: "job", id, operation, publishAt });
+      const updated = await post<VideoJob>({ action: "job", id, operation, publishAt, repair });
       readRequest.current++;
       setView(old => old && { ...old, jobs: old.jobs.map(job => job.spec.id === updated.spec.id ? updated : job) });
       setNotice("已提交，等待设备确认"); await refresh(); return true;

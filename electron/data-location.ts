@@ -57,7 +57,7 @@ export async function copyDataLocation(settings: Settings, target: string, progr
   const {source,destination}=await preflightDataLocation(settings,target,installation);
   await mkdir(destination,{recursive:true});
   if((await readdir(destination)).length) throw new AppError("DATA", "目标文件夹不是空目录，请选择新的文件夹；失败副本和原数据均保留。");
-  const items=[...settings.instances,...(settings.candidates||[]),...(settings.archivedCandidates||[])];
+  const items=[...settings.instances,...(settings.candidates||[]),...(settings.archivedCandidates||[]),...(settings.retiredInstances||[]),...(settings.abandonedCandidates||[])];
   const canonicalExes = new Map(await Promise.all(items.map(async item => [item, await ordinaryEntry(item.exe)] as const)));
   // 外部 OBS 若自身位于根内，复制后无法保证它保持独立管理，必须先人工处理。
   for(const item of items.filter(i=>!i.managed)) {
@@ -107,6 +107,6 @@ export async function copyDataLocation(settings: Settings, target: string, progr
       }
     }
     await journal.write(MIGRATION_FILE,{...record,stage:"ready-to-switch"});
-    return {...settings,rootId:marker.id,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:relocate(settings.instances)!,candidates:relocate(settings.candidates),archivedCandidates:relocate(settings.archivedCandidates)};
+    return {...settings,rootId:marker.id,dataRoot:destination,dataNotice:"数据已复制到新位置，旧目录保留，请确认使用正常后再自行整理。",instances:relocate(settings.instances)!,candidates:relocate(settings.candidates),archivedCandidates:relocate(settings.archivedCandidates),retiredInstances:relocate(settings.retiredInstances),abandonedCandidates:relocate(settings.abandonedCandidates)};
   } catch(error) { await journal.write(MIGRATION_FILE,{...record,stage:"failed"}).catch(()=>{}); throw error; }
 }

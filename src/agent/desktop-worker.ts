@@ -24,10 +24,20 @@ process.on("message", async raw => {
   }
   if (message.type === "rpc") {
     try {
-      if (!["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new AppError("AGENT_REQUEST", "此设备操作不受支持。");
+      if (!["maintenance-begin", "maintenance-end", "instances", "instance-rename", "instance-retire"].includes(message.route || "")) throw new AppError("AGENT_REQUEST", "此设备操作不受支持。");
       if (!transport) throw new AppError("AGENT_CONNECTION", "设备尚未建立云端控制连接，无法确认维护操作。请先恢复配对或网络连接，再重试原操作。");
-      send({ type: "reply", id: message.id, result: await transport.post("/api/agent/" + message.route, message.data) });
-    } catch (error) { send({ type: "reply", id: message.id, error: safeError(error), problem: problemFor(error) }); }
+      const result = await transport.post("/api/agent/" + message.route, message.data);
+      if (message.route === "instance-rename") {
+        const value = z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), name: z.string().min(1).max(80) }).parse(message.data);
+        process.env["LIVEPILOT_INSTANCE_" + value.id.toUpperCase() + "_NAME"] = value.name;
+      }
+      send({ type: "reply", id: message.id, result });
+    } catch (error) {
+      const needsNewCloud = ["instance-rename", "instance-retire"].includes(message.route || "") || message.route === "maintenance-begin" && !!(message.data as { verifiedIdle?: unknown } | undefined)?.verifiedIdle;
+      const incompatible = error instanceof AppError && [400, 404].includes(error.status) && ["ROUTE", "PROTOCOL", "CLOUD_REQUEST"].includes(error.code);
+      const failure = needsNewCloud && incompatible ? new AppError("CLOUD_VERSION", "当前 Cloud 尚不支持此恢复操作，请升级 Cloud 后重试；原配置与维护保护已保留。") : error;
+      send({ type: "reply", id: message.id, error: safeError(failure), problem: problemFor(failure) });
+    }
     return;
   }
   if (started) return;

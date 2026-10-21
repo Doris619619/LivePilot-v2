@@ -105,6 +105,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
 
   const stoppable = canStopBroadcast(data);
+  const ended = !stale && data?.youtube.query !== "failed" && data?.youtube.lifecycle === "complete" && data.obs.streaming === false && pending;
   const actionMode = runtimeActionMode(runtimeInput);
   /** 摘要入口只定位到当前实例的开播区，不在摘要栏发送开停播命令。 */
   function showBroadcast() {
@@ -119,11 +120,12 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   const broadcastControls = <>
           {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
           {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy} onClick={() => void refresh()}><RefreshIcon />重新检查状态</button>}
-          {(actionMode === "start" || actionMode === "retry") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
-            <PlayIcon /><span>{actionMode === "retry" ? "重试开播" : "开始直播"}</span>
+          {actionMode === "confirm-obs" && <button type="button" className="btn-primary" disabled={busy} onClick={() => void act("launch")}>确认 OBS 已启动</button>}
+          {(actionMode === "start" || actionMode === "retry" || actionMode === "resume") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
+            <PlayIcon /><span>{actionMode === "resume" ? "继续本场开播" : actionMode === "retry" ? "重试开播" : "开始直播"}</span>
           </button>}
           {stoppable && <button type="button" className="btn-danger" disabled={busy || stale || actionMode === "working"} onClick={() => void act("stop")}>
-            <StopIcon /><span>{working === "stop" ? "结束中…" : "结束直播"}</span>
+            <StopIcon /><span>{working === "stop" ? "结束中…" : ended ? "确认结束并解锁素材" : "结束直播"}</span>
           </button>}
   </>;
 
@@ -159,7 +161,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
       <p className={!expanded && blocker && !live && !stale && !error ? "instance-feedback readiness-text" : "visually-hidden"} id={`compact-readiness-${id}`}>{readiness || "已就绪"}</p>
 
       <Reveal open={expanded} id={`details-${id}`}><div className="card-expanded-drawer">
-        {pending && !live && <p className="readiness-text">当前场次尚未结束，素材已锁定。请在「开播」查看运行状态并处理。</p>}
+        {pending && !live && <p className="readiness-text">{ended ? "该场次已结束，确认后可选择下一场素材。" : "当前场次尚未结束，素材暂时锁定。"}<button type="button" className="btn-ghost" disabled={busy || stale} onClick={ended ? () => void act("stop") : showBroadcast}>{ended ? "解锁素材" : "查看并处理当前场次"}</button></p>}
         <details ref={connectionsRef} className="studio-connections"><summary>设备与频道<span>{stale ? "连接状态待更新" : `${data?.obs.ready ? "OBS 已连接" : "OBS 待连接"} · ${data?.youtube.connected ? "频道已授权" : "频道待授权"}`}</span></summary><div className="instance-workflow">
           <section className="workflow-step" aria-labelledby={`step-1-${id}`}>
             <h3 className="visually-hidden" id={`step-1-${id}`}>设备与频道</h3>

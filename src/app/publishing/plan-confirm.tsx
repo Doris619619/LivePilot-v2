@@ -43,11 +43,11 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
       if (await update(plan.items.map(item => item.packageId === next.packageId ? next : item))) setEditing(undefined);
     } catch (e) { setError((e as Error).message); }
   }
-  /** 手工恢复自动排期只清除本条固定时间，标题和说明覆盖仍由服务端保留。 */
+  /** 恢复自动排期提交完整当前草稿，只清固定时间；成功才关闭，失败保留未保存文案。 */
   async function restoreAutomatic() {
     if (!editing) return;
     try {
-      const result = await update(plan.items.map(item => item.packageId === editing.packageId ? { ...item, scheduleSource: "auto", publishAt: undefined } : item));
+      const result = await update(plan.items.map(item => item.packageId === editing.packageId ? { ...editing, scheduleSource: "auto", publishAt: undefined } : item));
       if (result) setEditing(undefined);
     } catch (e) { setError((e as Error).message); }
   }

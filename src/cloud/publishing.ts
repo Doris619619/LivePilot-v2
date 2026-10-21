@@ -17,8 +17,8 @@ import { enqueue, readTask, rpc } from "./tasks";
 import { playlistResultSchema } from "@/shared/broadcast";
 import { unseal } from "@/core/storage";
 import { publishingTaskAccountId, type TaskPayload } from "@/shared/remote";
-import { authorizePublishingAccount, beginPublishingAccountCleanup, completePublishingAccountCleanup, createPublishingAccount as newPublishingAccount, expirePublishingAccountData, publishingAccountCleanups, publishingAccounts, requestPublishingAccountCleanup as accountCleanup, requirePublishingAccount, requirePublishingAccountsCapability } from "./publishing-accounts";
-import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, canRepublishPublishingJob, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport } from "@/shared/publishing";
+import { authorizePublishingAccount, completePublishingAccountCleanup, createPublishingAccount as newPublishingAccount, expirePublishingAccountData, publishingAccountCleanups, publishingAccounts, requestPublishingAccountCleanup as accountCleanup, requirePublishingAccount, requirePublishingAccountsCapability, requirePublishingReauthorization } from "./publishing-accounts";
+import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, canRepublishPublishingJob, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport, publishingRepairSchema, type PublishingRepair } from "@/shared/publishing";
 import { readPublishingTemplates } from "@/server/publishing-templates";
 import { publishingCopyForUse, type PublishingCopyOptions } from "@/shared/publishing-copy-options";
 import { chargeLegacyYouTubePublishing, reserveYouTubePublishing, releaseYouTubePublishing, seedLegacyYouTubePublishing } from "./youtube-usage";
@@ -56,8 +56,8 @@ function beginCleanup(s: State, agentId: string, instanceId: string, owner: stri
 export function publishingStore() { return new PublishingStore(path.join(cloudStore().dir, "publishing")); }
 /** 等待撤销期间禁止新的频道 API 指令，防止清理后又写回授权数据。 */
 export async function assertNoPublishingCleanup(agentId: string, instanceId: string, accountId?: string) { if (accountId) { await requirePublishingAccount(agentId, instanceId, accountId, undefined, false); return; } if ((await readState()).cleanups.some(c => c.agentId === agentId && c.instanceId === instanceId && c.state === "pending")) throw new AppError("CLEANUP", "等待设备清理授权数据，请完成后再连接频道。", 409); }
-/** 旧开关仅归一协议值，不改任务修订、期望状态或排期；损坏文件不能当作空队列。 */
-async function readState() { const saved = await publishingStore().read<State>("state.json"); if (saved) { saved.plans ??= []; saved.schedulePreviews ??= []; saved.removals ??= []; saved.policy = policySchema.parse(saved.policy); for (const job of saved.jobs) { job.spec.policy = policySchema.parse(job.spec.policy); if (uploadObserved(job.observed)) job.hadUpload = true; } return saved; } return { policy: { ...defaultPolicy }, profiles: [], batches: [], plans: [], schedulePreviews: [], removals: [], jobs: [], consents: {}, cleanups: [], quota: {} } as State; }
+/** 读取兼容策略及归档生命周期回执，不改任务修订或执行意图；损坏文件不能当作空队列。 */
+async function readState() { const saved = await publishingStore().read<State>("state.json"); if (saved) { saved.plans ??= []; saved.schedulePreviews ??= []; saved.removals ??= []; saved.policy = policySchema.parse(saved.policy); const archived = new Map(saved.plans.filter(plan => plan.archivedAt).map(plan => [plan.id, plan.archivedAt!])); for (const job of saved.jobs) { job.spec.policy = policySchema.parse(job.spec.policy); if (uploadObserved(job.observed)) job.hadUpload = true; if (archived.has(job.spec.batchId)) job.sourceArchivedAt ??= archived.get(job.spec.batchId); } return saved; } return { policy: { ...defaultPolicy }, profiles: [], batches: [], plans: [], schedulePreviews: [], removals: [], jobs: [], consents: {}, cleanups: [], quota: {} } as State; }
 /** 自有上传执行事实不随 API 数据过期删除；进入上传阶段保守视为可能已建立远端会话。 */
 function uploadObserved(report?: PublishingReport) { return !!report && (!!report.videoId || report.offset > 0 || ["uploading", "processing", "finalizing", "scheduled", "published", "completed"].includes(report.state)); }
 /** 所有编辑使用同一短事务，网络 RPC 位于事务之外。 */
@@ -212,7 +212,7 @@ export async function previewPublishingPlan(user: Member, profileId: string, bat
   const batch = result.batches.find(batch => batch.id === batchId); if (!batch) throw new AppError("PACKAGE", "批次已变化，请重新读取发布目录。");
   if (!batch.packages.length) throw new AppError("PACKAGE", "批次没有可检查的发布包。");
   const plan: PublishingPlan = { id: randomUUID(), revision: 1, owner: agent.owner || user.username, actor: user.username, profile, batch: structuredClone(batch), rule: planRuleSchema.parse(rawRule), items: [], copies: [], skippedOccupied: 0, skipped: [], createdAt: Date.now() };
-  return edit(async s => { await authorizePublishingWrite(user, plan.profile, plan.owner, s); if (s.consents[user.username]?.version !== PRIVACY_VERSION) throw new AppError("PRIVACY", "请重新同意隐私政策。"); if (s.plans.some(p => p.profile.agentId === plan.profile.agentId && p.batch.id === batch.id && (p.archivedAt || p.archivePending))) throw new AppError("ARCHIVE", "批次已归档或正在等待归档确认。", 409); generatePublishingPlan(plan, rawItems || batch.packages.map(pkg => ({ packageId: pkg.id, scheduleSource: "auto", excluded: false })), s.jobs); s.plans.push(plan); return plan; });
+  return edit(async s => { await authorizePublishingWrite(user, plan.profile, plan.owner, s); if (s.consents[user.username]?.version !== PRIVACY_VERSION) throw new AppError("PRIVACY", "请重新同意隐私政策。"); if (s.plans.some(p => p.profile.agentId === plan.profile.agentId && p.batch.id === batch.id && p.archivePending)) throw new AppError("ARCHIVE", "批次已归档或正在等待归档确认。", 409); generatePublishingPlan(plan, rawItems || batch.packages.map(pkg => ({ packageId: pkg.id, scheduleSource: "auto", excluded: false })), s.jobs); s.plans.push(plan); return plan; });
 }
 /** 草稿修订使用乐观版本，刷新可继续；已确认快照只通过 Job 的控制修订修改。 */
 export async function updatePublishingPlan(user: Member, id: string, revision: number, items: PublishingPlanItem[], rawRule?: unknown) {
@@ -287,7 +287,7 @@ export async function confirmPublishingPlan(user: Member, id: string, revision: 
       if (plan.profile.scheduled && (!item.publishAt || Date.parse(item.publishAt) <= Date.now())) throw new AppError("CONFLICT", "预览中的时间已过去，请重新生成预览。", 409);
       if (item.publishAt && occupied.has(Date.parse(item.publishAt))) throw new AppError("CONFLICT", "该频道时刻已被另一计划占用，请刷新预览。", 409);
       if (item.publishAt) occupied.add(Date.parse(item.publishAt));
-      const previous = s.jobs.filter(job => job.spec.profile.channelId === plan.profile.channelId && job.spec.profile.agentId === plan.profile.agentId && job.spec.contentPackage?.id === pkg.id);
+      const previous = s.jobs.filter(job => job.spec.profile.channelId === plan.profile.channelId && job.spec.profile.agentId === plan.profile.agentId && job.spec.contentPackage?.id === pkg.id && !(job.sourceArchivedAt && job.spec.contentPackage.version !== pkg.version));
       if (previous.some(job => !replacements.has(job.spec.id) && !republishing.has(job.spec.id) && (job.observed?.state !== "cancelled" || job.observed.revision !== job.spec.revision || job.hadUpload))) throw new AppError("DUPLICATE", "该发布包已有上传记录；已完成的视频须明确确认再次发布，其他任务须先核对。", 409);
       const spec = jobSpecSchema.parse({ id: randomUUID(), batchId: plan.id, owner: plan.owner, actor: user.username, revision: 1, desired: "run", asset: pkg.sourceVideo, contentPackage: pkg, plan: plan.rule, scheduleSource: item.scheduleSource, profile: plan.profile, index: index + 1, originalPublishAt: item.publishAt, overrides: { ...(item.title !== undefined ? { title: item.title } : {}), ...(item.description !== undefined ? { description: item.description } : {}) }, policy: s.policy, consent: { version: PRIVACY_VERSION, acceptedAt: Date.now(), ai, temporaryPrivateTitle: true } });
       if (!spec.profile.ai.enabled) await publishingMetadata(publishingStore(), spec);
@@ -304,7 +304,7 @@ export async function archivePublishingPlan(user: Member, id: string) {
   await edit(async s => {
     const saved = s.plans.find(value => value.id === id); if (!saved) throw new AppError("PLAN", "计划已清理，请刷新。", 404); await authorizePublishingWrite(user, saved.profile, saved.owner, s);
     assertRemovalControl(s.removals, id);
-    const related = s.plans.filter(p => p.profile.agentId === plan.profile.agentId && p.batch.id === plan.batch.id);
+    const related = s.plans.filter(p => p.profile.agentId === plan.profile.agentId && p.batch.id === plan.batch.id && !p.archivedAt);
     if (related.some(p => p.id !== id && p.archivePending)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请在原计划核对归档。", 409);
     const relatedIds = new Set(related.map(p => p.id)); const jobs = s.jobs.filter(job => relatedIds.has(job.spec.batchId));
     const completed = jobs.filter(job => ["published", "completed"].includes(job.observed?.state || "") && job.observed?.revision === job.spec.revision && (job.spec.profile.privacy !== "public" || job.observed.state === "published" || job.observed.observedPrivacy === "public"));
@@ -316,7 +316,7 @@ export async function archivePublishingPlan(user: Member, id: string) {
     await requireTarget(plan.profile.agentId, plan.profile.instanceId, true);
     const result = await rpc<{ state: "complete"; destination: string }>({ agentId: plan.profile.agentId, instanceId: plan.profile.instanceId }, user.username, { kind: "publishing-archive", batch: plan.batch, archiveId: plan.id, ...(plan.profile.accountId ? { accountId: plan.profile.accountId } : {}) });
     if (result.state !== "complete" || !result.destination) throw new AppError("ARCHIVE", "设备尚未确认归档。");
-    await edit(s => { for (const p of s.plans.filter(p => p.profile.agentId === plan.profile.agentId && p.batch.id === plan.batch.id)) { p.archivePending = false; p.archivedAt = Date.now(); p.archiveDestination = result.destination; } });
+    await edit(s => { for (const p of s.plans.filter(p => p.profile.agentId === plan.profile.agentId && p.batch.id === plan.batch.id && !p.archivedAt)) { p.archivePending = false; p.archivedAt = Date.now(); p.archiveDestination = result.destination; for (const job of s.jobs.filter(job => job.spec.batchId === p.id)) job.sourceArchivedAt = p.archivedAt; } });
     await audit(user.username, "publishing-plan-archive", plan.profile.instanceId, "succeeded"); return result;
   } catch (error) {
     // RPC 将设备原因保留在严格 Problem 中；只接受明确证明源目录尚未移动的拒绝。
@@ -373,7 +373,7 @@ export async function confirmPublishingBatch(user: Member, id: string, ai: boole
   await audit(user.username, "publishing-confirm", batch.profile.instanceId, "succeeded"); return result;
 }
 /** 用户控制先保存 desired/revision；改期保留暂停意图，需人工处理或取消中的任务不能接受无法应用的新时间。 */
-export async function changePublishingJob(user: Member, id: string, action: "pause" | "resume" | "cancel" | "reschedule" | "reconcile", publishAt?: string) {
+export async function changePublishingJob(user: Member, id: string, action: "pause" | "resume" | "cancel" | "reschedule" | "reconcile" | "repair", publishAt?: string, repair?: PublishingRepair) {
   const state = await readState(); const old = state.jobs.find(j => j.spec.id === id); if (!old) throw new AppError("JOB", "任务不存在。", 404);
   const agent = await authorizeAgent(user, old.spec.profile.agentId); if (agent.owner && agent.owner !== old.spec.owner) throw new AppError("FORBIDDEN", "任务设备归属已变更。", 403);
   if (old.spec.profile.accountId) { await authorizePublishingAccount(user, old.spec.profile.accountId, true); await requirePublishingAccount(old.spec.profile.agentId, old.spec.profile.instanceId, old.spec.profile.accountId, old.spec.profile.channelId); }
@@ -394,14 +394,21 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
       job.pendingPublishAt ??= job.observed?.effectivePublishAt || job.spec.originalPublishAt; job.spec.originalPublishAt = publishAt;
       if (job.spec.contentPackage) { job.spec.scheduleSource = "manual"; const plan = s.plans.find(plan => plan.id === job.spec.batchId); const item = plan?.items.find(item => item.packageId === job.spec.contentPackage!.id); if (plan && item) { item.publishAt = publishAt; item.scheduleSource = "manual"; plan.revision++; } }
     }
+    if (action === "repair") {
+      if (!(await agentStore(job.spec.profile.agentId).read<string[]>("capabilities.json"))?.includes("publishing-recovery-v1")) throw new AppError("AGENT_VERSION", "请升级这台电脑的 Agent 后修复原视频设置。", 409);
+      if (job.observed?.state !== "needs_attention" || !job.observed.videoId || job.spec.desired === "cancel") throw new AppError("REPAIR", "只有已上传且需要处理的原视频可修复设置。", 409);
+      const settings = publishingRepairSchema.parse(repair);
+      job.spec.profile = profileSchema.parse({ ...job.spec.profile, ...settings, thumbnailFilename: settings.thumbnailMode === "fixed" ? settings.thumbnailFilename : undefined });
+    }
     job.spec.revision++;
+    if (action === "repair") job.spec.repairRevision = job.spec.revision; else delete job.spec.repairRevision;
     if (action === "reconcile") { job.spec.reconcileRevision = job.spec.revision; job.spec.reconcileTotal = job.prepared?.size || job.observed?.total || job.spec.asset.size; }
     else { if (action !== "reschedule") job.spec.desired = action === "pause" ? "pause" : action === "cancel" ? "cancel" : "run"; if (action === "resume") job.spec.policy = s.policy; delete job.spec.reconcileRevision; delete job.spec.reconcileTotal; }
     return job;
   });
   await audit(user.username, "publishing-" + action, old.spec.profile.instanceId, "accepted"); return result;
 }
-/** Agent 报告按 revision/sequence 核对；上传事实单调保存，不能因 API 数据过期允许重复新建。 */
+/** 报告按revision/sequence核对；授权异常保留工作等待重连，上传事实不因观察数据过期允许重传。 */
 export async function reportPublishing(agentId: string, values: PublishingReport[]) {
   return edit(async s => Promise.all(values.map(async report => {
     const job = s.jobs.find(j => j.spec.id === report.id);
@@ -416,7 +423,7 @@ export async function reportPublishing(agentId: string, values: PublishingReport
       job.prepared ??= report.prepared;
     }
     if (report.total !== (job.prepared?.size || job.spec.asset.size) || report.offset > report.total || job.spec.contentPackage && report.offset > 0 && !job.prepared) throw new AppError("REPORT", "发布报告的最终文件或进度无效。", 403);
-    if (report.authorizationInvalid) { if (job.spec.profile.accountId) { await beginPublishingAccountCleanup(agentId, job.spec.profile.accountId, job.spec.actor); removePublishingAccountData(s, job.spec.profile.accountId); } else beginCleanup(s, agentId, job.spec.profile.instanceId, job.spec.owner, job.spec.actor); return { id: report.id, sequence: report.sequence }; }
+    if (report.authorizationInvalid) { if (job.spec.profile.accountId) await requirePublishingReauthorization(agentId, job.spec.profile.accountId); job.observed = { ...report, state: "needs_attention", message: "请重新授权原频道后继续。工作记录已保留；YouTube 已确认的排期仍可能执行。" }; for (const budget of Object.values(s.quota)) delete budget.reservations?.[job.spec.id]; return { id: report.id, sequence: report.sequence }; }
     if (!job.observed || job.observed.sequence < report.sequence) { job.observed = report; delete job.blockReason; delete job.budgetWaiting; if (report.revision === job.spec.revision && ["scheduled", "published", "completed", "cancelled"].includes(report.state)) { delete job.pendingPublishAt; delete job.pendingPublishAts; } if (report.revision === job.spec.revision && (publishingTerminal(report.state) || ["scheduled", "paused", "needs_attention"].includes(report.state))) for (const budget of Object.values(s.quota)) delete budget.reservations?.[job.spec.id]; }
     return { id: report.id, sequence: report.sequence };
   })));
@@ -474,7 +481,7 @@ async function purgePublishingAccountTasks(agentId: string, accountId: string) {
 export async function requestPublishingAccountCleanup(user: Member, accountId: string) {
   const cleanup = await accountCleanup(user, accountId); await edit(s => removePublishingAccountData(s, accountId)); await purgePublishingAccountTasks(cleanup.agentId, accountId); await audit(user.username, "publishing-account-delete", cleanup.instanceId, "accepted"); return cleanup;
 }
-/** 云服务 tick：只派发窗口内任务，离线保留，任务修订与投递幂等 ID 独立。 */
+/** 预上传窗口只限制未交付的首次工作；活动修订及时送达，离线保留，投递幂等ID独立。 */
 export async function publishingTick() {
   await expirePublishingAccountData();
   for (const cleanup of (await publishingAccountCleanups()).filter(cleanup => cleanup.state === "pending")) await edit(s => removePublishingAccountData(s, cleanup.accountId));
@@ -482,9 +489,10 @@ export async function publishingTick() {
   for (const job of state.jobs) {
     const p = job.spec.profile; const agent = agents.find(a => a.id === p.agentId);
     if (!agent || agent.revoked || agent.owner && agent.owner !== job.spec.owner || !agent.online || agent.maintenance) continue;
-    if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
+    if (job.spec.reconcileRevision !== job.spec.revision && job.spec.desired === "run" && (publishingTerminal(job.observed?.state) && job.observed?.revision === job.spec.revision || !job.delivery && !job.hadUpload && !job.observed?.videoId && job.spec.originalPublishAt && Date.parse(job.spec.originalPublishAt) > Date.now() + (job.spec.plan?.preuploadDays ?? p.schedule.preuploadDays) * 86400_000)) continue;
     const capabilities = await agentStore(p.agentId).read<string[]>("capabilities.json");
     if (job.spec.consent.version === PRIVACY_VERSION && !capabilities?.includes("publishing-consent-v2")) continue;
+    if (job.spec.repairRevision && !capabilities?.includes("publishing-recovery-v1")) continue;
     if (p.accountId) { if (!capabilities?.includes("publishing-accounts-v1")) continue; try { await requirePublishingAccount(p.agentId, p.instanceId, p.accountId, p.channelId); } catch { continue; } }
     if (!capabilities?.includes(job.spec.contentPackage ? "publishing-v2" : "publishing-v1")) continue;
     if (job.observed?.revision === job.spec.revision) continue;

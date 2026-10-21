@@ -18,7 +18,11 @@ export default function UploadRecovery({ agentId, instanceId, restore, cancelled
     try {
       if (item) {
         if (cancel) { await api(uploadUrl(item), { method: "DELETE", headers: { "x-livepilot": "1" } }); if (mounted.current) cancelled(item.id); }
-        else { const status = await api<UploadStatus>(uploadUrl(item)); if (mounted.current) restore(status); }
+        else {
+          const status = await api<UploadStatus>(uploadUrl(item));
+          if (status.id !== item.id || status.instanceId !== instanceId || status.agentId !== agentId) throw new Error("上传记录与当前目标不一致，请重新查询原电脑。");
+          if (mounted.current) restore(status);
+        }
       }
     } catch (e) { if (mounted.current) setError((e as Error).message); }
     finally { try { const items = await api<Recovery[]>(url); if (mounted.current) setItems(items); } catch { if (mounted.current) setError(previous => previous ? previous + " 另：恢复列表暂未刷新，请稍后重新查询。" : "操作已返回，但恢复列表暂未刷新，请重新查询。"); } if (mounted.current) setBusy(false); }

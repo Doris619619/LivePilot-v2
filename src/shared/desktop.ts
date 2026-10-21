@@ -6,14 +6,14 @@ export type Check = { id: string; label: string; status: "ready" | "missing" | "
 export type DesktopInstance = { id: string; name: string; managed: boolean; exe: string; port: number; password: string; initialized: boolean; sourceExe?: string };
 export type PublicInstance = Omit<DesktopInstance, "password">;
 export type DesktopState = { problems?: Problem[];
-  dataLocationReady?: boolean; archivedCandidates?: PublicInstance[]; scan?: ObsScan; dataNotice?: string; version: string; dataRoot: string; paired: boolean; agentId?: string; agentRunning: boolean;
+  retiredInstances?: PublicInstance[]; dataLocationReady?: boolean; archivedCandidates?: PublicInstance[]; scan?: ObsScan; dataNotice?: string; version: string; dataRoot: string; paired: boolean; agentId?: string; agentRunning: boolean;
   online: boolean; autoStart: boolean; busy: boolean; message?: string; connectionError?: string; instances: PublicInstance[];
   candidates?: PublicInstance[]; maintenance?: boolean; activity?: DesktopActivity; obsLaunches?: DesktopActivity[]; checks: Check[]; snapshots: import("./remote").AgentSnapshot[];
   update: { problem?: Problem; stage?: "check" | "download" | "install"; automatic?: boolean; status: string; version?: string; percent?: number; message?: string };
 };
 export type ObsCandidate = { exe: string; version: string; running: boolean; processKnown?: boolean; attached: boolean; error?: string };
 export type ObsScan = { running: boolean; canceled: boolean; deep: boolean; results: ObsCandidate[]; drives: string[]; completedDrives: string[]; inaccessible: string[]; visited: number; current?: string; error?: string };
-export type DesktopAction = "stop-local" | "launch-obs" | "unpair" | "restore-candidate" | "scan" | "scan-cancel" | "import-obs" | "firewall" | "diagnose-obs" | "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "repair-managed" | "discard" | "directory" | "open-data" | "open-publishing" | "autostart" | "web" | "update-check" | "update-download" | "update-install" | "update-apply";
+export type DesktopAction = "stop-local" | "restore-program" | "retire" | "replace-candidate" | "launch-obs" | "unpair" | "restore-candidate" | "scan" | "scan-cancel" | "import-obs" | "firewall" | "diagnose-obs" | "check" | "prepare" | "pair" | "start" | "add" | "rename" | "attach" | "repair" | "repair-managed" | "discard" | "directory" | "open-data" | "open-publishing" | "autostart" | "web" | "update-check" | "update-download" | "update-install" | "update-apply";
 export type DesktopResult = { ok: true; state: DesktopState; cancelled?: boolean } | { ok: false; problem: Problem; fields?: Record<string,string> };
 export type LocalUpdateState = Pick<DesktopState, "version" | "busy" | "update">;
 export type UpdateCommand = "update-check" | "update-download" | "update-install" | "update-apply";
@@ -24,5 +24,5 @@ export type DesktopBridge = { readState?(): Promise<DesktopResult>; copyProblem?
 export type DesktopActivity = { problem?: Problem; attemptId?: string; instanceId?: string; action: DesktopAction; step: number; status: "running" | "failed" | "complete" | "cancelled"; stage: string; startedAt: number; endedAt?: number; obsStartup?: ObsStartupProgress; obsDiagnosis?: ObsStartupProgress; message?: string };
 /** 将配置操作定位到对应步骤，其他设置保留全局反馈。 */
 export function activityStep(action?: DesktopAction) {
-  return action === "check" ? 1 : ["launch-obs", "diagnose-obs", "restore-candidate", "prepare", "add", "attach", "import-obs", "rename", "repair", "repair-managed", "discard"].includes(action || "") ? 2 : ["pair", "start"].includes(action || "") ? 3 : 0;
+  return action === "check" ? 1 : ["restore-program", "retire", "replace-candidate", "launch-obs", "diagnose-obs", "restore-candidate", "prepare", "add", "attach", "import-obs", "rename", "repair", "repair-managed", "discard"].includes(action || "") ? 2 : ["pair", "start"].includes(action || "") ? 3 : 0;
 }

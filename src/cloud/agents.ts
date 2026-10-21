@@ -7,7 +7,7 @@ import { cloudStore, transaction } from "./store";
 import { releaseAgentChannels } from "./bindings";
 import { idSchema, OFFLINE_MS, PROTOCOL, type AgentDescriptor, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
-type Agent = { deleted?: boolean; owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[] };
+type Agent = { deleted?: boolean; owner?: string; id: string; name: string; tokenHash?: string; pairingHash?: string; pairingExpires?: number; pairedTo?: string; pairingReceiptHash?: string; revoked: boolean; session?: string; bootId?: string; sessionSeen?: number; instances: InstanceDescriptor[]; retiredInstanceIds?: string[] };
 type Registry = { agents: Agent[] };
 import type { Problem } from "../shared/problems";
 type Heartbeat = { problems?: Problem[]; at: number; session: string; snapshots: AgentSnapshot[] };
@@ -100,6 +100,7 @@ export async function extendInstances(id: string, instances: InstanceDescriptor[
     const registry = await store.read<Registry>("agents.json"); const agent = registry?.agents.find(a => a.id === id);
     if (!agent || agent.revoked) throw new AppError("AGENT_AUTH", "设备不存在。", 401);
     if (!instances.some(i => i.id === "main") || agent.instances.some(old => !instances.some(i => i.id === old.id))) throw new AppError("INSTANCE", "新清单必须保留 main 和所有已有实例。", 409);
+    if (instances.some(instance => agent.retiredInstanceIds?.includes(instance.id))) throw new AppError("INSTANCE", "已停用的实例 ID 不能重新使用，请新建实例。", 409);
     agent.instances = instances; await store.write("agents.json", registry); return { ok: true };
   });
 }

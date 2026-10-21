@@ -5,10 +5,10 @@ import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { Store } from "../src/core/storage";
 import type { DesktopInstance } from "../src/shared/desktop";
-import { claimRoot, claimLegacyRoot, readRoot, checkRootPath, ordinaryPath } from "./data-root";
-import { access } from "node:fs/promises";
+import { claimRoot, claimLegacyRoot, readRoot, checkRootPath, ordinaryPath, within } from "./data-root";
+import { access, readFile } from "node:fs/promises";
 import { protectWindows } from "./windows-credentials";
-export type Settings = { firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
+export type Settings = { abandonedCandidates?: DesktopInstance[]; retirementPending?: string; retiredInstances?: DesktopInstance[]; firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
 /** AppData 只保存位置；身份与业务配置由目标目录中的 DPAPI 密文持有。 */
 export class SettingsStore {
   private locator = new Store(app.getPath("userData"));
@@ -83,6 +83,42 @@ export class SettingsStore {
     const { hasData } = await import("./data-root");
     if (await hasData(settings)) throw new AppError("DATA", "数据目录已有业务文件但缺少桌面配置，未创建新身份。");
     await this.write(settings); return settings;
+  }
+  /** 恢复窗口只读显示原定位；损坏记录不推测新身份或扫描其他目录。 */
+  async recoveryLocation(): Promise<string> {
+    const location = await this.record<{ dataRoot?: string }>(this.locator, "data-location.json");
+    return typeof location?.dataRoot === "string" ? location.dataRoot : "未能读取原数据位置";
+  }
+  /** 原盘失联后核验同一 rootId、原账户密文与宿主锁；此方法不写入任何配置。 */
+  async inspectRecovery(target: string): Promise<Settings> {
+    const location = await this.record<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>(this.locator, "data-location.json");
+    if (!location || location.version !== 1 || !location.rootId || location.pending || !path.isAbsolute(location.dataRoot)) throw new AppError("DATA", "原定位记录无法核验，请恢复原数据位置；没有创建新身份。");
+    const root = await checkRootPath(target, this.installation());
+    if (root.toLowerCase() !== path.resolve(location.dataRoot).toLowerCase() && await access(location.dataRoot).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; })) throw new AppError("DATA", "原数据位置仍存在，请先恢复原位置，不能切换到可能过期的副本。");
+    const marker = await readRoot(root);
+    if (marker.id !== location.rootId) throw new AppError("DATA", "此目录不是原 LiveNest 数据，未修改定位。");
+    const encrypted = await this.record<string>(await this.rootStore(root), "settings.json");
+    if (!encrypted) throw new AppError("DATA", "此目录缺少原配置，未创建新身份。");
+    const settings = await this.decode(encrypted);
+    if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
+    const lock = await readFile(path.join(root, "state", "host.lock"), "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
+    if (lock) {
+      const pid = Number(lock); if (!Number.isInteger(pid) || pid <= 0) throw new AppError("DATA", "原 Agent 锁损坏，请保留目录。");
+      try { process.kill(pid, 0); throw new AppError("DATA", "原 Agent 仍运行，请从原客户端退出后恢复。"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    }
+    /** 托管路径只在原根内重定位；手动 OBS 和原授权身份保持原值。 */
+    const relocate = (items: DesktopInstance[] | undefined) => items?.map(item => {
+      if (!item.managed) return { ...item };
+      if (!within(settings.dataRoot, item.exe)) throw new AppError("DATA", "托管 OBS 路径不属于原数据根，未更改配置。");
+      return { ...item, exe: path.join(root, path.relative(settings.dataRoot, item.exe)) };
+    });
+    return { ...settings, dataRoot: root, instances: relocate(settings.instances)!, candidates: relocate(settings.candidates), archivedCandidates: relocate(settings.archivedCandidates), retiredInstances: relocate(settings.retiredInstances), abandonedCandidates: relocate(settings.abandonedCandidates) };
+  }
+  /** 只有原数据核验成功才提交位置；失败仍保留原定位供重试。 */
+  async restoreLocation(target: string): Promise<void> {
+    const verified = await this.inspectRecovery(target);
+    await this.write(verified);
   }
   /** 校验 state 和 desktop 路径后使用现有原子存储。 */
   private async rootStore(root: string) { const dir = path.join(root, "state", "desktop"); await ordinaryPath(dir); return new Store(dir); }

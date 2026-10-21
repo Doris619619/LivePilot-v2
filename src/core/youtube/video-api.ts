@@ -42,12 +42,18 @@ export class VideoApi implements VideoPort {
     const name = resource.includes("thumbnails") ? "thumbnails.set" : resource.at(-1) + "." + ((init.method || "GET") === "GET" ? "list" : init.method === "POST" ? "insert" : "update");
     return this.fetchAuthorized(url, init, youtubeMethodSchema.parse(name));
   }
-  /** 过滤上游错误；网络中断被标记可恢复，副作用必须由 Runner 先核对。 */
-  private async fetchAuthorized(url: string, init: RequestInit, method: YouTubeMethod) {
+  /** 首次401只刷新一次；GET重读重新准入计量，写入和流式请求交回Runner核对检查点。 */
+  private async fetchAuthorized(url: string, init: RequestInit, method: YouTubeMethod, recovered = false): Promise<Response> {
     const defaults: YouTubeContext = { ...(this.auth.requestContext || { instanceId: "main" }), purpose: "publishing", trigger: "publishing-tick", ...this.usageContext };
     const token = await withYouTubeContext(defaults, () => this.auth.access()); let response: Response;
     try { response = await youtubeFetch(method, defaults, () => fetch(url, { ...init, headers: { ...init.headers, Authorization: "Bearer " + token.accessToken }, cache: "no-store", redirect: "manual", signal: init.signal || AbortSignal.timeout(30_000) })); }
     catch (error) { if (error instanceof AppError && ["YOUTUBE_PROTECTION_OFFLINE", "YOUTUBE_PROTECTION_WAIT", "YOUTUBE_DAILY_QUOTA"].includes(error.code)) throw error; throw new VideoApiError("VIDEO_NETWORK", "YouTube 网络中断，结果等待核对。", true); }
+    if (response.status === 401 && !recovered) {
+      await response.body?.cancel();
+      await withYouTubeContext(defaults, () => this.auth.access(token.accessToken));
+      if (!init.method || init.method === "GET") return this.fetchAuthorized(url, init, method, true);
+      throw new VideoApiError("VIDEO_AUTH_REFRESHED", "授权已刷新，原操作等待核对后继续。", true);
+    }
     if (response.status === 308 || response.status === 404) return response;
     if (!response.ok) {
       if (response.status === 412) { await response.body?.cancel(); throw new VideoApiError("VIDEO_CHANGED", "视频状态已改变，请重新核对后再操作。"); }

@@ -2,31 +2,41 @@
 import { expect, it, vi } from "vitest";
 import { AppError } from "@/core/errors";
 import { connectSession } from "@/agent/session";
+import { PROTOCOL } from "@/shared/remote";
 import type { Transport } from "@/agent/transport";
 const input = { bootId: "fixture", instances: [{ id: "main", name: "main" }], maintenance: "fixture" };
+const legacy = ["publishing-v1", "publishing-v2", "publishing-accounts-v1"];
+const preview = [...legacy, "media-preview-v1"];
+const consent = [...preview, "publishing-consent-v2"];
+const recovery = [...consent, "publishing-recovery-v1"];
+const quota = [...consent, "youtube-quota-v1", "youtube-usage-v1"];
+const full = [...quota, "publishing-recovery-v1"];
+const generations = [full, quota, recovery, consent, preview, legacy];
 
-it("retries a rejected new capability list once with the existing capabilities", async () => {
-  const post = vi.fn().mockRejectedValueOnce(new AppError("CLOUD_REQUEST", "fixture", 400)).mockResolvedValueOnce({ session: "old", capabilities: ["publishing-v1"] });
-  expect(await connectSession({ post } as unknown as Transport, input)).toEqual({ session: "old", capabilities: ["publishing-v1"] });
-  expect(post).toHaveBeenCalledTimes(2);
-  expect(post.mock.calls[0][1].capabilities).toContain("media-preview-v1");
-  expect(post.mock.calls[1][1]).toMatchObject({ ...input, capabilities: ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1"] });
+it.each([0, 1, 2, 3, 4, 5])("negotiates Cloud generation %i while retaining the strongest supported capability set", async generation => {
+  const supported = generations[generation], allowed = new Set(supported); const result = { session: "accepted", capabilities: supported };
+  /** Cloud 替身只拒绝不认识的能力，认证及真实网络不参与本协议单测。 */
+  const post = vi.fn(async (_route: string, body: { capabilities: string[] }) => { if (body.capabilities.some(capability => !allowed.has(capability))) throw new AppError("CLOUD_REQUEST", "unsupported capability", 400); return result; });
+  expect(await connectSession({ post } as unknown as Transport, input)).toEqual(result);
+  expect(post.mock.calls.map(([route, body]) => [route, body])).toEqual(generations.slice(0, generation + 1).map(capabilities => ["/api/agent/session", { protocol: PROTOCOL, ...input, capabilities }]));
 });
-it.each([401, 403, 503])("does not retry handshake failure %s with downgraded capabilities", async status => {
-  const failure = new AppError("CLOUD_REQUEST", "fixture", status); const post = vi.fn().mockRejectedValue(failure);
+const failures = [new AppError("AGENT_AUTH", "fixture", 401), new AppError("FORBIDDEN", "fixture", 403), new AppError("CLOUD_REQUEST", "fixture", 503), new AppError("CLOUD_NETWORK", "fixture", 503)];
+it.each(failures)("does not downgrade an initial $code/$status failure", async failure => {
+  const post = vi.fn().mockRejectedValue(failure);
   await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure);
   expect(post).toHaveBeenCalledOnce();
 });
-it("advertises preview to upgraded Cloud without fallback", async () => {
-  const result = { session: "new", capabilities: ["media-preview-v1"] }; const post = vi.fn().mockResolvedValue(result);
-  expect(await connectSession({ post } as unknown as Transport, input)).toEqual(result);
-  expect(post).toHaveBeenCalledOnce();
+it.each(failures)("stops negotiation immediately if a later generation returns $code/$status", async failure => {
+  const post = vi.fn().mockRejectedValueOnce(new AppError("CLOUD_REQUEST", "unsupported capability", 400)).mockRejectedValue(failure);
+  await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure);
+  expect(post).toHaveBeenCalledTimes(2); expect(post.mock.calls[1][1]).toEqual({ protocol: PROTOCOL, ...input, capabilities: quota });
 });
-
-it("falls back across both known Cloud generations without losing preview on 0.1.14", async () => {
-  const post = vi.fn().mockRejectedValueOnce(new AppError("CLOUD_REQUEST", "fixture", 400)).mockRejectedValueOnce(new AppError("CLOUD_REQUEST", "fixture", 400)).mockResolvedValue({ session: "old" });
-  await connectSession({ post } as unknown as Transport, input);
-  expect(post.mock.calls[0][1].capabilities).toContain("publishing-consent-v2");
-  expect(post.mock.calls[1][1].capabilities).toContain("media-preview-v1");
-  expect(post.mock.calls[2][1].capabilities).toEqual(["publishing-v1", "publishing-v2", "publishing-accounts-v1"]);
+it("propagates the final protocol rejection after the six known generations", async () => {
+  const failure = new AppError("CLOUD_REQUEST", "unsupported capability", 400); const post = vi.fn().mockRejectedValue(failure);
+  await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure);
+  expect(post.mock.calls.map(call => call[1].capabilities)).toEqual(generations);
+});
+it("does not treat an untrusted error with an HTTP-shaped status as a protocol rejection", async () => {
+  const failure = Object.assign(new Error("synthetic transport failure"), { status: 400 }); const post = vi.fn().mockRejectedValue(failure);
+  await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure); expect(post).toHaveBeenCalledOnce();
 });
