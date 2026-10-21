@@ -39,11 +39,14 @@ afterEach(async () => {
 });
 /** 启动仅操作本例锁的原生 Windows owner，通过显式握手进入 delete-pending。 */
 async function pendingOwner(filename: string) {
+  const started = performance.now(), seen = new Set<string>();
   const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-File", path.resolve("tests/fixtures/windows-delete-pending.ps1"), filename], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); children.add(child);
+  process.stdout.write("Native lock fixture: " + JSON.stringify({ phase: "spawn", elapsedMs: 0 }) + "\n");
   let output = "", error = ""; const waits = new Set<{ word: string; resolve(): void; reject(error: Error): void }>();
-  child.stdout.on("data", bytes => { output += bytes.toString(); for (const item of waits) if (output.includes(item.word)) { waits.delete(item); item.resolve(); } });
+  /** 只输出合成子进程的阶段耗时，区分 PowerShell/C# 冷启动与真正的锁竞争，不记录路径或凭据。 */
+  child.stdout.on("data", bytes => { output += bytes.toString(); for (const phase of ["starting", "compiled", "held", "pending"]) if (output.includes(phase) && !seen.has(phase)) { seen.add(phase); process.stdout.write("Native lock fixture: " + JSON.stringify({ phase, elapsedMs: Math.round(performance.now() - started) }) + "\n"); } for (const item of waits) if (output.includes(item.word)) { waits.delete(item); item.resolve(); } });
   child.stderr.on("data", bytes => { error += bytes.toString(); });
-  const exited = new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => { children.delete(child); if (code) reject(new Error("Native fixture failed: " + error)); else resolve(); for (const item of waits) item.reject(new Error("Native fixture ended before " + item.word)); }); });
+  const exited = new Promise<void>((resolve, reject) => { child.once("error", reject); child.once("exit", code => { process.stdout.write("Native lock fixture: " + JSON.stringify({ phase: "exit", elapsedMs: Math.round(performance.now() - started), code }) + "\n"); children.delete(child); if (code) reject(new Error("Native fixture failed: " + error)); else resolve(); for (const item of waits) item.reject(new Error("Native fixture ended before " + item.word)); }); });
   /** 只等待固定测试标记，不读取真实进程或服务日志。 */
   const wait = (word: string) => output.includes(word) ? Promise.resolve() : new Promise<void>((resolve, reject) => waits.add({ word, resolve, reject }));
   await wait("held");
@@ -122,14 +125,14 @@ it.runIf(process.platform === "win32")("retries only a real delete-pending lock 
   expect(run).toHaveBeenCalledOnce(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
   expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]).startsWith(filename + ".") && String(call[0]).endsWith(".released"))).toHaveLength(1);
   expect(await readdir(root)).toEqual([]);
-});
+}, 20000);
 it.runIf(process.platform === "win32")("returns the real EPERM when a proven pending deletion outlives the bounded window", async () => {
   const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename), run = vi.fn();
   controls.beforeCreate = async name => { if (name !== filename) return; controls.beforeCreate = undefined; owner.child.stdin.write("delete\n"); await owner.wait("pending"); };
   const started = performance.now(); await expect(transaction(new Store(root), run)).rejects.toMatchObject({ code: "EPERM" });
   expect(performance.now() - started).toBeLessThan(1500); expect(run).not.toHaveBeenCalled(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
   owner.release(); await owner.exited; await expect(lstat(filename)).rejects.toMatchObject({ code: "ENOENT" });
-});
+}, 20000);
 it.runIf(process.platform === "win32")("preserves a real directory ACL denial instead of retrying it as BUSY", async () => {
   const blocked = path.join(root, "no-create"); await mkdir(blocked);
   const identity = await execute("whoami.exe", ["/user", "/fo", "csv", "/nh"], { windowsHide: true }); const sid = /S-1-[0-9-]+/.exec(identity.stdout)?.[0]; if (!sid) throw new Error("Cannot identify synthetic directory ACL owner");

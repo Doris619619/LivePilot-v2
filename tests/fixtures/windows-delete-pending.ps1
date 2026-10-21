@@ -1,6 +1,7 @@
 # Test-only Windows delete-pending lock owner; release only its own native handle.
 param([string]$LockPath)
 $ErrorActionPreference = 'Stop'
+[Console]::Out.WriteLine('starting')
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -12,6 +13,7 @@ public static class PendingLockFixture {
   public static int DeletePending(SafeFileHandle handle) { byte deleted=1; IoStatus status; return NtSetInformationFile(handle,out status,ref deleted,1,13); }
 }
 '@
+[Console]::Out.WriteLine('compiled')
 $handle = [PendingLockFixture]::CreateFile($LockPath,[uint32]3221291008,7,[IntPtr]::Zero,1,128,[IntPtr]::Zero)
 if ($handle.IsInvalid) { throw ('Fixture cannot create owned lock: '+[Runtime.InteropServices.Marshal]::GetLastWin32Error()+' / '+$LockPath) }
 $stream = [IO.FileStream]::new($handle,[IO.FileAccess]::ReadWrite)

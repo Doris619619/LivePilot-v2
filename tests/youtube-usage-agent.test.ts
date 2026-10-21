@@ -47,6 +47,16 @@ it("retries a lost Cloud admission response with the same ID and no Google call"
   const input = attempt(); expect((await f.runtime.admit(input)).allowed).toBe(true);
   expect(f.post).toHaveBeenCalledTimes(2); expect(f.post.mock.calls[0][1]).toEqual(f.post.mock.calls[1][1]); expect(fetch).not.toHaveBeenCalled();
 });
+it("fails closed on Cloud BUSY with a 30second retry hint and no automatic admission or Google retry", async () => {
+  const { installYouTubeRuntime, youtubeFetch } = await import("../src/core/youtube/usage");
+  const f = await fixture(); connect(f.runtime); installYouTubeRuntime(f.runtime);
+  f.post.mockRejectedValue(new AppError("BUSY", "synthetic lock contention", 409));
+  const upstream = vi.fn(() => fetch("https://www.googleapis.com/youtube/v3/channels"));
+  try {
+    await expect(youtubeFetch("channels.list", { instanceId: "main", purpose: "background", trigger: "dashboard" }, upstream)).rejects.toMatchObject({ code: "YOUTUBE_PROTECTION_WAIT", blockReason: "YOUTUBE_PROTECTION_OFFLINE", retryAt: f.now() + 30_000, problem: { outcome: "not-sent", context: { retryAt: f.now() + 30_000 } } });
+    expect(f.post).toHaveBeenCalledOnce(); expect(upstream).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
+  } finally { installYouTubeRuntime(); }
+});
 it("does not grant a late permit after the Cloud connection has been closed", async () => {
   const f = await fixture(); connect(f.runtime); let release: ((value: YouTubeAdmission) => void) | undefined;
   const started = new Promise<void>(resolve => { f.post.mockImplementationOnce(async () => { resolve(); return await new Promise<YouTubeAdmission>(value => { release = value; }); }); });

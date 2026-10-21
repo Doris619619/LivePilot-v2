@@ -9,6 +9,7 @@ import { admitYouTube, reportYouTubeResult, updateYouTubePolicy, youtubeUsageSum
 import { editYouTubeUsage, youtubeDay, youtubeUsageStore, YOUTUBE_HOT_LIMIT } from "@/cloud/youtube-usage-store";
 import { ingestYouTubeUsage, youtubeEvents } from "@/cloud/youtube-usage-events";
 import { quotaDay } from "@/core/publishing/schedule";
+import { LockBusyError } from "@/core/storage";
 import { defaultYouTubePolicy, youtubeUsageEventSchema, youtubePolicySchema, type YouTubeAdmit, type YouTubeUsageEvent } from "@/shared/youtube-usage";
 let dir: string;
 const fingerprint = createHash("sha256").update("synthetic-oauth-client").digest("hex");
@@ -31,14 +32,30 @@ it("fails closed on first-day unknown history and on an unmapped OAuth client", 
   await baseline(); expect(await admitYouTube("studio_a", request({ clientFingerprint: "f".repeat(64) }))).toMatchObject({ allowed: false, code: "YOUTUBE_PROJECT_UNKNOWN" });
   expect((await youtubeUsageSummary()).usedUnits).toBe(0);
 });
-it("atomically permits exactly the last20 routine units across100 concurrent device attempts", async () => {
+it("keeps the last20 units atomic across100 concurrent requests, explicit BUSY retries and receipt replays", async () => {
   // 固定在 PT 日中但保留流逝时间，避免并发场景跨日重置，同时不冻结事务的五秒期限。
   const nativeNow = Date.now.bind(Date); const offset = Date.parse("2026-10-21T20:00:00Z") - nativeNow();
   const clock = vi.spyOn(Date, "now").mockImplementation(() => nativeNow() + offset);
   try {
     await baseline(8480);
-    const results = await Promise.all(Array.from({ length: 100 }, (_, index) => admitYouTube(index % 2 ? "studio_a" : "studio_b", request())));
-    expect(results.filter(r => r.allowed)).toHaveLength(20); expect((await youtubeUsageSummary()).usedUnits).toBe(20); expect((await youtubeUsageSummary()).remainingUnits).toBe(500);
+    const inputs = Array.from({ length: 100 }, (_, index) => ({ agentId: index % 2 ? "studio_a" : "studio_b", input: request() }));
+    // 这里只验证 Cloud 原子计账，不承诺慢磁盘下 100 个请求都能在现有五秒锁期限内得到准入。
+    const first = await Promise.allSettled(inputs.map(({ agentId, input }) => admitYouTube(agentId, input)));
+    const accepted: { agentId: string; input: YouTubeAdmit; admission: Awaited<ReturnType<typeof admitYouTube>> }[] = [];
+    const busy: typeof inputs = [];
+    for (const [index, result] of first.entries()) {
+      if (result.status === "fulfilled") { if (result.value.allowed) accepted.push({ ...inputs[index], admission: result.value }); }
+      else { expect(result.reason).toBeInstanceOf(LockBusyError); expect(result.reason.lockName).toBe("youtube-budget.lock"); busy.push(inputs[index]); }
+    }
+    expect(accepted.length).toBeLessThanOrEqual(20);
+    const firstSummary = await youtubeUsageSummary(); expect(firstSummary.usedUnits).toBe(accepted.length); expect(firstSummary.remainingUnits).toBe(520 - accepted.length);
+    expect(JSON.parse(await readFile(path.join(youtubeUsageStore().dir, "budget.json"), "utf8")).days[quotaDay()].units).toBe(accepted.length);
+    // 显式串行重试未进入事务的同一 ID，并重放已准入回执；这不是 Agent 自动重试 BUSY 的业务承诺。
+    for (const input of busy) { const admission = await admitYouTube(input.agentId, input.input); if (admission.allowed) accepted.push({ ...input, admission }); }
+    expect(accepted).toHaveLength(20);
+    for (const { agentId, input, admission } of accepted) expect(await admitYouTube(agentId, input)).toEqual(admission);
+    const final = await youtubeUsageSummary(); expect(final.usedUnits).toBe(20); expect(final.remainingUnits).toBe(500);
+    expect(JSON.parse(await readFile(path.join(youtubeUsageStore().dir, "budget.json"), "utf8")).days[quotaDay()].units).toBe(20);
   } finally { clock.mockRestore(); }
 }, 20000);
 it("durably deduplicates a lost admission response and rejects changed ownership", async () => {
