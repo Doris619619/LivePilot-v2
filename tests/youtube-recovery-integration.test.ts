@@ -36,6 +36,7 @@ let root: string, executor: Executor, runtime: AgentYouTubeUsage;
 let recoveryRunner: PublishingRunner | undefined;
 let google: ReturnType<typeof vi.fn>;
 let reads: "ok" | "first-401" | "always-401", refreshInvalid: boolean, rejectWrite: boolean, videoReads: number, serial: number;
+let omitAuthorizationProof: boolean;
 const attempts: YouTubeAdmit[] = [];
 const pendingOperations = new Set<Promise<unknown>>(), pendingDeliveries = new Set<Promise<unknown>>();
 let cancellation: AbortController;
@@ -56,14 +57,14 @@ beforeEach(async ({ signal }) => {
   await acceptPublishingPrivacy(alice, PRIVACY_VERSION); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true });
   await updateYouTubePolicy({ baseline: { day: quotaDay(), units: 0, uploads: 0, source: "conservative-estimate" } }, admin.username);
   const transport = new Transport("https://synthetic.invalid", agentId, "b".repeat(64)); transport.session = session.session;
-  attempts.length = 0; recoveryRunner = undefined; reads = "ok"; refreshInvalid = false; rejectWrite = false; videoReads = 0; serial = 0;
+  attempts.length = 0; recoveryRunner = undefined; reads = "ok"; refreshInvalid = false; rejectWrite = false; videoReads = 0; serial = 0; omitAuthorizationProof = false;
   vi.spyOn(transport, "post").mockImplementation(async (route, raw) => {
     if (route.endsWith("youtube-quota/admit")) { const input = raw as YouTubeAdmit; attempts.push(input); return await admitYouTube(agentId, input) as never; }
     if (route.endsWith("youtube-quota/result")) return await reportYouTubeResult(agentId, raw as YouTubeResult) as never;
     if (route.endsWith("youtube-usage")) return await ingestYouTubeUsage(agentId, (raw as { events: YouTubeUsageEvent[] }).events) as never;
     if (route.endsWith("publishing/accounts-binding")) {
-      const input = raw as { accountId: string; instanceId: string; channelId: string; channel: string; channelCheckedAt: number; confirm: boolean };
-      return await claimPublishingAccount(agentId, input.accountId, input.instanceId, input.channelId, input.channel, input.confirm, input.channelCheckedAt) as never;
+      const input = raw as { accountId: string; instanceId: string; channelId: string; channel: string; channelCheckedAt: number; confirm: boolean; authorizationEpoch?: string; authorizationGeneration?: string };
+      return await claimPublishingAccount(agentId, input.accountId, input.instanceId, input.channelId, input.channel, input.confirm, input.channelCheckedAt, omitAuthorizationProof ? undefined : { epoch: input.authorizationEpoch, generation: input.authorizationGeneration }) as never;
     }
     if (route.endsWith("publishing/sync")) {
       const input = raw as { reports: PublishingReport[]; accounts?: PublishingAccountReport[] };
@@ -307,4 +308,55 @@ it("requires an upgrade after a protected account downgrades while preserving or
   await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "AGENT_VERSION" }); expect(await accountStatus(account.id)).toBe("connected");
   const cleanup = await requestPublishingAccountCleanup(alice, account.id);
   expect((await admitYouTube(agentId, { ...context, attemptId: randomUUID(), operationId: cleanup.id, method: "oauth.revoke", purpose: "authorization", trigger: "publishing-command" })).allowed).toBe(true);
+}, 10_000);
+
+it("V02 explicit OAuth cancellation restores an unchanged healthy account and its original job controls", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Cancel healthy reauthorization"); await finish(await begin(account.id));
+  const { spec, runner } = await checkpoint(account.id); await reportPublishing(agentId, await runner.reports()); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  const transaction = await begin(account.id); expect(await accountStatus(account.id)).toBe("needs_reauthorization"); const calls = google.mock.calls.length;
+  await deliver(finishRemoteOAuth(transaction.state, transaction.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish");
+  expect(google.mock.calls.length).toBe(calls); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original); expect(await accountStatus(account.id)).toBe("connected");
+  expect((await admitYouTube(agentId, { attemptId: randomUUID(), clientFingerprint: createHash("sha256").update(clientId).digest("hex"), instanceId: "main", accountId: account.id, jobId: spec.id, method: "videos.list", purpose: "publishing", trigger: "publishing-tick" })).allowed).toBe(true);
+  await expect(changePublishingJob(alice, spec.id, "reconcile")).resolves.toMatchObject({ spec: { id: spec.id } }); await expect(changePublishingJob(alice, spec.id, "cancel")).resolves.toMatchObject({ spec: { desired: "cancel" } });
+}, 15_000);
+
+it.each(["already-invalid", "new-401", "superseded", "unknown-confirmation", "write-possible", "wrong-channel"] as const)("V02 cancellation preserves protection for %s", async boundary => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Cancellation boundary"); await finish(await begin(account.id));
+  const { spec } = await checkpoint(account.id); const originalToken = (await executor.publishingAccounts.auth(account.id).tokens())!;
+  const failure = { id: spec.id, revision: 1, sequence: 1, state: "needs_attention" as const, offset: spec.asset.size, total: spec.asset.size, videoId: "video_original", updatedAt: Date.now(), authorizationInvalid: true, authorizationFailureId: randomUUID(), authorizationGeneration: originalToken.authorizationGeneration };
+  if (boundary === "already-invalid") await reportPublishing(agentId, [failure]);
+  const transaction = await begin(account.id); const googleBefore = google.mock.calls.length;
+  if (boundary === "new-401") await reportPublishing(agentId, [failure]);
+  const newer = boundary === "superseded" ? await begin(account.id) : undefined;
+  if (boundary === "write-possible") {
+    const saved = unseal<{ publishingReauthorizationEpoch: string; authorizationGeneration: string }>((await cloudStore().read<string>("oauth-" + transaction.state + ".json"))!);
+    // 模拟已持久确认的Token写入屏障；其后的磁盘写入结果未知，明确取消也不能推断旧凭据仍可用。
+    await claimPublishingAccount(agentId, account.id, "main", channelId, "Synthetic channel", false, Date.now(), { epoch: saved.publishingReauthorizationEpoch, generation: saved.authorizationGeneration });
+  }
+  if (boundary === "wrong-channel") {
+    const original = google.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>;
+    google.mockImplementation((url: string, init?: RequestInit) => url.startsWith("https://www.googleapis.com/youtube/v3/channels?") ? Promise.resolve(Response.json({ items: [{ id: "different_channel", snippet: { title: "Synthetic wrong channel" } }] })) : original(url, init));
+    await expect(finish(transaction)).rejects.toBeDefined();
+  } else {
+    const operation = deliver(finishRemoteOAuth(transaction.state, transaction.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish", boundary === "unknown-confirmation" ? async () => { throw new Error("Synthetic lost cancellation acknowledgement"); } : undefined);
+    if (boundary === "unknown-confirmation") await expect(operation).rejects.toBeDefined(); else await operation;
+    expect(google.mock.calls.length).toBe(googleBefore);
+  }
+  expect(await accountStatus(account.id)).toBe("needs_reauthorization"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(originalToken);
+  if (newer) {
+    const stillCurrent = unseal<{ publishingReauthorizationEpoch: string }>((await cloudStore().read<string>("oauth-" + newer.state + ".json"))!); expect(await publishingReauthorizationEpoch(agentId, account.id)).toBe(stillCurrent.publishingReauthorizationEpoch);
+    await deliver(finishRemoteOAuth(newer.state, newer.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish"); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+  }
+}, 15_000);
+
+it("V02 a prior generation-capable Agent missing the write proof is rejected before replacing tokens", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Prior Agent proof"); await finish(await begin(account.id)); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  omitAuthorizationProof = true; const transaction = await begin(account.id); await expect(finish(transaction)).rejects.toMatchObject({ code: "AGENT_VERSION" });
+  expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+}, 15_000);
+
+it("V02 a definitely refused begin restores the original healthy account", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Busy begin"); await finish(await begin(account.id)); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-begin", accountId: account.id });
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "BUSY" }); expect(await accountStatus(account.id)).toBe("connected"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
 }, 10_000);

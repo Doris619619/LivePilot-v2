@@ -92,6 +92,11 @@ export class PublishingRunner {
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
     const repairing = !!old && spec.repairRevision === spec.revision && old.report.state === "needs_attention" && !!old.report.videoId && samePublishingSourceProfile(old.spec.profile, spec.profile);
     if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || !repairing && JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
+    // 执行标记属于真实已执行的旧配置；核对先持久保存修复待办再替换目标，不能把旧封面成功当成新封面已设置。
+    if (old && repairing) {
+      if (old.spec.profile.thumbnailMode !== spec.profile.thumbnailMode || old.spec.profile.thumbnailFilename !== spec.profile.thumbnailFilename) old.thumbnailDone = false;
+      old.playlistsDone = old.playlistsDone.filter(id => spec.profile.playlistIds.includes(id)); old.finalized = false; old.resumeState = "finalizing"; old.repairPending = true;
+    }
     // 查询修订只保存最新意图和持久查询请求，不能以 run 标记恢复暂停、异常或重做发布设置。
     if (spec.reconcileRevision === spec.revision) {
       const entry: Entry = old || { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "needs_attention", offset: 0, total: spec.reconcileTotal || spec.asset.size, updatedAt: this.now() }, expiredData: true, playlistsDone: [], failures: 0 };
@@ -107,10 +112,6 @@ export class PublishingRunner {
       const rescheduled = spec.desired !== "cancel" && old.spec.originalPublishAt !== spec.originalPublishAt;
       const rescheduleRejected = rescheduled && (publishingTerminal(old.report.state) || old.report.state === "needs_attention");
       if (rescheduled && !rescheduleRejected && old.report.videoId) old.reschedulePreviousAt ??= old.report.effectivePublishAt || old.spec.originalPublishAt;
-      if (repairing) {
-        if (old.spec.profile.thumbnailMode !== spec.profile.thumbnailMode || old.spec.profile.thumbnailFilename !== spec.profile.thumbnailFilename) old.thumbnailDone = false;
-        old.playlistsDone = old.playlistsDone.filter(id => spec.profile.playlistIds.includes(id)); old.finalized = false; old.resumeState = "finalizing"; old.repairPending = true;
-      }
       old.spec = spec; clearAuthorizationFailure(old.report); if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
       if (rescheduleRejected) { old.report.message = old.report.state === "published" ? "视频已公开，改期未应用。" : "任务已结束或需要人工处理，改期未应用。"; if (["published", "completed"].includes(old.report.state)) old.report.nextAttemptAt = this.now() + 25 * 86400_000; }
       else {

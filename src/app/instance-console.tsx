@@ -50,6 +50,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
     durationMs,
     selection,
     working,
+    checking,
     error,
     stale,
     confirmed,
@@ -121,7 +122,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
   const broadcastControls = <>
           {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
-          {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy} onClick={() => void checkPlatform()}><RefreshIcon />重新检查状态</button>}
+          {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy || checking} onClick={() => void checkPlatform()}><RefreshIcon />{checking ? "正在核对平台…" : "重新检查状态"}</button>}
           {actionMode === "confirm-obs" && <button type="button" className="btn-primary" disabled={busy} onClick={() => void act("launch")}>确认 OBS 已启动</button>}
           {(actionMode === "start" || actionMode === "retry" || actionMode === "resume") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{actionMode === "resume" ? "继续本场开播" : actionMode === "retry" ? "重试开播" : "开始直播"}</span>

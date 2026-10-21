@@ -131,3 +131,19 @@ it.each(["resume", "pause", "cancel", "reconcile"] as const)("M05 %s clears hist
     const epoch = await publishingReauthorizationEpoch("pc", account.id); await reportPublishing("pc", [{ ...after, sequence: after.sequence + 1 }]); expect(await publishingReauthorizationEpoch("pc", account.id)).toBe(epoch);
   }
 });
+
+it.each(["continue", "reconcile-continue", "pause-reconcile-continue"] as const)("V05 %s preserves the pending changed thumbnail across a restart", async flow => {
+  const original = fixtureJob(); original.profile.thumbnailMode = "fixed"; original.profile.thumbnailFilename = "old.jpg"; original.profile.playlistIds = ["old_playlist"]; await seedJob(original);
+  const media = config("main").mediaRoot; await mkdir(path.join(media, "thumbnails"), { recursive: true }); await writeFile(path.join(media, "thumbnails", "new.jpg"), Buffer.from("ffd8ffe000000000", "hex"));
+  const storage = await checkpoint(original); await storage.write("entries.enc", seal([{ spec: original, report: { id: original.id, revision: 1, sequence: 1, state: "needs_attention", offset: original.asset.size, total: original.asset.size, videoId: "video_one", updatedAt: Date.now(), metadata: { title: "Synthetic", description: "Synthetic" } }, thumbnailDone: true, playlistsDone: ["old_playlist"], failures: 1 }]));
+  const { api, videos } = fixtureApi(); videos.set("video_one", { id: "video_one", snippet: { channelId: original.profile.channelId }, status: { privacyStatus: "private", uploadStatus: "processed" }, processingDetails: { processingStatus: "succeeded" } });
+  let runner = track(new PublishingRunner(new Map(), { store: storage, api: () => api }));
+  await changePublishingJob(alice, original.id, "repair", undefined, { thumbnailMode: "fixed", thumbnailFilename: "new.jpg", playlistIds: ["new_playlist"] });
+  if (flow !== "continue") {
+    if (flow === "pause-reconcile-continue") await changePublishingJob(alice, original.id, "pause");
+    const query = await changePublishingJob(alice, original.id, "reconcile"); await runner.apply(query.spec); await runner.tick(); await idle(runner); expect(api.thumbnail).not.toHaveBeenCalled(); expect(api.playlist).not.toHaveBeenCalled(); expect(api.finalize).not.toHaveBeenCalled();
+    await reportPublishing("pc", await runner.reports()); await runner.stop(); runner = track(new PublishingRunner(new Map(), { store: storage, api: () => api }));
+  }
+  const current = await changePublishingJob(alice, original.id, "resume"); await runner.apply(current.spec); await runner.tick(); await idle(runner);
+  expect(api.thumbnail).toHaveBeenCalledExactlyOnceWith("video_one", expect.stringMatching(/new\.jpg$/)); expect(api.playlist).toHaveBeenCalledExactlyOnceWith("video_one", "new_playlist"); expect(api.begin).not.toHaveBeenCalled(); expect((await runner.reports())[0]).toMatchObject({ videoId: "video_one", state: "completed" });
+});

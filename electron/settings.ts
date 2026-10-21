@@ -9,7 +9,7 @@ import { claimRoot, claimLegacyRoot, readRoot, checkRootPath, ordinaryPath, with
 import { access, readFile } from "node:fs/promises";
 import { protectWindows } from "./windows-credentials";
 export type Settings = { abandonedCandidates?: DesktopInstance[]; retirementPending?: string; retirementAgentId?: string; orphanedRetirements?: { agentId?: string; instanceId: string; abandonedAt: number }[]; retiredInstances?: DesktopInstance[]; firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
-type Relocation = { version: 1; rootId: string; from: string; to: string; identityDigest: string };
+type Relocation = { version: 1 | 2; rootId: string; from: string; to: string; committed?: string; identityDigest: string };
 /** 提交记录仅保存不可逆身份摘要，不能把密钥或设备凭据写入 AppData 明文。 */
 function relocationIdentity(settings: Settings) { return createHash("sha256").update(JSON.stringify([settings.rootId, settings.encryptionKey, settings.identity])).digest("hex"); }
 /** AppData 只保存位置；身份与业务配置由目标目录中的 DPAPI 密文持有。 */
@@ -94,6 +94,10 @@ export class SettingsStore {
   }
   /** 原盘失联后核验同一 rootId、原账户密文与宿主锁；此方法不写入任何配置。 */
   async inspectRecovery(target: string): Promise<Settings> {
+    return (await this.inspectRecoveryState(target)).settings;
+  }
+  /** 同时保留本次实际读到的密文位置，重入提交不能提前抹掉解释上一份已提交密文的证据。 */
+  private async inspectRecoveryState(target: string): Promise<{ settings: Settings; committedRoot: string }> {
     const location = await this.record<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>(this.locator, "data-location.json");
     if (!location || location.version !== 1 || !location.rootId || location.pending || !path.isAbsolute(location.dataRoot)) throw new AppError("DATA", "原定位记录无法核验，请恢复原数据位置；没有创建新身份。");
     const root = await checkRootPath(target, this.installation());
@@ -109,7 +113,8 @@ export class SettingsStore {
     if (path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) {
       const pending = await this.record<Relocation>(this.locator, "data-recovery.json");
       const same = (left: string, right: string) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
-      if (!pending || pending.version !== 1 || pending.rootId !== marker.id || !path.isAbsolute(pending.from || "") || !path.isAbsolute(pending.to || "") || !same(pending.from, location.dataRoot) || !same(pending.to, settings.dataRoot) || ![originalRoot, pending.to].some(candidate => same(candidate, root)) || pending.identityDigest !== relocationIdentity(settings)) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
+      const committed = pending?.version === 2 ? pending.committed : pending?.to;
+      if (!pending || ![1, 2].includes(pending.version) || pending.rootId !== marker.id || !path.isAbsolute(pending.from || "") || !path.isAbsolute(pending.to || "") || !committed || !path.isAbsolute(committed) || !same(pending.from, location.dataRoot) || ![committed, pending.to].some(candidate => same(candidate, settings.dataRoot)) || ![originalRoot, committed, pending.to].some(candidate => same(candidate, root)) || pending.identityDigest !== relocationIdentity(settings)) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
     }
     const lock = await readFile(path.join(root, "state", "host.lock"), "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
     if (lock) {
@@ -123,15 +128,15 @@ export class SettingsStore {
       if (!within(settings.dataRoot, item.exe)) throw new AppError("DATA", "托管 OBS 路径不属于原数据根，未更改配置。");
       return { ...item, exe: path.join(root, path.relative(settings.dataRoot, item.exe)) };
     });
-    return { ...settings, dataRoot: root, instances: relocate(settings.instances)!, candidates: relocate(settings.candidates), archivedCandidates: relocate(settings.archivedCandidates), retiredInstances: relocate(settings.retiredInstances), abandonedCandidates: relocate(settings.abandonedCandidates) };
+    return { committedRoot: settings.dataRoot, settings: { ...settings, dataRoot: root, instances: relocate(settings.instances)!, candidates: relocate(settings.candidates), archivedCandidates: relocate(settings.archivedCandidates), retiredInstances: relocate(settings.retiredInstances), abandonedCandidates: relocate(settings.abandonedCandidates) } };
   }
   /** 只有原数据核验成功才提交位置；失败仍保留原定位供重试。 */
   async restoreLocation(target: string): Promise<void> {
-    const verified = await this.inspectRecovery(target);
+    const { settings: verified, committedRoot } = await this.inspectRecoveryState(target);
     const location = await this.record<{ dataRoot: string; rootId: string }>(this.locator, "data-location.json");
     if (!location || location.rootId !== verified.rootId) throw new AppError("DATA", "原数据定位已改变，请重新核验。");
-    // 用户已确认的同一事务先落盘；第二阶段失败或重启后，可核验新密文身份并重做 locator 提交。
-    await this.locator.write("data-recovery.json", { version: 1, rootId: verified.rootId, from: location.dataRoot, to: verified.dataRoot, identityDigest: relocationIdentity(verified) } satisfies Relocation);
+    // 新密文尚未成功时仍用committed解释旧密文；成功后to解释新密文，任一阶段失败均可沿同一身份重入。
+    await this.locator.write("data-recovery.json", { version: 2, rootId: verified.rootId, from: location.dataRoot, to: verified.dataRoot, committed: committedRoot, identityDigest: relocationIdentity(verified) } satisfies Relocation);
     await this.write(verified);
     await this.locator.remove("data-recovery.json");
   }

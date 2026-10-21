@@ -5,11 +5,11 @@ import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "@/core/config";
 import { seal, unseal } from "@/core/storage";
-import { AppError, problemFor } from "@/core/errors";
+import { AppError, isAppError, problemFor } from "@/core/errors";
 import { cloudStore, transaction } from "./store";
 import { rpc } from "./tasks";
 import type { Target } from "@/shared/remote";
-import { authorizePublishingAccount, requirePublishingAccount, requirePublishingAccountsCapability, publishingReauthorizationEpoch, completePublishingReauthorization, assertPublishingAuthorizationEpoch, requirePublishingAuthorizationCapability } from "./publishing-accounts";
+import { authorizePublishingAccount, requirePublishingAccount, requirePublishingAccountsCapability, publishingReauthorizationEpoch, completePublishingReauthorization, cancelPublishingReauthorization, assertPublishingAuthorizationEpoch, requirePublishingAuthorizationCapability } from "./publishing-accounts";
 import { releaseOAuthActivity } from "./oauth-activities";
 import { agentStore } from "./agents";
 type OAuth = { target: Target; accountId?: string; publishingReauthorizationEpoch?: string; authorizationGeneration?: string; activityId?: string; actor: string; browserHash: string; state: string; cookie: string; expires: number; used: boolean };
@@ -25,9 +25,11 @@ export async function beginRemoteOAuth(target: Target, actor: string, accountId?
     if ((await agentStore(target.agentId).read<string[]>("capabilities.json"))?.includes("publishing-auth-generation-v1")) authorizationGeneration = randomUUID();
     else if (account.status === "needs_reauthorization") throw new AppError("AGENT_VERSION", "请升级直播电脑的 Agent 后重新授权原发布频道。", 409);
   }
-  const epoch = accountId ? await publishingReauthorizationEpoch(target.agentId, accountId, !!authorizationGeneration, true) : undefined;
+  const epoch = accountId ? await publishingReauthorizationEpoch(target.agentId, accountId, !!authorizationGeneration, true, authorizationGeneration) : undefined;
   const activityId = randomUUID();
-  const result = await rpc<{ url: string; cookie: string }>(target, actor, accountId ? { kind: "publishing-account-oauth-begin", accountId } : { kind: "oauth-begin" }, activityId);
+  let result: { url: string; cookie: string };
+  try { result = await rpc(target, actor, accountId ? { kind: "publishing-account-oauth-begin", accountId } : { kind: "oauth-begin" }, activityId); }
+  catch (error) { if (accountId && isAppError(error) && error.code === "BUSY") await cancelPublishingReauthorization(target.agentId, accountId, epoch, authorizationGeneration); throw error; }
   const url = new URL(result.url); const agentState = url.searchParams.get("state") || "";
   if (url.searchParams.get("redirect_uri") !== config().redirectUri) throw new AppError("OAUTH_CONFIG", "Agent 的控制端地址与云端不一致，请检查配置。");
   const state = randomBytes(32).toString("hex"); const cookie = randomBytes(32).toString("hex");
@@ -56,6 +58,7 @@ export async function finishRemoteOAuth(state: string, cookie: string, actor: st
       const account = await requirePublishingAccount(transactionData.target.agentId, transactionData.target.instanceId, transactionData.accountId, undefined, false);
       if (!cancelled && transactionData.publishingReauthorizationEpoch) await assertPublishingAuthorizationEpoch(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch);
       await rpc(transactionData.target, actor, { kind: "publishing-account-oauth-finish", accountId: account.id, cookie: transactionData.cookie, state: transactionData.state, code, cancelled, ...(transactionData.authorizationGeneration ? { authorizationGeneration: transactionData.authorizationGeneration, authorizationEpoch: transactionData.publishingReauthorizationEpoch } : {}), ...(account.channelId ? { expectedChannel: account.channelId } : {}) });
+      if (cancelled) await cancelPublishingReauthorization(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch, transactionData.authorizationGeneration);
       if (!cancelled && !await completePublishingReauthorization(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch, transactionData.authorizationGeneration)) throw new AppError("OAUTH_SUPERSEDED", "此授权已被更新的连接或授权错误替代，请重新连接原频道。", 409);
     }
     else {

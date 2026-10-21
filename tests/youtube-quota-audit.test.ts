@@ -133,8 +133,32 @@ it.each([true, false])("discards an in-flight manual result after control change
   fetcher.mockImplementationOnce(async () => { entered(); await paused; return Response.json({ items: [{ id: "b_main", status: { lifeCycleStatus: "live" } }] }); });
   const checking = app.checkYouTube(); const outcome = checking.then(value => ({ value }), error => ({ error }));
   try {
-    await ready; phase = invalidated ? "stopped" : "stopping"; if (invalidated) app.invalidate(); release();
+    await ready; phase = invalidated ? "stopped" : "stopping";
+    if (invalidated) {
+      app.invalidate();
+      // 停止后的心跳必须直接读到终态，不能继续合并到未释放的旧平台HTTP。
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { expect((await Promise.race([app.dashboard(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Stopped dashboard still waits for old manual read")), 500); })])).state.phase).toBe("stopped"); }
+      finally { clearTimeout(timer); }
+    }
+    release();
     expect(await outcome).toMatchObject({ error: { code: "STATE_CHANGED" } });
     if (invalidated) { expect(fetcher).toHaveBeenCalledTimes(4); expect((await app.dashboard()).state.phase).toBe("stopped"); }
   } finally { release(); await outcome; }
+});
+
+/** 人工核对尚在等待普通GET时，停止同样作废整个队列，旧等待结束后不得再发平台HTTP或打断新读取。 */
+it("invalidates a manual check queued behind an old ordinary dashboard before it can issue HTTP", async () => {
+  const app = service(); await app.dashboard(); app.invalidate();
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  fetcher.mockImplementationOnce(async () => { entered(); await held; return Response.json({ items: [{ id: "b_main", status: { lifeCycleStatus: "live" } }] }); });
+  const ordinary = app.dashboard().then(value => ({ value }), error => ({ error }));
+  await ready; const checking = app.checkYouTube().then(value => ({ value }), error => ({ error }));
+  try {
+    phase = "stopped"; app.invalidate(); expect((await app.dashboard()).state.phase).toBe("stopped");
+    release(); expect(await ordinary).toMatchObject({ error: { code: "STATE_CHANGED" } });
+    expect(await checking).toMatchObject({ error: { code: "STATE_CHANGED" } });
+    expect(fetcher).toHaveBeenCalledTimes(4); expect((await app.dashboard()).state.phase).toBe("stopped");
+  } finally { release(); await Promise.all([ordinary, checking]); }
 });

@@ -26,6 +26,7 @@ import { isAppError, safeError, problemFor } from "../src/core/errors";
 import { Activity } from "./activity";
 import { separateCandidates, acceptCandidate, archiveCandidate } from "./candidates";
 import { repairManagedObs } from "./obs-repair";
+import { readRetirementInventory } from "./retirement-inventory";
 import { pairDesktop } from "./pairing";
 import { launchObs } from "./obs-launch";
 import { obsDiagnosisLabels } from "../src/shared/obs-startup";
@@ -344,16 +345,14 @@ export class Manager {
     await this.store.write(next); this.settings = next;
     await this.commitInstances();
   }
-  /** 重启后先只读核对云端库存，回复丢失不会让旧实例复活或永久卡住新会话。 */
+  /** 恢复先在有界期限内核对云端库存，超时保留未知事务，不让旧实例复活或永久卡住操作。 */
   private async recoverRetirement() {
     const id = this.settings.retirementPending!;
     if (!this.settings.paired || !this.settings.identity) {
       const next = { ...this.settings }; delete next.retirementPending; await this.store.write(next); this.settings = next; return;
     }
     const identity = this.settings.identity;
-    const response = await net.fetch(identity.origin + "/api/agent/instance-inventory", { method: "POST", headers: { "Content-Type": "application/json", "x-livepilot-agent": identity.agentId, Authorization: "Bearer " + identity.token }, body: "{}" });
-    if (!response.ok) throw new AppError("MAINTENANCE", response.status === 404 ? "Cloud 尚不支持库存恢复，请升级 Cloud 后重新连接；退役记录与维护凭据已保留。" : "暂时无法确认云端库存，请恢复网络后重新连接；退役记录已保留。");
-    const parsed = z.object({ instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) })), retiredInstanceIds: z.array(idSchema) }).safeParse(await response.json());
+    const parsed = z.object({ instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) })), retiredInstanceIds: z.array(idSchema) }).safeParse(await readRetirementInventory(identity));
     if (parsed.success && !parsed.data.instances.length && !parsed.data.retiredInstanceIds.length && !this.settings.retirementAgentId) {
       // 旧版在解绑时漏清的无归属事务，不能阻止合法空库存设备首次登记；保留历史且不猜造实例。
       const next = { ...this.settings }; this.abandonRetirement(next); await this.store.write(next); this.settings = next; return false;

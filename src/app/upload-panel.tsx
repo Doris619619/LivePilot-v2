@@ -14,6 +14,7 @@ import UploadRecovery, { type UploadOperation } from "./upload-recovery";
 import FileDropzone from "./components/ui/file-dropzone";
 import { Reveal, Progress } from "./components/ui/primitives";
 import { identify, transfer, uploadUrl } from "./upload-client";
+import { readUploadIntent, uploadIntentHandle, assertUploadIntent, type UploadIntent } from "./upload-intent";
 import {
   UploadIcon,
   CheckCircleIcon,
@@ -49,7 +50,8 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   const [lastRequest, setLastRequest] = useState(0);
   const [hasIntent, setHasIntent] = useState(false);
 
-  const createIntent = useRef<{ fingerprint: string; target: string; kind: string; requestId: string } | null>(null);
+  const createIntent = useRef<UploadIntent | null>(null);
+  const invalidIntent = useRef(false);
   const abort = useRef<AbortController | null>(null);
   const operation = useRef({ generation: 0, active: false });
   const mounted = useRef(true);
@@ -72,27 +74,31 @@ export default function UploadPanel({ instances, channels, heading, request }: {
     const panel = document.getElementById("upload-content"); panel?.focus({ preventScroll: true }); panel?.scrollIntoView({ block: "start" });
   }, [lastRequest]);
 
-  /** 持续记录权威偏移，完成后通知素材库刷新；不重置正在上传的 File。 */
+  /** 持续记录权威偏移并返回缓存落盘结果；只有替代记录可重读时才允许删除唯一旧恢复句柄。 */
   const remember = useCallback((next: UploadStatus) => {
     setRecord(next); if(next.error)setError(next.error);
     if (next.status === "complete") { setError("");
       window.dispatchEvent(new Event("livepilot-media-updated"));
     }
     try {
-      localStorage.setItem(KEY, JSON.stringify(next));
+      const serialized = JSON.stringify(next); localStorage.setItem(KEY, serialized);
+      return localStorage.getItem(KEY) === serialized;
     } catch {
-      /* 忽略存储异常 */
+      return false;
     }
   }, []);
 
   /** 从任一恢复入口同时切换目标、类型和进度；原 File 不能跨记录复用。 */
   const restoreRecord = useCallback((next: UploadStatus) => {
     if (createIntent.current && createIntent.current.requestId !== next.id) { setError("请先查询或取消当前待确认的上传，再恢复其他记录。"); setIsOpen(true); return; }
-    remember(next); setError(next.error || "");
+    if (createIntent.current) assertUploadIntent(createIntent.current, next);
+    const persisted = remember(next); setError(next.error || "");
     setInstanceId(targetKey({ id: next.instanceId, agentId: next.agentId }));
     setKind(next.kind); setFile(undefined); setPaused(false); setRequestNotice(""); setIsOpen(true);
-    createIntent.current = null; setHasIntent(false);
-    try { localStorage.removeItem(KEY + ".intent"); } catch { /* 恢复记录已持有服务端身份，无需旧创建意图。 */ }
+    if (persisted) {
+      createIntent.current = null; setHasIntent(false);
+      try { localStorage.removeItem(KEY + ".intent"); } catch { /* 替代记录已确认可重读，旧缓存残留仍使用同一身份恢复。 */ }
+    } else if (createIntent.current) setRequestNotice("当前记录暂无法缓存，已保留原上传恢复句柄；刷新后可查询原上传。");
   }, [remember]);
 
   useEffect(() => {
@@ -102,16 +108,22 @@ export default function UploadPanel({ instances, channels, heading, request }: {
 
     async function restore() {
       try {
-        createIntent.current = JSON.parse(localStorage.getItem(KEY + ".intent") || "null");
+        const pending = localStorage.getItem(KEY + ".intent");
+        if (pending) {
+          invalidIntent.current = true; setHasIntent(true); setIsOpen(true);
+          createIntent.current = readUploadIntent(JSON.parse(pending)); invalidIntent.current = false;
+          setInstanceId(createIntent.current.target); setKind(createIntent.current.kind); setFile(undefined);
+        }
         setHasIntent(!!createIntent.current);
         const saved = JSON.parse(localStorage.getItem(KEY) || "null") as UploadStatus | null;
+        if (createIntent.current && saved?.id !== createIntent.current.requestId) return;
         if (saved?.id && saved.instanceId) {
           const lease = acquire(); if (!lease) return;
           try { const next = await api<UploadStatus>(uploadUrl(saved)); assertUpload(saved, next); if (active && lease.current()) restoreRecord(next); }
           finally { lease.release(); }
         }
       } catch {
-        if (active) setError("历史上传记录暂不可用");
+        if (active) setError(invalidIntent.current ? "原上传恢复句柄无法读取，请保留浏览器缓存并联系管理员核对；尚未创建其他上传。" : "历史上传记录暂不可用");
       }
     }
 
@@ -159,6 +171,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
     setStage("正在检查文件…");
 
     try {
+      if (invalidIntent.current) throw new Error("原上传恢复句柄无效，请先联系管理员核对，不能覆盖原创建意图。");
       const identity = await identify(file, controller.signal);
       let current = record;
 
@@ -169,15 +182,11 @@ export default function UploadPanel({ instances, channels, heading, request }: {
           throw new Error("所选文件与原上传不一致");
         }
       } else {
+        if (createIntent.current && (createIntent.current.fingerprint !== identity.fingerprint || createIntent.current.target !== instanceId || createIntent.current.kind !== kind)) throw new Error("所选文件或目标与原上传不一致，请先查询或取消原上传；恢复句柄已保留。");
         const destination = instances.find(i => targetKey(i) === instanceId);
-        if (!destination) throw new Error("目标实例不存在");
+        if (!destination) throw new Error("原上传目标暂不可用，请查询原上传或等待原电脑恢复，不能改到其他目标。");
 
-        if (
-          !createIntent.current ||
-          createIntent.current.fingerprint !== identity.fingerprint ||
-          createIntent.current.target !== instanceId ||
-          createIntent.current.kind !== kind
-        ) {
+        if (!createIntent.current) {
           createIntent.current = {
             fingerprint: identity.fingerprint,
             target: instanceId,
@@ -203,6 +212,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
             fingerprint: identity.fingerprint,
           }),
         });
+        assertUploadIntent(createIntent.current, current);
       }
 
       if (!lease.current()) return; remember(current);
@@ -236,6 +246,16 @@ export default function UploadPanel({ instances, channels, heading, request }: {
     catch (e) { if (lease.current()) setError((e as Error).message); }
     finally { lease.release(); }
   }
+  /** 创建回执丢失时直接核对原幂等句柄；失败不改变目标、类型或缓存，成功才转换为记录会话。 */
+  async function queryIntent() {
+    const lease = acquire(); if (!lease) return;
+    try {
+      if (invalidIntent.current || !createIntent.current) throw new Error("原上传恢复句柄暂不可用，请保留缓存并联系管理员核对。");
+      const intent = createIntent.current, next = await api<UploadStatus>(uploadUrl(uploadIntentHandle(intent))); assertUploadIntent(intent, next);
+      if (lease.current()) restoreRecord(next);
+    } catch (e) { if (lease.current()) setError((e as Error).message); }
+    finally { lease.release(); }
+  }
 
   /** 服务端确认取消后只清理匹配的记录，其他上传和用户新选的文件保持不变。 */
   function cancelled(id: string) {
@@ -252,12 +272,11 @@ export default function UploadPanel({ instances, channels, heading, request }: {
     const lease = acquire(); if (!lease) return;
     setError("");
     try {
+      if (invalidIntent.current) throw new Error("原上传恢复句柄无效，取消尚未确认；请保留缓存并联系管理员核对。");
       if (record?.status === "complete") { dismiss(); return; }
       if (record) await api(uploadUrl(record), { method: "DELETE", headers: { "x-livepilot": "1" } });
       else if (createIntent.current) {
-        const destination = instances.find(i => targetKey(i) === createIntent.current!.target);
-        if (!destination) throw new Error("原上传目标暂不可用，请查询未结束的上传后处理。");
-        await api(uploadUrl({ id: createIntent.current.requestId, instanceId: destination.id, agentId: destination.agentId }), { method: "DELETE", headers: { "x-livepilot": "1" } });
+        await api(uploadUrl(uploadIntentHandle(createIntent.current)), { method: "DELETE", headers: { "x-livepilot": "1" } });
       }
       if (lease.current()) dismiss();
     } catch (e) {
@@ -268,7 +287,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
   /** 清理当前显示及本地幂等意图；存储受限不能阻止用户离开已完成的会话。 */
   function dismiss() {
     try { localStorage.removeItem(KEY); localStorage.removeItem(KEY + ".intent"); } catch { /* 已确认终态的本地显示仍可关闭。 */ }
-    createIntent.current = null; setHasIntent(false); setRequestNotice(""); setRecord(undefined); setFile(undefined); setPaused(false);
+    createIntent.current = null; invalidIntent.current = false; setHasIntent(false); setRequestNotice(""); setRecord(undefined); setFile(undefined); setPaused(false);
   }
 
   const destination = instances.find(i => targetKey(i) === instanceId);
@@ -298,7 +317,7 @@ export default function UploadPanel({ instances, channels, heading, request }: {
       <Reveal open={isOpen}><div className="dock-content" id="upload-content" tabIndex={-1}>
         {requestNotice && <p className="upload-hint" role="status">{requestNotice}</p>}
         <form onSubmit={submit}>
-          {record || busy ? <p className="upload-destination"><DeviceIcon /><span>{destinationLabel}</span><span>{activeKind === "videos" ? "视频" : "音乐"}</span></p> : <div className="form-row">
+          {record || busy || hasIntent ? <p className="upload-destination"><DeviceIcon /><span>{destinationLabel}</span><span>{activeKind === "videos" ? "视频" : "音乐"}</span></p> : <div className="form-row">
             <div className="field-group">
               <label htmlFor="upload-instance" className="field-label">上传到</label>
               <select id="upload-instance" disabled={operationBusy} value={instanceId} onChange={e => setInstanceId(e.target.value)}>
@@ -320,7 +339,8 @@ export default function UploadPanel({ instances, channels, heading, request }: {
             {record.status === "complete" ? <p className="upload-success"><CheckCircleIcon />已添加到素材库，可回到下方选择使用。</p> : <p className="upload-hint">{record.status === "verifying" ? record.verification === "failed" ? "文件已传完，但尚未发布。请查看原因后重新提交校验；文件损坏时取消此上传并重传。" : "文件已传完，正在确认完整性。" : "支持暂停，稍后可继续上传。"}</p>}
           </div> : busy && <p className="upload-hint" role="status">{stage}</p>}
           <div className="upload-actions">{!busy && record?.status==="verifying" && <button type="button" disabled={operationBusy} onClick={() => void queryRecord()}>查询校验状态</button>}
-            {!busy && (!record || record.status === "uploading") && <button type="submit" className="btn-primary" disabled={!file || operationBusy}><UploadIcon />{record ? "继续上传" : "开始上传"}</button>}
+            {!busy && !record && hasIntent && <button type="button" disabled={operationBusy} onClick={() => void queryIntent()}>查询原上传</button>}
+            {!busy && (!record || record.status === "uploading") && <button type="submit" className="btn-primary" disabled={!file || operationBusy}><UploadIcon />{record || hasIntent ? "继续上传" : "开始上传"}</button>}
             {busy && <button type="button" className="btn-secondary" onClick={() => {setPaused(true);abort.current?.abort();}}>暂停上传</button>}
             {!busy && record?.status === "verifying" && (record.verification==="failed" || !!record.error) && <button type="button" className="btn-secondary" disabled={operationBusy} onClick={() => void retryFinish()}><RefreshIcon />重新提交校验</button>}
             {!busy && (record || file || hasIntent) && <button type="button" className={record?.status === "complete" ? "btn-primary" : "btn-ghost"} disabled={operationBusy} onClick={() => void clear()}>{record?.status === "complete" ? "上传下一个" : record || hasIntent ? "取消上传" : "清除选择"}</button>}

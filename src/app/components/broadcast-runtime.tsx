@@ -5,7 +5,7 @@ import type { Dashboard } from "@/shared/types";
 import { youtubeLifecycleLabel } from "@/shared/readiness";
 import { StatusBadge } from "./status-indicator";
 import { CheckCircleIcon, ExternalLinkIcon, VideoIcon } from "./icons";
-import { broadcastWatchUrl, runtimeDuration, type RuntimeSummary } from "./broadcast-runtime-model";
+import { broadcastWatchUrl, completedBroadcast, runtimeDuration, type RuntimeSummary } from "./broadcast-runtime-model";
 import panelStyles from "./broadcast-workflow-panel.module.css";
 import styles from "./broadcast-runtime.module.css";
 import { freshYouTubeEvidence, youtubeEvidenceTime } from "@/shared/youtube-evidence";
@@ -21,6 +21,7 @@ export default function BroadcastRuntime({ id, data, stale, durationMs, summary,
     catch { setCopyResult("failed"); }
   }
   const obs = stale || data?.obs.streaming == null ? "未知" : data.obs.reconnecting ? "重连中" : data.obs.streaming ? "推流中" : "未推流";
+  const completed = !!data && completedBroadcast(data);
   return <div className={`broadcast-runtime ${styles.root}`}><div className={styles.columns}>
     <section className={panelStyles.root} aria-labelledby={`step-4-${id}`}>
     <h3 id={`step-4-${id}`} tabIndex={-1} className={panelStyles.heading}><VideoIcon width="18" height="18" aria-hidden="true" />本场运行状态</h3>
@@ -28,9 +29,9 @@ export default function BroadcastRuntime({ id, data, stale, durationMs, summary,
       <div className={styles.summary} role="status"><StatusBadge status={summary.status} label={summary.label} />{summary.message && <p>{summary.message}</p>}</div>
       <dl className={styles.signals}>
         <div><dt>OBS 推流</dt><dd>{obs}</dd></div>
-        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : data?.state.platformClosePending ? "待确认结束" : data?.youtube.lifecycle && !freshYouTubeEvidence(data.youtube) ? "上次：" + youtubeLifecycleLabel(data.youtube.lifecycle) : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
+        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : data?.state.platformClosePending ? "待确认结束" : completed ? "已结束" : data?.youtube.lifecycle && !freshYouTubeEvidence(data.youtube) ? "上次：" + youtubeLifecycleLabel(data.youtube.lifecycle) : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
       </dl>
-      {data && (data.state.broadcastId || data.youtube.checkedAt) && <p className={styles.readiness}>{youtubeEvidenceTime(data.youtube)}{data.youtube.nextCheckAt && Number.isFinite(Date.parse(data.youtube.nextCheckAt)) ? `；下次后台核对预计：${new Date(data.youtube.nextCheckAt).toLocaleString("zh-CN")}` : ""}</p>}
+      {data && !completed && (data.state.broadcastId || data.youtube.checkedAt) && <p className={styles.readiness}>{youtubeEvidenceTime(data.youtube)}{data.youtube.nextCheckAt && Number.isFinite(Date.parse(data.youtube.nextCheckAt)) ? `；下次后台核对预计：${new Date(data.youtube.nextCheckAt).toLocaleString("zh-CN")}` : ""}</p>}
       {readiness && <p className={styles.readiness}>{readiness}</p>}
     </div>
     </section>

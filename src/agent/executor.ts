@@ -44,7 +44,7 @@ export class Executor {
     this.publishing = new PublishingRunner(this.services, {
       accountAuth: accountId => this.publishingAccounts.auth(accountId),
       accountAuthorizationGeneration: accountId => this.publishingAccounts.authorizationGeneration(accountId),
-      live: () => [...this.observed.values()].some(s => s.observedAt > Date.now() - 20_000 && (s.dashboard.obs.streaming === true || s.dashboard.youtube.lifecycle === "live" || s.dashboard.obs.reconnecting === true)),
+      live: () => this.broadcastActive(),
       charge: async (job, units, upload) => { await this.transport.post("/api/agent/publishing/quota", { id: job.id, receipt: randomUUID(), units, upload }); },
     });
     this.mediaPreview = new MediaPreviewConnection(transport, new AgentPreviewSessions(this.publishing, async target => {
@@ -53,6 +53,14 @@ export class Executor {
       if (target.accountId) await this.publishingAccounts.assertAvailable(target.accountId, target.instanceId);
       if (target.channelId) { const tokens = await (target.accountId ? this.publishingAccounts.auth(target.accountId) : app.auth).tokens(); if (tokens?.channelId !== target.channelId) throw new AppError("CHANNEL", "频道已改变，请重新打开预览。", 409); }
     }));
+  }
+  /** 所有实例都需要新鲜明确停止才能使用空闲资源；未知或旧停播样本不能临时放开上传/预览保护。 */
+  private broadcastActive(): boolean {
+    const now = Date.now();
+    return [...this.services.keys()].some(id => {
+      const snapshot = this.observed.get(id);
+      return !snapshot || snapshot.observedAt < now - 20_000 || snapshot.observedAt > now + 5000 || snapshot.dashboard.obs.streaming !== false || snapshot.dashboard.youtube.lifecycle === "live" || snapshot.dashboard.obs.reconnecting === true;
+    });
   }
   /** 独立于心跳和旧 Worker 启动后台循环；旧 Cloud 不声明能力时不调用新路由。 */
   connectPublishing(enabled: boolean, accountsEnabled = false, authorizationEvents = false) {
@@ -110,7 +118,11 @@ export class Executor {
   /** 本机状态读取不阻塞通信心跳；读取耗时由 observedAt 明确表示。 */
   async snapshot(id: string): Promise<AgentSnapshot> {
     const app = this.services.get(id)!; const instance = instanceDescriptors().find(i => i.id === id)!;
-    const observedAt = Date.now(); const snapshot = { instance, dashboard: await app.dashboard(), observedAt }; this.observed.set(id, snapshot); return snapshot;
+    const observedAt = Date.now(); const snapshot = { instance, dashboard: await app.dashboard(), observedAt }; this.recordObservation(id, snapshot); return snapshot;
+  }
+  /** 人工核对与心跳共享本机事实；保留未知/过期的在播保护，只有较新的明确停止观测才能解除资源限制。 */
+  private recordObservation(id: string, snapshot: AgentSnapshot) {
+    if ((this.observed.get(id)?.observedAt ?? 0) <= snapshot.observedAt) this.observed.set(id, snapshot);
   }
   /** 上传与控制独立执行；同实例控制仍由 Commands/Control 锁保护。 */
   execute(task: RemoteTask): Promise<unknown> {
@@ -133,9 +145,13 @@ export class Executor {
     const accountScoped = p.kind === "publishing-apply" ? !!p.job.profile.accountId : "accountId" in p && !!p.accountId;
     const clearing = await new Store(config(task.instanceId).dataDir).read<{ pending?: boolean }>("publishing-purge.json");
     if (clearing?.pending && !accountScoped && (p.kind.startsWith("publishing-") || p.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(p.kind) || p.kind === "control" && p.input.action === "start")) throw new AppError("CLEANUP", "设备正在清理授权，请完成后重新连接频道。"); const actor = task.actor; const id = task.instanceId;
-    if (p.kind === "broadcast-read") { const dashboard = await app.checkYouTube(); this.observed.delete(id); return { instance: instanceDescriptors().find(instance => instance.id === id)!, dashboard, observedAt: Date.now() } satisfies AgentSnapshot; }
+    if (p.kind === "broadcast-read") {
+      const dashboard = await app.checkYouTube();
+      const snapshot = { instance: instanceDescriptors().find(instance => instance.id === id)!, dashboard, observedAt: Date.now() } satisfies AgentSnapshot;
+      this.recordObservation(id, snapshot); return snapshot;
+    }
     if (p.kind === "publishing-account-oauth-begin") return this.publishingAccounts.begin(p.accountId, id, actor);
-    if (p.kind === "publishing-account-oauth-finish") return this.publishingAccounts.finish(p.accountId, id, p.cookie, p.state, p.code, actor, p.expectedChannel || await this.publishing.expectedChannel(id, p.accountId), p.cancelled, p.authorizationGeneration);
+    if (p.kind === "publishing-account-oauth-finish") return this.publishingAccounts.finish(p.accountId, id, p.cookie, p.state, p.code, actor, p.expectedChannel || await this.publishing.expectedChannel(id, p.accountId), p.cancelled, p.authorizationGeneration, p.authorizationEpoch);
     if (p.kind === "publishing-account-playlists") return this.publishingAccounts.playlists(p.accountId, id);
     if (p.kind === "publishing-packages") { if (p.accountId) await this.publishingAccounts.assertAvailable(p.accountId, id); const token = await (p.accountId ? this.publishingAccounts.auth(p.accountId) : app.auth).tokens(); return { ...await scanPublishingPackages(publishingRoot()), thumbnails: await scanPublishingThumbnails(config(id).mediaRoot), ...(token ? { channelId: token.channelId, channel: token.channel } : {}) }; }
     if (p.kind === "publishing-archive") return this.publishing.archiveBatch(p.batch, p.archiveId);

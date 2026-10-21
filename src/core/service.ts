@@ -74,8 +74,8 @@ export class Service {
   private credentialsFingerprint?: string;
   private reading?: Promise<Dashboard>;
   private checking?: Promise<Dashboard>;
-  /** 控制操作完成后丢弃所属实例的 YouTube 状态缓存。 */
-  invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; }
+  /** 控制完成后释放旧读取的合并句柄；旧HTTP仍受代际校验，新状态读取不必等旧平台请求结束。 */
+  invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; this.reading = undefined; this.checking = undefined; }
   /** 频道授权成功后通知聊天；聊天检查点异常不能把成功授权误报成失败。 */
   async refreshChatCredentials() {
     const tokens = await this.auth.tokens();
@@ -124,8 +124,10 @@ export class Service {
   async checkYouTube(): Promise<Dashboard> {
     if (!this.checking) {
       const previous = this.reading;
+      const generation = this.broadcastGeneration;
       this.checking = (async () => {
         if (previous) await previous.catch(() => undefined);
+        if (generation !== this.broadcastGeneration) throw new AppError("STATE_CHANGED", "核对等待期间场次发生变化，已丢弃旧请求。请刷新当前场次状态。", 409);
         this.broadcastGeneration++;
         return this.readDashboard(true);
       })();
