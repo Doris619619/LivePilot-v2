@@ -64,7 +64,7 @@ it("does not retry a business BUSY thrown inside the transaction", async () => {
   const busy = new AppError("BUSY", "business condition", 409), run = vi.fn(async () => { throw busy; });
   await expect(transaction(new Store(root), run)).rejects.toBe(busy); expect(run).toHaveBeenCalledOnce();
 });
-it.each(["empty", "corrupt", "valid-pid", "directory", "junction"])("preserves the original EPERM for a %s lock without delete-pending proof", async kind => {
+it.each(["empty", "corrupt", "valid-pid", "directory", "junction"])("preserves the original EPERM for a %s lock without guessing ownership", async kind => {
   const filename = path.join(root, "metadata.lock");
   if (["empty", "corrupt", "valid-pid"].includes(kind)) await writeFile(filename, kind === "empty" ? "" : kind === "valid-pid" ? String(process.pid) : "not-a-pid");
   else if (kind === "directory") await mkdir(filename);
@@ -115,23 +115,22 @@ it.runIf(process.platform === "win32")("preserves the original release permissio
   await expect(new Store(root).exclusive(async () => {})).rejects.toBe(denied);
   await expect(readFile(filename, "utf8")).resolves.toBe(String(process.pid)); expect(vi.mocked(unlink)).not.toHaveBeenCalled();
 });
-it.runIf(process.platform === "win32")("retries only a real delete-pending lock and closes the observer before the next create", async () => {
-  const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename); const store = new Store(root), run = vi.fn(async () => "done");
+it.runIf(process.platform === "win32")("preserves a real delete-pending EPERM and succeeds only after its owner explicitly releases the lock", async () => {
+  const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename); const store = new Store(root), attempts = vi.spyOn(store, "exclusive"), run = vi.fn(async () => "done");
   controls.beforeCreate = async name => {
     if (name !== filename) return; controls.beforeCreate = undefined;
-    owner.child.stdin.write("delete\n"); await owner.wait("pending"); setTimeout(owner.release, 45);
+    owner.child.stdin.write("delete\n"); await owner.wait("pending");
   };
-  await expect(transaction(store, run)).resolves.toBe("done"); await owner.exited;
+  // 原生 delete-pending 必须保持真实 EPERM；竞争者不能重试成 BUSY 或删除旧 owner 的文件。
+  await expect(transaction(store, run)).rejects.toMatchObject({ code: "EPERM", syscall: "open" });
+  expect(attempts).toHaveBeenCalledOnce(); expect(run).not.toHaveBeenCalled(); expect(vi.mocked(rename)).not.toHaveBeenCalled(); expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+  await expect(lstat(filename)).resolves.toBeDefined(); owner.release(); await owner.exited;
+  await vi.waitFor(async () => { await expect(lstat(filename)).rejects.toMatchObject({ code: "ENOENT" }); }, { timeout: 1500, interval: 10 });
+  // 只有原 owner 明确释放自己的原生句柄后，新操作才认领自己的锁并完成安全清理。
+  await expect(transaction(store, run)).resolves.toBe("done");
   expect(run).toHaveBeenCalledOnce(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
   expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]).startsWith(filename + ".") && String(call[0]).endsWith(".released"))).toHaveLength(1);
   expect(await readdir(root)).toEqual([]);
-}, 20000);
-it.runIf(process.platform === "win32")("returns the real EPERM when a proven pending deletion outlives the bounded window", async () => {
-  const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename), run = vi.fn();
-  controls.beforeCreate = async name => { if (name !== filename) return; controls.beforeCreate = undefined; owner.child.stdin.write("delete\n"); await owner.wait("pending"); };
-  const started = performance.now(); await expect(transaction(new Store(root), run)).rejects.toMatchObject({ code: "EPERM" });
-  expect(performance.now() - started).toBeLessThan(1500); expect(run).not.toHaveBeenCalled(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
-  owner.release(); await owner.exited; await expect(lstat(filename)).rejects.toMatchObject({ code: "ENOENT" });
 }, 20000);
 it.runIf(process.platform === "win32")("preserves a real directory ACL denial instead of retrying it as BUSY", async () => {
   const blocked = path.join(root, "no-create"); await mkdir(blocked);

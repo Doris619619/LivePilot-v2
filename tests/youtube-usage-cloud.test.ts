@@ -65,12 +65,18 @@ it("durably deduplicates a lost admission response and rejects changed ownership
   expect(JSON.parse(await readFile(path.join(youtubeUsageStore().dir, "budget.json"), "utf8")).days[quotaDay()].units).toBe(1);
 });
 it("enforces send subbudget and the cost-based minute bucket without refunding unknown results", async () => {
+  // 本例验证同一逻辑时刻的速率边界；慢磁盘不应在批次中途补充令牌，真实五秒锁期限由独立并发用例覆盖。
+  vi.useFakeTimers({ toFake: ["Date"] });
   await baseline(); await updateYouTubePolicy({ policy: { ...defaultYouTubePolicy, sendUnits: 40 } }, "Utest");
   const inputs = [request({ method: "liveChatMessages.insert", purpose: "chat-send", trigger: "chat-send" }), request({ method: "liveChatMessages.insert", purpose: "chat-send", trigger: "chat-send" })];
   for (const input of inputs) { expect((await admitYouTube("studio_a", input)).allowed).toBe(true); await reportYouTubeResult("studio_a", { attemptId: input.attemptId, outcome: "unknown", durationMs: 1, errorCode: "network" }); }
   expect(await admitYouTube("studio_a", request({ method: "liveChatMessages.insert", purpose: "chat-send" }))).toMatchObject({ allowed: false, code: "YOUTUBE_PURPOSE_BUDGET" });
   const results = await Promise.all(Array.from({ length: 30 }, () => admitYouTube("studio_b", request()))); expect(results.filter(r => r.allowed)).toHaveLength(20);
   expect((await youtubeUsageSummary()).usedUnits).toBe(60);
+  // 显式推进两秒验证实际补充规则，避免把冻结速率时刻误当作关闭令牌补充。
+  vi.setSystemTime(Date.now() + 2000);
+  expect((await admitYouTube("studio_b", request())).allowed).toBe(true);
+  expect((await youtubeUsageSummary()).usedUnits).toBe(61);
 });
 it("propagates true daily quota across devices and preserves the breaker until PT midnight", async () => {
   vi.setSystemTime(new Date("2026-11-01T08:59:00Z")); await baseline(); const input = request(); const admission = await admitYouTube("studio_a", input);

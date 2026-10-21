@@ -4,7 +4,7 @@ import path from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { config } from "./config";
 import { AppError, sleep } from "./errors";
-import { claimLocalLock, releaseLocalLock, observeLock, confirmedPendingDelete, releaseOwnedLock } from "./file-lock";
+import { claimLocalLock, releaseLocalLock, releaseOwnedLock } from "./file-lock";
 /** 仅文件锁竞争可重试，业务 BUSY 必须立即返回。 */
 export class LockBusyError extends AppError {
   /** 保存内部锁名供事务重试识别，不改变现有 HTTP 错误码。 */
@@ -42,16 +42,14 @@ export class Store {
     if (!claimLocalLock(filename)) throw new LockBusyError(lockName);
     try {
       await mkdir(this.dir, { recursive: true, mode: 0o700 });
-      const observation = await observeLock(filename);
       let handle;
       try {
         try { handle = await open(filename, "wx", 0o600); }
         catch (error) {
           const code = (error as NodeJS.ErrnoException).code;
           if (code === "EEXIST") throw new LockBusyError(lockName);
-          if (code === "EPERM" && await confirmedPendingDelete(filename, observation)) throw new LockBusyError(lockName);
           throw error;
-        } finally { await observation?.handle.close(); }
+        }
         await handle.writeFile(String(process.pid)); return await fn();
       } finally { if (handle) await releaseOwnedLock(filename, handle); }
     } finally {
