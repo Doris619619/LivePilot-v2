@@ -19,6 +19,7 @@ import { YouTubeAuth } from '@/core/youtube/auth';
 import { VideoApi, VideoApiError } from '@/core/youtube/video-api';
 import { seal } from '@/core/storage';
 import { finishRemoteOAuth } from '@/cloud/oauth';
+import { pollTasks, reportTasks } from '@/cloud/tasks';
 import { seedTestYouTubeBaseline } from './youtube-usage-baseline';
 const remote = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('@/cloud/tasks', async orig => ({ ...await orig<typeof import("@/cloud/tasks")>(), rpc: remote.rpc }));
@@ -42,8 +43,13 @@ beforeEach(async()=>{await seedTestYouTubeBaseline();});
 afterEach(async()=>{vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();if(path.dirname(root)!==os.tmpdir()||!path.basename(root).startsWith('publishing-recovery-'))throw new Error('Unsafe cleanup');await rm(root,{recursive:true,force:true});});
 /** 建立合成同频道发布账号，不交换任何真实OAuth凭据。 */
 async function connected(){const a=await createPublishingAccount(alice,'pc','main','Synthetic');await claimPublishingAccount('pc',a.id,'main','channel_one','Synthetic',true,Date.now());return a;}
-/** 只创建浏览器绑定的真实Cloud OAuth事务，Agent和Google回复均为合成数据。 */
-async function beginAuthorization(accountId:string){remote.rpc.mockResolvedValueOnce({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({redirect_uri:'https://synthetic.invalid/api/youtube/callback',state:'publishing-'+accountId+'.'+'d'.repeat(64)}),cookie:'e'.repeat(64)});return connectPublishingAccount(alice,accountId);}
+/** 保留真实begin队列准入与终态回报；只替代Agent PKCE/Google回复，避免mockRPC遗留假在途任务。 */
+async function beginAuthorization(accountId:string){
+ const reply={url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({redirect_uri:'https://synthetic.invalid/api/youtube/callback',state:'publishing-'+accountId+'.'+'d'.repeat(64)}),cookie:'e'.repeat(64)};
+ remote.rpc.mockResolvedValueOnce(reply);const browser=await connectPublishingAccount(alice,accountId);
+ const task=(await pollTasks('pc')).find(task=>task.payload.kind==='publishing-account-oauth-begin'&&task.payload.accountId===accountId);
+ expect(task).toBeDefined();await reportTasks('pc',[{id:task!.id,status:'succeeded',result:reply}]);return browser;
+}
 /** 走真实确认流程建立私密或定时公开任务，网络始终由替身处理。 */
 async function flatJob(publicSchedule=false){const p=fixtureJob().profile;p.scheduled=publicSchedule;p.privacy=publicSchedule?'public':'private';const profile=await savePublishingProfile(alice,p);const b=await previewPublishingBatch(alice,profile.id,[fixtureJob().asset.id]);return (await confirmPublishingBatch(alice,b.id,false,true))[0];}
 /** 固定已上传的加密检查点，验证重启恢复沿用原videoId。 */

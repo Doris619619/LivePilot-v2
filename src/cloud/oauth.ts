@@ -5,9 +5,9 @@ import { randomBytes, createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 import { config } from "@/core/config";
 import { seal, unseal } from "@/core/storage";
-import { AppError, isAppError, problemFor } from "@/core/errors";
+import { AppError, problemFor } from "@/core/errors";
 import { cloudStore, transaction } from "./store";
-import { rpc } from "./tasks";
+import { enqueue, rpc } from "./tasks";
 import type { Target } from "@/shared/remote";
 import { authorizePublishingAccount, requirePublishingAccount, requirePublishingAccountsCapability, publishingReauthorizationEpoch, completePublishingReauthorization, cancelPublishingReauthorization, assertPublishingAuthorizationEpoch, requirePublishingAuthorizationCapability } from "./publishing-accounts";
 import { releaseOAuthActivity } from "./oauth-activities";
@@ -25,11 +25,17 @@ export async function beginRemoteOAuth(target: Target, actor: string, accountId?
     if ((await agentStore(target.agentId).read<string[]>("capabilities.json"))?.includes("publishing-auth-generation-v1")) authorizationGeneration = randomUUID();
     else if (account.status === "needs_reauthorization") throw new AppError("AGENT_VERSION", "请升级直播电脑的 Agent 后重新授权原发布频道。", 409);
   }
-  const epoch = accountId ? await publishingReauthorizationEpoch(target.agentId, accountId, !!authorizationGeneration, true, authorizationGeneration) : undefined;
   const activityId = randomUUID();
-  let result: { url: string; cookie: string };
-  try { result = await rpc(target, actor, accountId ? { kind: "publishing-account-oauth-begin", accountId } : { kind: "oauth-begin" }, activityId); }
-  catch (error) { if (accountId && isAppError(error) && error.code === "BUSY") await cancelPublishingReauthorization(target.agentId, accountId, epoch, authorizationGeneration); throw error; }
+  let epoch: string | undefined;
+  if (accountId) {
+    // 短账号锁只串行准入与epoch建立，不等待设备。先入队，离线/维护/BUSY拒绝均不改变健康账号或原在途事务。
+    // begin在Agent上只建PKCE，不换Token；新回调只有Cloud保存epoch和浏览器事务后才可使用。
+    epoch = await transaction(agentStore(target.agentId), async () => {
+      await enqueue(target, actor, { kind: "publishing-account-oauth-begin", accountId }, activityId);
+      return publishingReauthorizationEpoch(target.agentId, accountId, !!authorizationGeneration, true, authorizationGeneration);
+    }, "publishing-oauth-" + accountId + ".lock");
+  }
+  const result = await rpc<{ url: string; cookie: string }>(target, actor, accountId ? { kind: "publishing-account-oauth-begin", accountId } : { kind: "oauth-begin" }, activityId);
   const url = new URL(result.url); const agentState = url.searchParams.get("state") || "";
   if (url.searchParams.get("redirect_uri") !== config().redirectUri) throw new AppError("OAUTH_CONFIG", "Agent 的控制端地址与云端不一致，请检查配置。");
   const state = randomBytes(32).toString("hex"); const cookie = randomBytes(32).toString("hex");

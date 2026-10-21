@@ -30,8 +30,13 @@ beforeEach(async () => {
   const pair = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", pair.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Synthetic host" }]); await heartbeatAgent("pc", session.session, []);
   await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-consent-v2"]); await cloudStore().write("bindings.json", [{ ...destination, channelId: "channel_one", confirmed: true }]);
   await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, privacyContact: "synthetic@example.invalid" }); await acceptPublishingPrivacy(alice, PRIVACY_VERSION);
-  channels.clear(); remote.rpc.mockReset(); remote.rpc.mockImplementation(async (_target, _actor, payload: TaskPayload) => {
-    if (payload.kind === "publishing-account-oauth-begin") return { url: "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=" + encodeURIComponent("https://synthetic.invalid/api/youtube/callback") + "&state=publishing-" + payload.accountId + "." + "d".repeat(64), cookie: "e".repeat(64) };
+  channels.clear(); remote.rpc.mockReset(); remote.rpc.mockImplementation(async (_target, _actor, payload: TaskPayload, taskId?: string) => {
+    if (payload.kind === "publishing-account-oauth-begin") {
+      const reply = { url: "https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=" + encodeURIComponent("https://synthetic.invalid/api/youtube/callback") + "&state=publishing-" + payload.accountId + "." + "d".repeat(64), cookie: "e".repeat(64) };
+      // begin已真实准入；合成Agent仍经poll/report确认终态，不能让mockRPC绕过排他记录。
+      const task = (await pollTasks("pc")).find(task => task.id === taskId); expect(task).toBeDefined();
+      await reportTasks("pc", [{ id: task!.id, status: "succeeded", result: reply }]); return reply;
+    }
     if (payload.kind === "publishing-account-oauth-finish") return { ok: true };
     return { assets: [fixtureJob().asset], thumbnails: [], channelId: channels.get(publishingTaskAccountId(payload) || "") || "channel_one", channel: "Synthetic" };
   });

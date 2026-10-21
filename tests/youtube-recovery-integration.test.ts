@@ -12,6 +12,7 @@ import { beginRemoteOAuth, finishRemoteOAuth } from "@/cloud/oauth";
 import { agentPublishingAccounts, claimPublishingAccount, createPublishingAccount, syncPublishingAccounts, publishingReauthorizationEpoch } from "@/cloud/publishing-accounts";
 import { acceptPublishingPrivacy, changePublishingJob, completePublishingCleanup, connectPublishingAccount, publishingCleanups, publishingStore, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy } from "@/cloud/publishing";
 import { enqueue, pollTasks, reportTasks, terminal, type TaskRecord } from "@/cloud/tasks";
+import * as taskPorts from "@/cloud/tasks";
 import { cloudStore } from "@/cloud/store";
 import { admitYouTube, reportYouTubeResult, updateYouTubePolicy } from "@/cloud/youtube-usage";
 import { ingestYouTubeUsage } from "@/cloud/youtube-usage-events";
@@ -19,7 +20,8 @@ import { readYouTubeUsage, youtubeDay } from "@/cloud/youtube-usage-store";
 import { quotaDay } from "@/core/publishing/schedule";
 import { PublishingRunner } from "@/core/publishing/runner";
 import { PublishingStore } from "@/core/publishing/storage";
-import { seal, unseal } from "@/core/storage";
+import { Store, seal, unseal } from "@/core/storage";
+import { AppError } from "@/core/errors";
 import { VideoApi } from "@/core/youtube/video-api";
 import { installYouTubeRuntime } from "@/core/youtube/usage";
 import { sleep } from "@/core/errors";
@@ -360,3 +362,66 @@ it("V02 a definitely refused begin restores the original healthy account", async
   await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-begin", accountId: account.id });
   await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "BUSY" }); expect(await accountStatus(account.id)).toBe("connected"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
 }, 10_000);
+
+/** 准入未受理就不能更改账号或epoch，恢复在线后原视频的核对和取消必须仍可执行。 */
+it.each(["offline", "maintenance", "busy"] as const)("R03 rejected %s begin preserves the exact healthy account transaction and original job controls", async refusal => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Rejected reauthorization"); await finish(await begin(account.id));
+  const { spec, runner } = await checkpoint(account.id); await reportPublishing(agentId, await runner.reports());
+  const originalToken = await executor.publishingAccounts.auth(account.id).tokens();
+  const before = await cloudStore().read("publishing-accounts.json"); const calls = google.mock.calls.length;
+  const beat = (await agentStore(agentId).read<{ at: number; session: string; snapshots: [] }>("heartbeat.json"))!;
+  if (refusal === "offline") await agentStore(agentId).write("heartbeat.json", { ...beat, at: Date.now() - 60_000 });
+  if (refusal === "maintenance") await agentStore(agentId).write("maintenance.json", { token: "d".repeat(64), activities: {} });
+  if (refusal === "busy") await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-begin", accountId: account.id });
+  const tasksBefore = (await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records.length;
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: { offline: "AGENT_OFFLINE", maintenance: "MAINTENANCE", busy: "BUSY" }[refusal] });
+  expect(await cloudStore().read("publishing-accounts.json")).toEqual(before); expect(google.mock.calls.length).toBe(calls);
+  expect((await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records).toHaveLength(tasksBefore);
+  await agentStore(agentId).write("heartbeat.json", { ...beat, at: Date.now() });
+  if (refusal === "maintenance") await agentStore(agentId).write("maintenance.json", { activities: {} });
+  await syncPublishingAccounts(agentId, await executor.publishingAccounts.statuses());
+  expect(await accountStatus(account.id)).toBe("connected"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(originalToken);
+  await expect(changePublishingJob(alice, spec.id, "reconcile")).resolves.toMatchObject({ spec: { id: spec.id } });
+  await expect(changePublishingJob(alice, spec.id, "cancel")).resolves.toMatchObject({ spec: { desired: "cancel" } });
+}, 15_000);
+
+/** 第二个明确未入队的begin不能覆盖第一个finish的epoch；释放真实Token交换后第一事务仍能完成。 */
+it("R03 a BUSY second begin cannot invalidate a legitimate in-flight token exchange", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Overlapping reauthorization"); await finish(await begin(account.id));
+  const original = await executor.publishingAccounts.auth(account.id).tokens(), transaction = await begin(account.id);
+  let entered!: () => void, release!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const originalFetch = google.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>; let paused = false;
+  google.mockImplementation(async (url: string, init?: RequestInit) => { if (!paused && url === "https://oauth2.googleapis.com/token") { paused = true; entered(); await held; } return originalFetch(url, init); });
+  const finishing = finish(transaction).then(value => ({ value }), error => ({ error }));
+  try {
+    await ready; const before = await cloudStore().read("publishing-accounts.json");
+    await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "BUSY" });
+    expect(await cloudStore().read("publishing-accounts.json")).toEqual(before);
+    release(); expect(await finishing).toMatchObject({ value: { accountId: account.id } });
+    expect(await accountStatus(account.id)).toBe("connected"); expect((await executor.publishingAccounts.auth(account.id).tokens())?.authorizationGeneration).not.toBe(original?.authorizationGeneration);
+  } finally { release(); await finishing; }
+}, 15_000);
+
+/** Cloud队列写入之前的确定故障不应改账号；故障消除后正常重试仍走原频道。 */
+it("R03 a definite queue persistence failure leaves the account usable and permits a subsequent real authorization", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Queue admission failure"); await finish(await begin(account.id));
+  const before = await cloudStore().read("publishing-accounts.json"), original = await executor.publishingAccounts.auth(account.id).tokens();
+  const write = Store.prototype.write, machine = agentStore(agentId).dir;
+  const failing = vi.spyOn(Store.prototype, "write").mockImplementation(async function(this: Store, name, value) { if (this.dir === machine && name === "tasks.json") throw new Error("Synthetic queue commit refused before write"); return write.call(this, name, value); });
+  try { await expect(connectPublishingAccount(alice, account.id)).rejects.toThrow("Synthetic queue commit refused before write"); }
+  finally { failing.mockRestore(); }
+  expect(await cloudStore().read("publishing-accounts.json")).toEqual(before); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
+  await finish(await begin(account.id)); expect(await accountStatus(account.id)).toBe("connected");
+}, 15_000);
+
+/** 仅替代已入队之后的等待结果，真实队列/epoch仍执行；未知受理不能走拒绝回滚。 */
+it("R03 an admitted begin with an unknown receipt retains authorization protection", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Unknown begin receipt"); await finish(await begin(account.id));
+  const original = await executor.publishingAccounts.auth(account.id).tokens();
+  const waiting = vi.spyOn(taskPorts, "rpc").mockRejectedValue(new AppError("AGENT_TIMEOUT", "Synthetic unknown begin receipt", 504));
+  try { await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "AGENT_TIMEOUT" }); }
+  finally { waiting.mockRestore(); }
+  expect(await accountStatus(account.id)).toBe("needs_reauthorization"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
+  const tasks = (await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records;
+  expect(tasks.some(task => task.kind === "publishing-account-oauth-begin" && task.status === "queued")).toBe(true);
+}, 15_000);
