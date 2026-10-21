@@ -9,7 +9,7 @@ import path from "node:path";
 import http from "node:http";
 const repo = fileURLToPath(new URL("../", import.meta.url));
 const output = await mkdtemp(path.join(os.tmpdir(), "ln-upload-recovery-ui-"));
-await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import UploadPanel from './src/app/upload-panel'; createRoot(document.getElementById('root')).render(<UploadPanel instances={[{id:'main',name:'Main',agentId:'pc_a',agentName:'A'},{id:'main',name:'Second',agentId:'pc_b',agentName:'B'}]} channels={{}}/>);`, resolveDir: repo, loader: "tsx" }, outfile: path.join(output, "ui.js"), bundle: true, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.join(repo, "src") }, define: { "process.env.NODE_ENV": '"development"' }, logLevel: "silent" });
+await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client'; import UploadPanel from './src/app/upload-panel';import {WorkspaceUserContext} from './src/app/components/workspace-user-context'; createRoot(document.getElementById('root')).render(<WorkspaceUserContext.Provider value={{username:"alice",role:"customer"}}><UploadPanel instances={[{id:'main',name:'Main',agentId:'pc_a',agentName:'A'},{id:'main',name:'Second',agentId:'pc_b',agentName:'B'}]} channels={{}}/></WorkspaceUserContext.Provider>);`, resolveDir: repo, loader: "tsx" }, outfile: path.join(output, "ui.js"), bundle: true, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.join(repo, "src") }, define: { "process.env.NODE_ENV": '"development"' }, logLevel: "silent" });
 const js = await readFile(path.join(output, "ui.js"));
 const server = http.createServer((request, response) => { response.setHeader("content-type", request.url === "/ui.js" ? "text/javascript" : "text/html"); response.end(request.url === "/ui.js" ? js : '<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><div id="root"></div><script src="/ui.js"></script>'); });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -35,7 +35,7 @@ async function open({ saved, recovery, cancelStatus = 503, delayRecovery = false
     if (saved && url.pathname === "/api/uploads/" + saved.id) return route.fulfill({ json: saved });
     return route.fulfill({ json: recovery || saved });
   });
-  if (saved) await page.addInitScript(value => localStorage.setItem("livepilot-upload", JSON.stringify(value)), saved);
+  if (saved) await page.addInitScript(value => localStorage.setItem("livepilot-upload.v2:alice:"+value.id+":record", JSON.stringify({member:"alice",updatedAt:Date.now(),value})), saved);
   await page.goto(origin);
   if (!saved) await page.getByRole("button", { name: "上传素材", exact: true }).click();
   return { context, page, calls, releaseRecovery };

@@ -1,8 +1,9 @@
 /** 浏览器上传创建意图的严格恢复句柄；未知回执必须保留原设备、素材类型和幂等ID。 */
 import { z } from "zod";
 import type { UploadStatus } from "@/shared/uploads";
+import { uploadPreparationSchema } from "@/shared/upload-admission";
 const name = /^[a-z][a-z0-9_]{0,31}$/;
-const schema = z.object({ fingerprint: z.string().regex(/^[a-f0-9]{64}$/), target: z.string().refine(value => { const parts = value.split(":"); return parts.length >= 1 && parts.length <= 2 && parts.every(part => name.test(part)); }), kind: z.enum(["videos", "music"]), requestId: z.string().uuid() }).strict();
+const schema = z.object({ fingerprint: z.string().regex(/^[a-f0-9]{64}$/), target: z.string().refine(value => { const parts = value.split(":"); return parts.length >= 1 && parts.length <= 2 && parts.every(part => name.test(part)); }), kind: z.enum(["videos", "music"]), requestId: z.string().uuid(), preparation: uploadPreparationSchema.optional() }).strict().refine(value => !value.preparation || value.preparation.requestId === value.requestId);
 export type UploadIntent = z.infer<typeof schema>;
 /** 只接受产品曾写入的完整句柄；损坏缓存不能被当作没有待确认创建。 */
 export function readUploadIntent(value: unknown): UploadIntent { return schema.parse(value); }
