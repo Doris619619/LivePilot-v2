@@ -32,9 +32,14 @@ it("fails closed on first-day unknown history and on an unmapped OAuth client", 
   expect((await youtubeUsageSummary()).usedUnits).toBe(0);
 });
 it("atomically permits exactly the last20 routine units across100 concurrent device attempts", async () => {
-  await baseline(8480);
-  const results = await Promise.all(Array.from({ length: 100 }, (_, index) => admitYouTube(index % 2 ? "studio_a" : "studio_b", request())));
-  expect(results.filter(r => r.allowed)).toHaveLength(20); expect((await youtubeUsageSummary()).usedUnits).toBe(20); expect((await youtubeUsageSummary()).remainingUnits).toBe(500);
+  // 固定在 PT 日中但保留流逝时间，避免并发场景跨日重置，同时不冻结事务的五秒期限。
+  const nativeNow = Date.now.bind(Date); const offset = Date.parse("2026-10-21T20:00:00Z") - nativeNow();
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => nativeNow() + offset);
+  try {
+    await baseline(8480);
+    const results = await Promise.all(Array.from({ length: 100 }, (_, index) => admitYouTube(index % 2 ? "studio_a" : "studio_b", request())));
+    expect(results.filter(r => r.allowed)).toHaveLength(20); expect((await youtubeUsageSummary()).usedUnits).toBe(20); expect((await youtubeUsageSummary()).remainingUnits).toBe(500);
+  } finally { clock.mockRestore(); }
 }, 20000);
 it("durably deduplicates a lost admission response and rejects changed ownership", async () => {
   await baseline(); const input = request(); const first = await admitYouTube("studio_a", input);

@@ -4,6 +4,7 @@ import path from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { config } from "./config";
 import { AppError, sleep } from "./errors";
+import { claimLocalLock, releaseLocalLock, observeLock, confirmedPendingDelete } from "./file-lock";
 /** 仅文件锁竞争可重试，业务 BUSY 必须立即返回。 */
 export class LockBusyError extends AppError {
   /** 保存内部锁名供事务重试识别，不改变现有 HTTP 错误码。 */
@@ -37,16 +38,25 @@ export class Store {
   // A process lock also protects against accidentally running dev and production together.
   /** 独占指定操作锁并记录 PID；异常退出后需人工核对并恢复锁。 */
   async exclusive<T>(fn: () => Promise<T>, lockName = "control.lock"): Promise<T> {
-    await mkdir(this.dir, { recursive: true, mode: 0o700 });
     const filename = path.join(this.dir, lockName);
-    let handle;
-    try { handle = await open(filename, "wx", 0o600); }
-    catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      throw new LockBusyError(lockName);
+    if (!claimLocalLock(filename)) throw new LockBusyError(lockName);
+    try {
+      await mkdir(this.dir, { recursive: true, mode: 0o700 });
+      const observation = await observeLock(filename);
+      let handle;
+      try {
+        try { handle = await open(filename, "wx", 0o600); }
+        catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === "EEXIST") throw new LockBusyError(lockName);
+          if (code === "EPERM" && await confirmedPendingDelete(filename, observation)) throw new LockBusyError(lockName);
+          throw error;
+        } finally { await observation?.handle.close(); }
+        await handle.writeFile(String(process.pid)); return await fn();
+      } finally { if (handle) { await handle.close(); await unlink(filename); } }
+    } finally {
+      releaseLocalLock(filename);
     }
-    try { await handle.writeFile(String(process.pid)); return await fn(); }
-    finally { await handle.close(); await unlink(filename); }
   }
 }
 /** 读取共享本机密钥；格式不正确时拒绝加密。 */
