@@ -52,12 +52,21 @@ export async function authorizePublishingAccount(user: Member, id: string, conne
 }
 /** 上传、配额和设备指令均重新检查独立账号目标，不能回落到同实例的直播凭据。 */
 export async function requirePublishingAccount(agentId: string, instanceId: string, id: string, channelId?: string, connected = true) {
-  const account = (await readState()).accounts.find(record => record.value.id === id)?.value;
-  const agent = await requireTarget(agentId, instanceId);
-  if (!account || account.agentId !== agentId || account.instanceId !== instanceId || agent.owner && agent.owner !== account.owner) throw new AppError("ACCOUNT", "发布账号不属于该设备或客户。", 403);
+  const account = await requirePublishingAccountOwner(agentId, instanceId, id);
   if (account.status === "cleanup_pending" || account.status === "deleted") throw new AppError("CLEANUP", "此发布账号正在清理或已删除。", 409);
   if (connected && (account.status !== "connected" || !account.channelId) || channelId && account.channelId !== channelId) throw new AppError("CHANNEL", "发布账号未连接或频道与任务快照不同。", 409);
   return publishingAccountSchema.parse(account);
+}
+/** 生命周期准入先核对有效设备和当前客户归属；是否可调用具体方法由调用方另行校验，不能当作可发送证明。 */
+export async function requirePublishingAccountOwner(agentId: string, instanceId: string, id: string) {
+  const account = (await readState()).accounts.find(record => record.value.id === id)?.value;
+  const agent = await requireTarget(agentId, instanceId);
+  if (!account || account.agentId !== agentId || account.instanceId !== instanceId || agent.owner && agent.owner !== account.owner) throw new AppError("ACCOUNT", "发布账号不属于该设备或客户。", 403);
+  return publishingAccountSchema.parse(account);
+}
+/** 事后事件只读历史路由，清理及删除不抹去归属；不授予新的Google调用，也不吞掉存储错误。 */
+export async function ownsPublishingAccountHistory(agentId: string, instanceId: string, id: string) {
+  return (await readState()).accounts.some(record => record.value.id === id && record.value.agentId === agentId && record.value.instanceId === instanceId);
 }
 /** 账号可先建立路由，只有用户主动连接才触发 OAuth；名称不参与 Token 定位。 */
 export async function createPublishingAccount(user: Member, agentId: string, instanceId: string, name: string) {

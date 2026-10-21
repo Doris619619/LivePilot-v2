@@ -5,16 +5,15 @@ import { AppError } from "@/core/errors";
 import { quotaDay } from "@/core/publishing/schedule";
 import { defaultPolicy } from "@/shared/publishing";
 import { youtubeCost, youtubeAdmitSchema, youtubeResultSchema, youtubePolicyUpdateSchema, YOUTUBE_COST_VERSION, type YouTubeAdmit, type YouTubeResult, type YouTubePolicyUpdate, type YouTubeUsageSummary } from "@/shared/youtube-usage";
-import { agentStore, listAgents, requireTarget } from "./agents";
-import { requirePublishingAccount } from "./publishing-accounts";
+import { agentStore, listAgents } from "./agents";
+import { assertYouTubeLifecycleContext } from "./youtube-context";
 import type { TaskRecord } from "./tasks";
 import type { TaskPayload } from "@/shared/remote";
 import { editYouTubeUsage, readYouTubeUsage, youtubeDay, youtubeAdmission, youtubeProject, youtubeReserved, findYouTubeReceipts, saveArchivedYouTubeResults, youtubeHotCapacity, type YouTubeDay } from "./youtube-usage-store";
 import { youtubeEventSummary } from "./youtube-usage-events";
 /** 控制预留仅授予已经下发且匹配当前设备、实例的控制任务。 */
 async function assertYouTubeContext(agentId: string, input: YouTubeAdmit) {
-  const machine = await requireTarget(agentId, input.instanceId);
-  if (input.accountId) await requirePublishingAccount(agentId, input.instanceId, input.accountId);
+  const machine = await assertYouTubeLifecycleContext(agentId, input);
   if (input.purpose === "control") {
     const queue = await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json");
     const task = queue?.records.find(t => t.id === input.operationId && t.instanceId === input.instanceId && t.kind === "control" && ["accepted", "running", "delivering", "uncertain"].includes(t.status));

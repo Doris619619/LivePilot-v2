@@ -9,8 +9,9 @@ import { nextQuotaMidnight } from "@/core/live-chat/policy";
 import { AppError } from "@/core/errors";
 import { youtubeUsageEventSchema, youtubeCost, type YouTubeAdmission, type YouTubeUsageEvent, type YouTubeResult } from "@/shared/youtube-usage";
 import type { Transport } from "./transport";
-type Segment = { events: YouTubeUsageEvent[] };
-type Metadata = { breakerUntil: number; droppedEvents: number; pendingDropped?: number; lastSyncedAt?: number };
+type Recovery = { id: string; droppedEvents: number };
+type Segment = { events: YouTubeUsageEvent[]; recovery?: Recovery };
+type Metadata = { breakerUntil: number; droppedEvents: number; pendingDropped?: number; lastSyncedAt?: number; recoveredSegments?: Record<string, string> };
 type Options = { store?: Store; now?: () => number; maxBytes?: number; retentionMs?: number };
 const MINUTE = 60_000;
 export class AgentYouTubeUsage implements YouTubeRuntime {
@@ -51,6 +52,26 @@ export class AgentYouTubeUsage implements YouTubeRuntime {
   private async load() {
     if (!this.metadata) this.metadata = await this.store.read<Metadata>("metadata.json") || { breakerUntil: 0, droppedEvents: 0 };
     return this.metadata;
+  }
+  /** 缺口先随安全分段落盘，再按回执累计；元数据失败后重读同段不会漏记或重复累计。 */
+  private async countRecovery(name: string, recovery: Recovery) {
+    const metadata = await this.load(); if (metadata.recoveredSegments?.[name] === recovery.id) return;
+    const next = { ...metadata, droppedEvents: metadata.droppedEvents + recovery.droppedEvents, recoveredSegments: { ...metadata.recoveredSegments, [name]: recovery.id } };
+    await this.store.write("metadata.json", next); this.metadata = next;
+  }
+  /** 磁盘条目再次 strict 校验；坏条只留下新生成的缺口，不上传、复制或归档原始敏感字段。 */
+  private async readSegment(name: string): Promise<Segment | null> {
+    const raw = await this.store.read<unknown>(name); if (raw === null) return null;
+    const object = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+    const rows = Array.isArray(object.events) ? object.events : [undefined]; const events: YouTubeUsageEvent[] = []; let droppedEvents = 0;
+    for (const row of rows) { const parsed = youtubeUsageEventSchema.safeParse(row); if (parsed.success) events.push(parsed.data); else droppedEvents++; }
+    const marker = object.recovery && typeof object.recovery === "object" ? object.recovery as Record<string, unknown> : undefined;
+    const prior = marker && typeof marker.id === "string" && Number.isSafeInteger(marker.droppedEvents) && Number(marker.droppedEvents) > 0 && events.some(event => event.eventId === marker.id && event.kind === "decision" && event.decision === "dropped" && event.droppedEvents === marker.droppedEvents) ? { id: marker.id, droppedEvents: Number(marker.droppedEvents) } : undefined;
+    if (prior) await this.countRecovery(name, prior);
+    if (!droppedEvents) return { events, ...(prior ? { recovery: prior } : {}) };
+    const gap = youtubeUsageEventSchema.parse({ eventId: randomUUID(), bootId: this.bootId, sequence: this.sequence++, at: this.now(), instanceId: "main", method: "channels.list", purpose: "background", trigger: "unknown", transport: "rest", kind: "decision", decision: "dropped", droppedEvents });
+    const recovery = { id: gap.eventId, droppedEvents }; const segment = { events: [...events, gap], recovery };
+    await this.store.write(name, segment); await this.countRecovery(name, recovery); return segment;
   }
   /** 本机短路的阻断也带恢复时间，避免旧 Cloud/断线导致五秒一次无意义网络尝试。 */
   private denied(attempt: YouTubeAttempt, code: string, until: number): YouTubeAdmission {
@@ -107,15 +128,16 @@ export class AgentYouTubeUsage implements YouTubeRuntime {
   /** 白名单重建事件，只保存 schema 允许的数据；每段最多 256 条或 256 KiB。 */
   private async append(event: YouTubeRuntimeEvent) {
     const next = youtubeUsageEventSchema.parse({ ...event, eventId: randomUUID(), bootId: this.bootId, sequence: this.sequence++ });
-    let current = await this.store.read<Segment>("current.json") || { events: [] };
+    let current = await this.readSegment("current.json") || { events: [] };
     if (current.events.length >= 256 || Buffer.byteLength(JSON.stringify(current)) + Buffer.byteLength(JSON.stringify(next)) > 256 * 1024) { await this.rotate(current); current = { events: [] }; }
     current.events.push(next); await this.store.write("current.json", current);
   }
   /** 先保存不可变段再清当前段，崩溃最多产生可去重的重复，不丢已落盘事件。 */
   private async rotate(current?: Segment) {
-    const value = current || await this.store.read<Segment>("current.json");
+    const value = current || await this.readSegment("current.json");
     if (!value?.events.length) return;
-    await this.store.write("segment-" + this.now() + "-" + randomUUID() + ".json", value); await this.store.write("current.json", { events: [] });
+    // current 的恢复回执已先计入元数据；转段只复制安全事件，不能在新文件名下再累计同一个缺口。
+    await this.store.write("segment-" + this.now() + "-" + randomUUID() + ".json", { events: value.events }); await this.store.write("current.json", { events: [] });
   }
   /** 将有界积压和缺口一起落盘；只在分钟结束或退出时展开决策计数。 */
   private async flushDecisions(all = false) {
@@ -131,14 +153,18 @@ export class AgentYouTubeUsage implements YouTubeRuntime {
   private async segments() {
     const names = (await readdir(this.store.dir).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return []; throw error; })).filter(name => /^(?:segment|archive)-\d+-[a-f0-9-]{36}\.json$/.test(name)).sort();
     const rows = await Promise.all(names.map(async name => ({ name, ...(await stat(path.join(this.store.dir, name))) })));
+    const metadata = await this.load(); const recovered = Object.fromEntries(Object.entries(metadata.recoveredSegments || {}).filter(([name]) => name === "current.json" || names.includes(name)));
+    if (Object.keys(recovered).length !== Object.keys(metadata.recoveredSegments || {}).length) { const next = { ...metadata, recoveredSegments: recovered }; await this.store.write("metadata.json", next); this.metadata = next; }
     let bytes = rows.reduce((sum, row) => sum + row.size, 0);
     const removed = new Set<string>();
     for (const row of rows.sort((a, b) => Number(b.name.startsWith("archive-")) - Number(a.name.startsWith("archive-")) || a.mtimeMs - b.mtimeMs)) {
       if (row.mtimeMs >= this.now() - (this.options.retentionMs || 7 * 86400_000) && bytes <= (this.options.maxBytes || 128 * 1024 * 1024)) continue;
       if (!row.name.startsWith("archive-")) {
-        const value = await this.store.read<Segment>(row.name); const count = value?.events.reduce((sum, event) => sum + (event.count || 1), 0) || 0;
-        const metadata = await this.load(); metadata.droppedEvents += count; metadata.pendingDropped = (metadata.pendingDropped || 0) + count;
-        await this.store.write("metadata.json", metadata);
+        const value = await this.readSegment(row.name); const count = value?.events.reduce((sum, event) => sum + (event.droppedEvents || event.count || 1), 0) || 0;
+        // dropped 记录代表此前已累计的缺口；淘汰时继续向 Cloud 报告它，但本机不再重复增加同一损失。
+        const newlyDropped = value?.events.reduce((sum, event) => sum + (event.kind === "decision" && event.decision === "dropped" ? 0 : event.count || 1), 0) || 0;
+        const metadata = await this.load(); const next = { ...metadata, droppedEvents: metadata.droppedEvents + newlyDropped, pendingDropped: (metadata.pendingDropped || 0) + count };
+        await this.store.write("metadata.json", next); this.metadata = next;
       }
       await this.store.remove(row.name); bytes -= row.size; removed.add(row.name);
     }
@@ -167,13 +193,13 @@ export class AgentYouTubeUsage implements YouTubeRuntime {
   }
   /** 网络调用不在文件串行队列里；旧确认只删除其精确 eventId，后来的日志不会被吞。 */
   private async flushOnce() {
-    const item = await this.serial(async () => { await this.load(); await this.flushDecisions(); await this.rotate(); const names = await this.segments(); for (const name of names) { const segment = await this.store.read<Segment>(name); if (segment?.events.length) return { name, events: segment.events.slice(0, 64) }; } });
+    const item = await this.serial(async () => { await this.load(); await this.flushDecisions(); await this.rotate(); const names = await this.segments(); for (const name of names) { const segment = await this.readSegment(name); if (segment?.events.length) return { name, events: segment.events.slice(0, 64) }; } });
     this.nextFlush = this.now() + 5000;
     if (!item) return;
     const response = await this.transport.post<{ acknowledged: string[] }>("/api/agent/youtube-usage", { events: item.events });
     const sent = new Set(item.events.map(event => event.eventId)); const ack = new Set(response.acknowledged.filter(id => sent.has(id)));
     await this.serial(async () => {
-      const current = await this.store.read<Segment>(item.name); if (!current) return;
+      const current = await this.readSegment(item.name); if (!current) return;
       const archived = current.events.filter(event => ack.has(event.eventId));
       if (archived.length) await this.store.write("archive-" + this.now() + "-" + randomUUID() + ".json", { events: archived });
       const events = current.events.filter(event => !ack.has(event.eventId));

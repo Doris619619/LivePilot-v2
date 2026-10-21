@@ -4,12 +4,10 @@ import { readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { quotaDay } from "@/core/publishing/schedule";
 import { nextQuotaMidnight } from "@/core/live-chat/policy";
-import { AppError } from "@/core/errors";
 import { youtubeUsageBatchSchema, youtubeCost, type StoredYouTubeEvent, type YouTubeUsageEvent, type YouTubeUsageQuery, type YouTubeEventsPage } from "@/shared/youtube-usage";
-import { requireTarget } from "./agents";
-import { requirePublishingAccount } from "./publishing-accounts";
 import { transaction } from "./store";
 import { youtubeUsageStore, editYouTubeUsage, youtubeDay, findYouTubeReceipts, saveArchivedYouTubeResults, type YouTubeReceiptLocation } from "./youtube-usage-store";
+import { matchesYouTubeReceipt, ownsYouTubeDecision, youtubeHistoryGap, youtubeHistoryInstances } from "./youtube-history-context";
 type Totals = { attempts: number; failures: number; cacheHits: number; blocked: number };
 type Summary = { totals: Totals; byMethod: Record<string, number>; ranking: Record<string, { attempts: number; units: number }>; instances?: Record<string, { agentId: string; instanceId: string; attempts: number; units: number }>; minutes: Record<string, { attempts: number; units: number }>; droppedEvents: number; lastSyncedAt?: number };
 type Segment = { name: string; at: number; size: number; count: number };
@@ -48,32 +46,36 @@ async function rotate(index: EventIndex, now: number) {
   const seenCutoff = now - 14 * 86400_000; for (const key of Object.keys(index.seen)) if (index.seen[key] < seenCutoff) delete index.seen[key];
   const summaryCutoff = quotaDay(now - 90 * 86400_000); for (const key of Object.keys(index.summaries)) if (key < summaryCutoff) delete index.summaries[key];
 }
-/** 认证身份覆盖设备字段；strict schema 拒绝携带任何原始文本、URL 或凭据。 */
+/** strict白名单先校验；事后start/finish沿原准入身份，永久坏记录逐条记脱敏缺口后确认，临时错误仍重传。 */
 export async function ingestYouTubeUsage(agentId: string, raw: YouTubeUsageEvent[]) {
   const { events } = youtubeUsageBatchSchema.parse({ events: raw }); const now = Date.now();
-  for (const event of events) { await requireTarget(agentId, event.instanceId); if (event.accountId) await requirePublishingAccount(agentId, event.instanceId, event.accountId); if (event.at > now + 300_000) throw new AppError("INPUT", "事件时间超过允许偏差。", 400); }
-  const verified = events.every(event => event.kind === "decision") ? new Set(events.map(event => event.eventId)) : await editYouTubeUsage(async state => {
-    const found = new Set<string>(); const receipts = await findYouTubeReceipts(state, events.flatMap(event => event.attemptId ? [event.attemptId] : [])); const changed: YouTubeReceiptLocation[] = [];
-    for (const event of events) {
-      if (event.kind === "decision") { found.add(event.eventId); continue; }
-      const location = event.attemptId ? receipts.get(event.attemptId) : undefined; const receipt = location?.receipt;
-      if (!receipt || receipt.agentId !== agentId || receipt.input.instanceId !== event.instanceId || receipt.input.accountId !== event.accountId || receipt.input.method !== event.method || !receipt.admission.allowed) continue;
-      found.add(event.eventId);
-      if (event.kind === "finish" && event.outcome) {
-        receipt.result ||= { attemptId: receipt.input.attemptId, outcome: event.outcome, durationMs: event.durationMs || 0, httpStatus: event.httpStatus, grpcStatus: event.grpcStatus, errorCode: event.errorCode };
-        const day = youtubeDay(state); if (["quotaExceeded", "dailyLimitExceeded"].includes(event.errorCode || "") && quotaDay(event.at) === day.day) day.breakerUntil = nextQuotaMidnight(now);
-        if (location?.archiveDay) changed.push(location);
-      }
-    }
-    if (changed.length) await saveArchivedYouTubeResults(changed); return found;
-  });
-  const store = youtubeUsageStore();
+  const instances = await youtubeHistoryInstances(agentId); const store = youtubeUsageStore();
   return transaction(store, async () => {
-    const index = await readIndex(); const fresh: StoredYouTubeEvent[] = [];
+    const index = await readIndex(); const pending: YouTubeUsageEvent[] = []; const fresh: StoredYouTubeEvent[] = [];
+    // 先在事件锁中筛除 UUID/启动序列重传，再触及结果与熔断；锁顺序固定为 events → budget。
     for (const event of events) {
       const key = agentId + ":" + event.eventId; const sequenceKey = agentId + ":" + event.bootId + ":" + event.sequence; if (index.seen[key] || index.seen[sequenceKey]) continue;
-      index.seen[key] = now; index.seen[sequenceKey] = now;
-      const safe = verified.has(event.eventId) ? event : { ...event, kind: "decision" as const, decision: "dropped" as const, droppedEvents: (event.droppedEvents || 0) + 1 };
+      index.seen[key] = now; index.seen[sequenceKey] = now; pending.push(event);
+    }
+    const decisions = new Set<YouTubeUsageEvent>();
+    for (const event of pending) if (event.at <= now + 300_000 && event.kind === "decision" && await ownsYouTubeDecision(agentId, event, instances)) decisions.add(event);
+    const verified = pending.every(event => event.kind === "decision") ? decisions : await editYouTubeUsage(async state => {
+      const found = new Set(decisions); const receipts = await findYouTubeReceipts(state, pending.flatMap(event => event.kind !== "decision" && event.attemptId ? [event.attemptId] : [])); const changed: YouTubeReceiptLocation[] = [];
+      for (const event of pending) {
+        if (event.kind === "decision" || event.at > now + 300_000 || event.kind === "finish" && !event.outcome) continue;
+        const location = event.attemptId ? receipts.get(event.attemptId) : undefined; const receipt = location?.receipt;
+        if (!receipt || receipt.agentId !== agentId || !matchesYouTubeReceipt(receipt.input, event) || !receipt.admission.allowed) continue;
+        found.add(event);
+        if (event.kind === "finish" && event.outcome) {
+          receipt.result ||= { attemptId: receipt.input.attemptId, outcome: event.outcome, durationMs: event.durationMs || 0, httpStatus: event.httpStatus, grpcStatus: event.grpcStatus, errorCode: event.errorCode, streamBatches: event.streamBatches, streamMessages: event.streamMessages };
+          const day = youtubeDay(state); if (["quotaExceeded", "dailyLimitExceeded"].includes(receipt.result.errorCode || "") && quotaDay(event.at) === day.day) day.breakerUntil = nextQuotaMidnight(now);
+          if (location?.archiveDay) changed.push(location);
+        }
+      }
+      if (changed.length) await saveArchivedYouTubeResults(changed); return found;
+    });
+    for (const event of pending) {
+      const safe = verified.has(event) ? event : youtubeHistoryGap(event, now);
       const cost = youtubeCost(safe.method); const value: StoredYouTubeEvent = { ...safe, agentId, project: "current-project", receivedAt: now, estimatedUnits: safe.kind === "start" && cost.bucket === "general" ? cost.units : null, quotaDay: quotaDay(safe.at) };
       fresh.push(value); accumulate(index, value);
     }
