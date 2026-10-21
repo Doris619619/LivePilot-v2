@@ -17,6 +17,7 @@ type Guidance = { title: string; steps: string[]; actions: ProblemAction[] };
 const obsSettings = "在对应直播电脑的 OBS 中打开“工具 → WebSocket 服务器设置”，核对启用状态、端口和密码，再重新检查。";
 const network = "在直播电脑检查系统网络与代理是否能访问该服务；网页能打开不代表直播电脑能访问。处理后重新查询。";
 const catalog: Record<string, Guidance> = {
+  UPLOAD_INPUT: { title: "所选文件不可上传", steps: ["请选择有内容且符合格式、大小限制的视频或音乐文件。"], actions: [] },
   YOUTUBE_PROTECTION_OFFLINE: { title: "YouTube 配额保护暂不可用", steps: ["恢复直播电脑与控制端的连接，并确认两端均支持配额保护。已有 OBS 推流继续，本地停止仍可用。"], actions: ["refresh", "support"] },
   YOUTUBE_PROTECTION_WAIT: { title: "YouTube 请求正在等待预算", steps: ["查看管理员数据台的暂停原因及恢复时间；不要反复点击重试或重新授权。"], actions: ["refresh", "support"] },
   YOUTUBE_PROTECTION_STORAGE: { title: "配额保护记录暂不可读", steps: ["保留原数据，检查直播电脑日志目录及控制端账本的磁盘和权限。新的平台请求暂停，已有推流继续。"], actions: ["refresh", "support"] },

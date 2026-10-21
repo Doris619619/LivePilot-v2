@@ -19,6 +19,7 @@ import { YouTubeAuth } from '@/core/youtube/auth';
 import { VideoApi, VideoApiError } from '@/core/youtube/video-api';
 import { seal } from '@/core/storage';
 import { finishRemoteOAuth } from '@/cloud/oauth';
+import { pollTasks, reportTasks } from '@/cloud/tasks';
 import { seedTestYouTubeBaseline } from './youtube-usage-baseline';
 const remote = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('@/cloud/tasks', async orig => ({ ...await orig<typeof import("@/cloud/tasks")>(), rpc: remote.rpc }));
@@ -31,7 +32,7 @@ beforeEach(async()=>{
  vi.stubEnv('LIVEPILOT_DATA_ROOT',root); vi.stubEnv('LIVEPILOT_ENCRYPTION_KEY','a'.repeat(64)); vi.stubEnv('LIVEPILOT_INSTANCES','main');vi.stubEnv('LIVEPILOT_ORIGIN','https://synthetic.invalid');
  const access=emptyAccess(); access.users.push(...[alice,admin].map(x=>({...x,salt:'synthetic',hash:'synthetic',revision:randomUUID(),disabled:false}))); await accessStore().write('access.json',access);
  const pair=await createPairing('pc','Synthetic','alice'); await pairAgent('pc',pair.code,'b'.repeat(64)); const session=await openSession('pc',randomUUID(),[{id:'main',name:'Main'}]); await heartbeatAgent('pc',session.session,[]);
- await agentStore('pc').write('capabilities.json',['publishing-v1','publishing-v2','publishing-consent-v2','publishing-accounts-v1','publishing-recovery-v1']);
+ await agentStore('pc').write('capabilities.json',['publishing-v1','publishing-v2','publishing-consent-v2','publishing-accounts-v1','publishing-recovery-v1','publishing-auth-generation-v1']);
  await cloudStore().write('bindings.json',[{agentId:'pc',instanceId:'main',channelId:'channel_one',confirmed:true}]);
  await savePublishingPolicy(admin,{...defaultPolicy}); await acceptPublishingPrivacy(alice,PRIVACY_VERSION);
  remote.rpc.mockReset(); remote.rpc.mockResolvedValue({assets:[fixtureJob().asset],thumbnails:[],channelId:'channel_one',channel:'Synthetic'});
@@ -42,8 +43,13 @@ beforeEach(async()=>{await seedTestYouTubeBaseline();});
 afterEach(async()=>{vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();if(path.dirname(root)!==os.tmpdir()||!path.basename(root).startsWith('publishing-recovery-'))throw new Error('Unsafe cleanup');await rm(root,{recursive:true,force:true});});
 /** 建立合成同频道发布账号，不交换任何真实OAuth凭据。 */
 async function connected(){const a=await createPublishingAccount(alice,'pc','main','Synthetic');await claimPublishingAccount('pc',a.id,'main','channel_one','Synthetic',true,Date.now());return a;}
-/** 只创建浏览器绑定的真实Cloud OAuth事务，Agent和Google回复均为合成数据。 */
-async function beginAuthorization(accountId:string){remote.rpc.mockResolvedValueOnce({url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({redirect_uri:'https://synthetic.invalid/api/youtube/callback',state:'publishing-'+accountId+'.'+'d'.repeat(64)}),cookie:'e'.repeat(64)});return connectPublishingAccount(alice,accountId);}
+/** 保留真实begin队列准入与终态回报；只替代Agent PKCE/Google回复，避免mockRPC遗留假在途任务。 */
+async function beginAuthorization(accountId:string){
+ const reply={url:'https://accounts.google.com/o/oauth2/v2/auth?'+new URLSearchParams({redirect_uri:'https://synthetic.invalid/api/youtube/callback',state:'publishing-'+accountId+'.'+'d'.repeat(64)}),cookie:'e'.repeat(64)};
+ remote.rpc.mockResolvedValueOnce(reply);const browser=await connectPublishingAccount(alice,accountId);
+ const task=(await pollTasks('pc')).find(task=>task.payload.kind==='publishing-account-oauth-begin'&&task.payload.accountId===accountId);
+ expect(task).toBeDefined();await reportTasks('pc',[{id:task!.id,status:'succeeded',result:reply}]);return browser;
+}
 /** 走真实确认流程建立私密或定时公开任务，网络始终由替身处理。 */
 async function flatJob(publicSchedule=false){const p=fixtureJob().profile;p.scheduled=publicSchedule;p.privacy=publicSchedule?'public':'private';const profile=await savePublishingProfile(alice,p);const b=await previewPublishingBatch(alice,profile.id,[fixtureJob().asset.id]);return (await confirmPublishingBatch(alice,b.id,false,true))[0];}
 /** 固定已上传的加密检查点，验证重启恢复沿用原videoId。 */
@@ -142,9 +148,9 @@ it('F12 initial future uploads remain undispatched while pause and cancel are de
 it('F01 fences late OAuth transactions and local registration with a Cloud epoch',async()=>{
  const account=await connected();const profile=await savePublishingProfile(alice,{...fixtureJob().profile,accountId:account.id});const batch=await previewPublishingBatch(alice,profile.id,[fixtureJob().asset.id]);const [job]=await confirmPublishingBatch(alice,batch.id,false,true);const old=await beginAuthorization(account.id);
  const report={id:job.spec.id,revision:1,sequence:1,state:'needs_attention' as const,authorizationInvalid:true,offset:0,total:job.spec.asset.size,updatedAt:Date.now()};await reportPublishing('pc',[report]);
- await claimPublishingAccount('pc',account.id,'main','channel_one','Synthetic',true,Date.now());remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(old.state,old.cookie,'alice','Synthetic old code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
- const first=await beginAuthorization(account.id);const late=await beginAuthorization(account.id);remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(first.state,first.cookie,'alice','Synthetic first code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('connected');
- await reportPublishing('pc',[{...report,sequence:2}]);remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(late.state,late.cookie,'alice','Synthetic late code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
+ await claimPublishingAccount('pc',account.id,'main','channel_one','Synthetic',true,Date.now());await expect(finishRemoteOAuth(old.state,old.cookie,'alice','Synthetic old code',alice)).rejects.toMatchObject({code:'OAUTH_SUPERSEDED'});expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
+ const first=await beginAuthorization(account.id);const late=await beginAuthorization(account.id);await expect(finishRemoteOAuth(first.state,first.cookie,'alice','Synthetic first code',alice)).rejects.toMatchObject({code:'OAUTH_SUPERSEDED'});remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(late.state,late.cookie,'alice','Synthetic newest code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('connected');
+ const successfulFinish=remote.rpc.mock.calls.findLast(call=>call[2]?.kind==='publishing-account-oauth-finish')![2];const stale=await beginAuthorization(account.id);await reportPublishing('pc',[{...report,sequence:2,authorizationFailureId:randomUUID(),authorizationGeneration:successfulFinish.authorizationGeneration}]);await expect(finishRemoteOAuth(stale.state,stale.cookie,'alice','Synthetic stale code',alice)).rejects.toMatchObject({code:'OAUTH_SUPERSEDED'});expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
  const failed=await beginAuthorization(account.id);remote.rpc.mockRejectedValueOnce(new Error('Synthetic lost Agent confirmation'));await expect(finishRemoteOAuth(failed.state,failed.cookie,'alice','Synthetic lost code',alice)).rejects.toBeDefined();expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
  const retry=await beginAuthorization(account.id);remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(retry.state,retry.cookie,'alice','Synthetic retry code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('connected');
 });
@@ -162,6 +168,6 @@ it('F13 a repair sees an already-public video and does not change playlists or u
 it('F01 advances the epoch for a new 401 while still waiting for reauthorization',async()=>{
  const account=await connected();const profile=await savePublishingProfile(alice,{...fixtureJob().profile,accountId:account.id});const batch=await previewPublishingBatch(alice,profile.id,[fixtureJob().asset.id]);const [job]=await confirmPublishingBatch(alice,batch.id,false,true);
  const report={id:job.spec.id,revision:1,sequence:1,state:'needs_attention' as const,authorizationInvalid:true,offset:0,total:job.spec.asset.size,updatedAt:Date.now()};await reportPublishing('pc',[report]);const old=await beginAuthorization(account.id);
- await reportPublishing('pc',[{...report,sequence:2}]);remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(old.state,old.cookie,'alice','Synthetic old code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
+ await reportPublishing('pc',[{...report,sequence:2}]);await expect(finishRemoteOAuth(old.state,old.cookie,'alice','Synthetic old code',alice)).rejects.toMatchObject({code:'OAUTH_SUPERSEDED'});expect((await agentPublishingAccounts('pc'))[0].status).toBe('needs_reauthorization');
  const retry=await beginAuthorization(account.id);await reportPublishing('pc',[{...report,sequence:2}]);remote.rpc.mockResolvedValueOnce({ok:true});await finishRemoteOAuth(retry.state,retry.cookie,'alice','Synthetic retry code',alice);expect((await agentPublishingAccounts('pc'))[0].status).toBe('connected');
 });

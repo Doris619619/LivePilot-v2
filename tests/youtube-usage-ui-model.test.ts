@@ -2,7 +2,7 @@
 import { expect, it } from "vitest";
 import { eventCostLabel, exhaustionLabel, pacificToday, usageQuery } from "@/app/admin/youtube-usage-model";
 import { defaultYouTubePolicy, type YouTubeUsageSummary } from "@/shared/youtube-usage";
-const summary: YouTubeUsageSummary = { project: "fixture", day: "2026-10-20", costVersion: "fixture", policy: defaultYouTubePolicy, baseline: { known: true, units: 0, uploads: 0 }, usedUnits: 10, uploads: 0, reservedUnits: 0, remainingUnits: 8990, byPurpose: {}, byMethod: {}, coverage: { protected: 0, total: 0, devices: [] }, totals: { attempts: 0, failures: 0, cacheHits: 0, blocked: 0 }, ranking: [], minutes: [], incomplete: false, droppedEvents: 0 };
+const summary: YouTubeUsageSummary = { project: "fixture", day: "2026-10-20", costVersion: "fixture", policy: defaultYouTubePolicy, policyRevision: 0, baseline: { known: true, units: 0, uploads: 0 }, usedUnits: 10, uploads: 0, reservedUnits: 0, remainingUnits: 8990, byPurpose: {}, byMethod: {}, coverage: { protected: 0, total: 0, devices: [] }, totals: { attempts: 0, failures: 0, cacheHits: 0, blocked: 0 }, ranking: [], minutes: [], incomplete: false, droppedEvents: 0 };
 it("uses the Pacific quota day on both sides of reset and DST", () => {
   expect(pacificToday(Date.parse("2026-10-20T06:59:59Z"))).toBe("2026-10-19");
   expect(pacificToday(Date.parse("2026-10-20T07:00:00Z"))).toBe("2026-10-20");

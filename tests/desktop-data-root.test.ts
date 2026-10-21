@@ -1,5 +1,5 @@
 /** 根归属与配置定位回归，所有文件及密钥均为临时合成数据。 */
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, realpath } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, symlink, realpath, rename } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, afterEach, it, expect, vi } from "vitest";
@@ -31,6 +31,59 @@ it("relocates only the verified original root after a disk path change without r
 it("rejects an unrelated root and an available original rather than selecting a stale copy", async () => {
  const store=new SettingsStore();await store.select(target);const foreign=path.join(base,"foreign");await claimRoot(foreign);
  await expect(store.inspectRecovery(foreign)).rejects.toThrow("原数据位置仍存在");await import("node:fs/promises").then(fs=>fs.rename(target,target+"-offline"));await expect(store.inspectRecovery(foreign)).rejects.toThrow("不是原 LiveNest 数据");
+});
+/** 正确原根已改名；只替代 DPAPI，路径、原子文件和恢复提交记录均为真实临时文件。 */
+async function movedRecoveryFixture() {
+ const store=new SettingsStore(), original=await store.select(target); original.identity={agentId:"original",origin:"https://example.invalid",token:"synthetic-original-token"};
+ original.instances=[{id:"main",name:"Main",managed:true,exe:path.join(target,"obs/main/bin/64bit/obs64.exe"),port:4455,password:"synthetic-password",initialized:true}];await store.write(original);
+ await writeFile(path.join(target,"preserve.txt"),"original bytes"); const moved=target+"-moved";await rename(target,moved); return {store,original,moved};
+}
+it.each(["journal", "settings", "locator"])("reenters the same relocation after the %s commit fails and the app restarts",async stage=>{
+ const {store,original,moved}=await movedRecoveryFixture();const method=Store.prototype.write;
+ const failed=stage==="journal"?"data-recovery.json":stage==="settings"?"settings.json":"data-location.json";
+ const spy=vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name===failed)throw new Error("synthetic relocation commit failure");return method.call(this,name,value);});
+ await expect(store.restoreLocation(moved)).rejects.toThrow("synthetic relocation commit failure");spy.mockRestore();
+ if(stage!=="journal"){const journal=await readFile(path.join(f.bootstrap,"data-recovery.json"),"utf8");expect(journal).not.toContain(original.encryptionKey);expect(journal).not.toContain(original.identity!.token);}
+ const restarted=new SettingsStore();await restarted.restoreLocation(moved);const recovered=await restarted.read();
+ expect(recovered.identity).toEqual(original.identity);expect(recovered.encryptionKey).toBe(original.encryptionKey);expect(recovered.dataRoot).toBe(await realpath(moved));expect(await readFile(path.join(moved,"preserve.txt"),"utf8")).toBe("original bytes");
+ expect(await new Store(f.bootstrap).read("data-recovery.json")).toBeNull();
+});
+it("can complete the journaled relocation after the original directory is moved back",async()=>{
+ const {store,original,moved}=await movedRecoveryFixture();const method=Store.prototype.write;
+ const spy=vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name==="data-location.json")throw new Error("locator failed");return method.call(this,name,value);});
+ await expect(store.restoreLocation(moved)).rejects.toThrow("locator failed");spy.mockRestore();await rename(moved,target);
+ const restarted=new SettingsStore();await restarted.restoreLocation(target);expect((await restarted.read()).identity).toEqual(original.identity);expect((await restarted.read()).instances[0].exe).toBe(path.join(await realpath(target),"obs/main/bin/64bit/obs64.exe"));
+});
+/** 第二次恢复自身失败也必须保留当前密文的解释链；回搬同一根到A或B均不替换身份。 */
+it.each((["journal", "settings", "locator", "cleanup"] as const).flatMap(stage=>(["original", "moved"] as const).map(destination=>[stage,destination] as const)))("reenters a moved-back root after a second %s failure at %s without losing committed-location evidence",async(stage,destination)=>{
+ const {store,original,moved}=await movedRecoveryFixture();const method=Store.prototype.write;const committedRoot=await realpath(moved);
+ const first=vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name==="data-location.json")throw new Error("first locator failure");return method.call(this,name,value);});
+ await expect(store.restoreLocation(moved)).rejects.toThrow("first locator failure");first.mockRestore();await rename(moved,target);const retryTarget=await realpath(target);
+ const failed=stage==="journal"?"data-recovery.json":stage==="settings"?"settings.json":"data-location.json";
+ const second=stage==="cleanup"?vi.spyOn(Store.prototype,"remove").mockRejectedValueOnce(new Error("second recovery failure")):vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name===failed)throw new Error("second recovery failure");return method.call(this,name,value);});
+ await expect(new SettingsStore().restoreLocation(target)).rejects.toThrow("second recovery failure");second.mockRestore();
+ if(destination==="moved")await rename(target,moved);const selected=destination==="moved"?moved:target;
+ const journal=await readFile(path.join(f.bootstrap,"data-recovery.json"),"utf8");expect(journal).not.toContain(original.encryptionKey);expect(journal).not.toContain(original.identity!.token);
+ if(stage==="settings")expect(JSON.parse(journal)).toMatchObject({version:2,from:target,to:retryTarget,committed:committedRoot});
+ const restarted=new SettingsStore();await restarted.restoreLocation(selected);const recovered=await restarted.read();
+ expect(recovered.identity).toEqual(original.identity);expect(recovered.encryptionKey).toBe(original.encryptionKey);expect(recovered.dataRoot).toBe(await realpath(selected));expect(recovered.instances[0].exe).toBe(path.join(await realpath(selected),"obs/main/bin/64bit/obs64.exe"));expect(await readFile(path.join(selected,"preserve.txt"),"utf8")).toBe("original bytes");expect(await new Store(f.bootstrap).read("data-recovery.json")).toBeNull();
+});
+/** 升级不要求删除旧提交记录；v1的to继续解释已提交到新位置的同一原身份密文。 */
+it("resumes a legacy v1 recovery journal after a locator failure",async()=>{
+ const {store,original,moved}=await movedRecoveryFixture();const method=Store.prototype.write;
+ const spy=vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name==="data-location.json")throw new Error("locator failed");return method.call(this,name,value);});await expect(store.restoreLocation(moved)).rejects.toThrow("locator failed");spy.mockRestore();
+ const locator=new Store(f.bootstrap),journal=(await locator.read<Record<string,unknown>>("data-recovery.json"))!;delete journal.committed;await locator.write("data-recovery.json",{...journal,version:1});
+ const restarted=new SettingsStore();await restarted.restoreLocation(moved);expect((await restarted.read()).identity).toEqual(original.identity);expect(await locator.read("data-recovery.json")).toBeNull();
+});
+it.each(["root", "identity", "live-lock"])("does not let a relocation journal bypass changed %s evidence",async kind=>{
+ const {store,moved}=await movedRecoveryFixture();const method=Store.prototype.write;
+ const spy=vi.spyOn(Store.prototype,"write").mockImplementation(async function(this:Store,name,value){if(name==="data-location.json")throw new Error("locator failed");return method.call(this,name,value);});await expect(store.restoreLocation(moved)).rejects.toThrow();spy.mockRestore();
+ const locator=new Store(f.bootstrap);const journal=await locator.read<Record<string,unknown>>("data-recovery.json");
+ if(kind==="root")await locator.write("data-recovery.json",{...journal,rootId:"different-root"});
+ if(kind==="identity")await locator.write("data-recovery.json",{...journal,identityDigest:"0".repeat(64)});
+ if(kind==="live-lock")await writeFile(path.join(moved,"state/host.lock"),String(process.pid));
+ await expect(new SettingsStore().inspectRecovery(moved)).rejects.toThrow();
+ expect((await locator.read<{dataRoot:string}>("data-location.json"))?.dataRoot).toBe(target);expect(await readFile(path.join(moved,"preserve.txt"),"utf8")).toBe("original bytes");
 });
 it("preserves legacy encrypted identity and commits its verified in-root copy",async()=>{await mkdir(target,{recursive:true});const settings={dataRoot:target,instances:[],encryptionKey:"a".repeat(64),identity:{agentId:"fixture",token:"synthetic",origin:"https://example.invalid"}};const original="dpapi:"+Buffer.from(JSON.stringify(settings)).toString("base64");await new Store(f.bootstrap).write("settings.json",original);const next=await new SettingsStore().read();expect(next.identity).toEqual(settings.identity);expect(next.rootId).toBeTruthy();expect(await new Store(f.bootstrap).read("settings.json")).toBe(original);expect(await new SettingsStore().read()).toEqual(next);});
 it("does not publish a new locator when encrypted writing fails",async()=>{f.protect.mockRejectedValue(new Error("fixture encryption failure"));await expect(new SettingsStore().select(target)).rejects.toThrow();expect(await new Store(f.bootstrap).read("data-location.json")).toBeNull();});

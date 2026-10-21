@@ -9,14 +9,16 @@ import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
 import { AppError, sleep } from "@/core/errors";
 import { ACCEPT_MS, PROTOCOL, publishingTaskAccountId, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
-import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
+import { snapshotSchema, operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
 import type { CommandStatus } from "@/shared/types";
 import { requireTarget, agentStore, assertAgentActive } from "./agents";
 import { transaction } from "./store";
 import { reconcileUploads, uploadId, type MaintenanceState } from "./upload-activities";
 import { assertAvailable, trackActivity, finishActivity } from "./maintenance";
+import { acceptUploadAdmission, type UploadAdmissionState } from "./upload-admission";
+import { preparedUploadId } from "@/shared/upload-admission";
 export type TaskRecord = Target & { customer?: string; id: string; actor: string; kind: TaskPayload["kind"]; action: string; fingerprint: string; payload: string; expiresAt: number; status: DeliveryState; updatedAt: number; createdAt: number; result?: string; message?: string; problem?: import("../shared/problems").Problem; httpStatus?: number; uploadStable?: boolean };
-type Queue = { records: TaskRecord[] };
+type Queue = { records: TaskRecord[] } & UploadAdmissionState;
 export const terminal = (status: DeliveryState) => ["succeeded", "failed", "interrupted", "expired"].includes(status);
 /** 直播控制按实例互斥，独立发布授权仅锁自己的 accountId，避免阻塞其他账号或直播。 */
 function exclusiveKey(payload: TaskPayload, instanceId: string) { return payload.kind === "control" || payload.kind.startsWith("oauth-") ? "instance:" + instanceId : payload.kind.startsWith("publishing-account-oauth-") ? "account:" + publishingTaskAccountId(payload) : undefined; }
@@ -29,7 +31,7 @@ function expire(record: TaskRecord) {
 /** 对业务输入建立稳定指纹，阻止相同 ID 被用于其他目标、操作者或动作。 */
 function fingerprint(target: Target, actor: string, payload: TaskPayload) { return createHash("sha256").update(JSON.stringify({ ...target, actor, payload })).digest("hex"); }
 /** 持久化后才返回受理；重复请求即便设备离线也能读取原结果。 */
-export async function enqueue(target: Target, actor: string, payload: TaskPayload, id: string = randomUUID()) {
+export async function enqueue(target: Target, actor: string, payload: TaskPayload, id: string = randomUUID(), uploadCredential?: string) {
   payload = taskPayloadSchema.parse(payload);
   if (payload.kind.startsWith("publishing-") || payload.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(payload.kind) || payload.kind === "control" && payload.input.action === "start") await (await import("./publishing")).assertNoPublishingCleanup(target.agentId, target.instanceId, publishingTaskAccountId(payload));
   const store = agentStore(target.agentId); const hash = fingerprint(target, actor, payload);
@@ -39,6 +41,11 @@ export async function enqueue(target: Target, actor: string, payload: TaskPayloa
     const destination = await requireTarget(target.agentId, target.instanceId);
     if(destination.owner){const member=(await members()).find(m=>m.username===actor);if(!member || (member.role!=="admin"&&member.username!==destination.owner))throw new AppError("FORBIDDEN","设备归属已变更，请重新读取工作台。",403);}
     const previous = queue.records.find(r => r.id === id);
+    if (payload.kind === "upload-create" && preparedUploadId(id)) {
+      if (!uploadCredential) throw new AppError("UPLOAD_ADMISSION", "新上传创建必须使用原准备凭据。", 409);
+      const accepted = acceptUploadAdmission(queue, actor, target, payload.input, id, uploadCredential);
+      if (accepted && !previous) throw new AppError("UPLOAD_ADMISSION", "原上传已受理，请查询原记录，不能重新创建。", 409);
+    } else if (uploadCredential) throw new AppError("UPLOAD_ADMISSION", "上传准备身份不一致。", 409);
     if (previous) { if (previous.fingerprint !== hash) throw new AppError("REQUEST", "请求标识已用于其他操作。", 409); await store.write("tasks.json", queue); return previous; }
     await requireTarget(target.agentId, target.instanceId, true);
     await assertAvailable(target.agentId);
@@ -72,6 +79,11 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 }
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
+  if (record.kind === "broadcast-read") {
+    const snapshot = snapshotSchema.parse(value);
+    if (snapshot.instance.id !== record.instanceId) throw new AppError("INSTANCE", "设备上报了其他实例的平台核对结果。", 403);
+    return snapshot;
+  }
   if (record.kind === "live-chat-preview") return chatDecisionSchema.parse(value);
   if (record.kind === "live-chat-read" || record.kind === "live-chat-configure") return liveChatStatusSchema.parse(value);
   if (record.kind === "publishing-assets") return assetsResultSchema.parse(value);
@@ -138,8 +150,8 @@ export async function latestControl(target: Target): Promise<CommandStatus | und
 /** 任务公开视图严格排除 payload/result。 */
 export function operation(record: TaskRecord): CommandStatus { return { id: record.id, actor: record.actor, action: record.action, status: record.status, updatedAt: new Date(record.updatedAt).toISOString(), message: record.message, problem: record.problem }; }
 /** 短 RPC 等待落盘结果；超时保留任务供核对，绝不声称执行失败。 */
-export async function rpc<T>(target: Target, actor: string, payload: TaskPayload, id?: string): Promise<T> {
-  const task = await enqueue(target, actor, payload, id); const deadline = Date.now() + 45_000;
+export async function rpc<T>(target: Target, actor: string, payload: TaskPayload, id?: string, uploadCredential?: string): Promise<T> {
+  const task = await enqueue(target, actor, payload, id, uploadCredential); const deadline = Date.now() + 45_000;
   do {
     const record = await readTask(target.agentId, task.id);
     if (record?.status === "succeeded") return unseal<T>(record.result!);

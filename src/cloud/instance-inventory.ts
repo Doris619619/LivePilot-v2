@@ -6,16 +6,21 @@ import { publishingTerminal, type PublishingAccount, type VideoJob } from "@/sha
 import { idSchema, OFFLINE_MS, type AgentSnapshot } from "@/shared/remote";
 import type { InstanceDescriptor } from "@/shared/types";
 import { agentStore, listAgents } from "./agents";
-import { releaseTargetChannels } from "./bindings";
+import { reconcileRetiredChannels, releaseTargetChannels } from "./bindings";
 import { cloudStore, transaction } from "./store";
 import { terminal, type TaskRecord } from "./tasks";
 type Inventory = { agents: { id: string; revoked: boolean; instances: InstanceDescriptor[]; retiredInstanceIds?: string[] }[] };
 type Retirement = { instance: InstanceDescriptor; retiredAt: number; channels: string[] };
 /** 只返回本设备的公开清单；用于清单提交响应丢失后在建立新会话前核对真实库存。 */
 export async function instanceInventory(agentId: string) {
-  const registry = await cloudStore().read<Inventory>("agents.json"); const agent = registry?.agents.find(a => a.id === agentId && !a.revoked);
-  if (!agent) throw new AppError("INSTANCE", "目标设备不存在。", 404);
-  return { instances: agent.instances, retiredInstanceIds: agent.retiredInstanceIds || [] };
+  const store = cloudStore();
+  return transaction(store, async () => {
+    const registry = await store.read<Inventory>("agents.json"); const agent = registry?.agents.find(a => a.id === agentId && !a.revoked);
+    if (!agent) throw new AppError("INSTANCE", "目标设备不存在。", 404);
+    // 库存本身只读；返回前完成已提交墓碑的幂等清理，失败不能被桌面误认为退休全部完成。
+    await reconcileRetiredChannels(store, agentId);
+    return { instances: agent.instances, retiredInstanceIds: agent.retiredInstanceIds || [] };
+  });
 }
 /** 仅编辑显示名称；设备会话和业务目标始终使用不可变 ID，直播中也不需要维护锁。 */
 export async function renameInstance(agentId: string, id: string, name: string) {

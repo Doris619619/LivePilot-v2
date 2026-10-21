@@ -11,20 +11,23 @@ vi.mock("@/core/live-chat/runner", () => ({ LiveChatRunner: class {
 vi.mock("@/core/media", () => ({ scanMedia: async () => ({ videos: [], music: [] }), resolveMedia: vi.fn() }));
 import { Service } from "../src/core/service";
 import { resetAccountAiEnvironment } from "../src/agent/live-chat-environment";
+import { installYouTubeRuntime } from "../src/core/youtube/usage";
+import { freshYouTubeEvidence } from "../src/shared/youtube-evidence";
+import { youtubeCost } from "../src/shared/youtube-usage";
 
 let phase: "live" | "stopping" | "error" | "stopped" | "idle"; let withIds: boolean; let failure: "quota" | "network" | undefined; let closePending: boolean;
-let fetcher: ReturnType<typeof vi.fn>;
+let fetcher: ReturnType<typeof vi.fn>, lifecycleOverride: string | undefined;
 /** 每个测试从全新模拟时钟和计数器开始，任何 fetch 都被替换为内存响应。 */
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-19T12:00:00Z"));
-  phase = "live"; withIds = true; failure = undefined; closePending = false; wiring.ports.length = 0;
+  phase = "live"; withIds = true; failure = undefined; closePending = false; lifecycleOverride = undefined; wiring.ports.length = 0;
   vi.stubEnv("LIVEPILOT_INSTANCES", ["main", ...Array.from({ length: 99 }, (_, i) => "obs_" + i)].join(","));
   fetcher = vi.fn(async (input: string) => {
     if (failure === "network") throw new Error("synthetic offline");
     if (failure === "quota") return Response.json({ error: { errors: [{ reason: "quotaExceeded" }] } }, { status: 403 });
     const u = new URL(input); const resource = u.pathname.split("/").at(-1);
     if (resource === "channels") return Response.json({ items: [{ id: "channel", snippet: { title: "Synthetic" } }] });
-    if (resource === "liveBroadcasts") return Response.json({ items: [{ id: u.searchParams.get("id"), snippet: { title: "Synthetic", liveChatId: "chat" }, status: { lifeCycleStatus: phase === "live" ? "live" : "complete" } }] });
+    if (resource === "liveBroadcasts") return Response.json({ items: [{ id: u.searchParams.get("id"), snippet: { title: "Synthetic", liveChatId: "chat" }, status: { lifeCycleStatus: lifecycleOverride || (phase === "live" ? "live" : "complete") } }] });
     if (resource === "liveStreams") return Response.json({ items: [{ id: u.searchParams.get("id"), status: { streamStatus: "active" } }] });
     throw new Error("Unexpected synthetic endpoint");
   }); vi.stubGlobal("fetch", fetcher);
@@ -94,4 +97,68 @@ it("healthy single-stream polling uses one daily channel read plus two reads eve
   for (let second = 0; second < 3600; second += 5) { vi.setSystemTime(start + second * 1000); await app.dashboard(); }
   expect(fetcher).toHaveBeenCalledTimes(25);
   expect(fetcher.mock.calls.filter(([url]) => new URL(url).pathname.endsWith("/channels"))).toHaveLength(1);
+});
+
+/** 保留100实例下的低预算长缓存，但显示真实旧时间；人工核对仍必须经过交互预算。 */
+it("keeps aged platform evidence visible without claiming freshness and explicitly refreshes it through admission", async () => {
+  const purposes: string[] = [];
+  installYouTubeRuntime({ async admit(input) { purposes.push(input.purpose); return { allowed: true, attemptId: input.attemptId, project: "synthetic", quotaDay: "2026-10-19", ...youtubeCost(input.method), remaining: 9000, backgroundRemaining: 1000, activeInstances: 100, resetAt: new Date("2026-10-20T00:00:00Z").getTime() }; }, async record() {} });
+  const app = service(), first = await app.dashboard(); expect(fetcher).toHaveBeenCalledTimes(3);
+  lifecycleOverride = "complete"; vi.setSystemTime(Date.now() + 30 * 60_000);
+  const cached = await app.dashboard(); expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(cached.youtube.checkedAt).toBe(first.youtube.checkedAt); expect(freshYouTubeEvidence(cached.youtube)).toBe(false);
+  expect(Date.parse(cached.youtube.nextCheckAt!)).toBeGreaterThan(Date.now());
+  const checked = await app.checkYouTube(); expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(checked.youtube).toMatchObject({ lifecycle: "complete", query: "ready", checkedAt: new Date().toISOString() });
+  expect(purposes.at(-1)).toBe("interactive"); expect(freshYouTubeEvidence(checked.youtube)).toBe(true);
+  await app.dashboard(); expect(fetcher).toHaveBeenCalledTimes(4);
+});
+
+/** 手动读取合并并发请求；准入拒绝不新增HTTP，不把旧证据时间刷新为现在。 */
+it("coalesces manual checks and retains prior evidence when the interactive budget denies a check", async () => {
+  const app = service(); await app.dashboard();
+  await Promise.all(Array.from({ length: 20 }, () => app.checkYouTube())); expect(fetcher).toHaveBeenCalledTimes(5);
+  const checkedAt = (await app.dashboard()).youtube.checkedAt;
+  vi.setSystemTime(Date.now() + 60_000);
+  installYouTubeRuntime({ async admit(input) { return { allowed: false, code: "YOUTUBE_BUDGET", attemptId: input.attemptId, project: "synthetic", quotaDay: "2026-10-19", ...youtubeCost(input.method), remaining: 0, backgroundRemaining: 0, activeInstances: 1, resetAt: Date.now() + 86400_000 }; }, async record() {} });
+  const denied = await app.checkYouTube(); expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(denied.youtube).toMatchObject({ query: "failed", checkedAt, lifecycle: "live", problem: { outcome: "not-sent" } });
+});
+
+/** 平台HTTP在途时另一窗口结束/开始停止，不能把旧state/OBS/live作为刚观测的结果返回。 */
+it.each([true, false])("discards an in-flight manual result after control changes, invalidated=%s", async invalidated => {
+  const app = service(); await app.dashboard();
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), paused = new Promise<void>(resolve => { release = resolve; });
+  fetcher.mockImplementationOnce(async () => { entered(); await paused; return Response.json({ items: [{ id: "b_main", status: { lifeCycleStatus: "live" } }] }); });
+  const checking = app.checkYouTube(); const outcome = checking.then(value => ({ value }), error => ({ error }));
+  try {
+    await ready; phase = invalidated ? "stopped" : "stopping";
+    if (invalidated) {
+      app.invalidate();
+      // 停止后的心跳必须直接读到终态，不能继续合并到未释放的旧平台HTTP。
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try { expect((await Promise.race([app.dashboard(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Stopped dashboard still waits for old manual read")), 500); })])).state.phase).toBe("stopped"); }
+      finally { clearTimeout(timer); }
+    }
+    release();
+    expect(await outcome).toMatchObject({ error: { code: "STATE_CHANGED" } });
+    if (invalidated) { expect(fetcher).toHaveBeenCalledTimes(4); expect((await app.dashboard()).state.phase).toBe("stopped"); }
+  } finally { release(); await outcome; }
+});
+
+/** 人工核对尚在等待普通GET时，停止同样作废整个队列，旧等待结束后不得再发平台HTTP或打断新读取。 */
+it("invalidates a manual check queued behind an old ordinary dashboard before it can issue HTTP", async () => {
+  const app = service(); await app.dashboard(); app.invalidate();
+  let entered!: () => void, release!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  fetcher.mockImplementationOnce(async () => { entered(); await held; return Response.json({ items: [{ id: "b_main", status: { lifeCycleStatus: "live" } }] }); });
+  const ordinary = app.dashboard().then(value => ({ value }), error => ({ error }));
+  await ready; const checking = app.checkYouTube().then(value => ({ value }), error => ({ error }));
+  try {
+    phase = "stopped"; app.invalidate(); expect((await app.dashboard()).state.phase).toBe("stopped");
+    release(); expect(await ordinary).toMatchObject({ error: { code: "STATE_CHANGED" } });
+    expect(await checking).toMatchObject({ error: { code: "STATE_CHANGED" } });
+    expect(fetcher).toHaveBeenCalledTimes(4); expect((await app.dashboard()).state.phase).toBe("stopped");
+  } finally { release(); await Promise.all([ordinary, checking]); }
 });

@@ -67,7 +67,7 @@ it("durably deduplicates a lost admission response and rejects changed ownership
 it("enforces send subbudget and the cost-based minute bucket without refunding unknown results", async () => {
   // 本例验证同一逻辑时刻的速率边界；慢磁盘不应在批次中途补充令牌，真实五秒锁期限由独立并发用例覆盖。
   vi.useFakeTimers({ toFake: ["Date"] });
-  await baseline(); await updateYouTubePolicy({ policy: { ...defaultYouTubePolicy, sendUnits: 40 } }, "Utest");
+  await baseline(); await updateYouTubePolicy({ policy: { ...defaultYouTubePolicy, sendUnits: 40 }, policyRevision: (await youtubeUsageSummary()).policyRevision }, "Utest");
   const inputs = [request({ method: "liveChatMessages.insert", purpose: "chat-send", trigger: "chat-send" }), request({ method: "liveChatMessages.insert", purpose: "chat-send", trigger: "chat-send" })];
   for (const input of inputs) { expect((await admitYouTube("studio_a", input)).allowed).toBe(true); await reportYouTubeResult("studio_a", { attemptId: input.attemptId, outcome: "unknown", durationMs: 1, errorCode: "network" }); }
   expect(await admitYouTube("studio_a", request({ method: "liveChatMessages.insert", purpose: "chat-send" }))).toMatchObject({ allowed: false, code: "YOUTUBE_PURPOSE_BUDGET" });
@@ -126,7 +126,7 @@ it.each(["wrong-number", -1])("rejects validJSON corrupted budget units %s witho
   await expect(admitYouTube("studio_a", request())).rejects.toMatchObject({ code: "STORAGE" });
 });
 it("uses an independent search bucket and retains the general reserve", async () => {
-  await baseline(); await updateYouTubePolicy({ policy: { ...defaultYouTubePolicy, searchesPerDay: 1 } }, "Utest");
+  await baseline(); await updateYouTubePolicy({ policy: { ...defaultYouTubePolicy, searchesPerDay: 1 }, policyRevision: (await youtubeUsageSummary()).policyRevision }, "Utest");
   expect(await admitYouTube("studio_a", request({ method: "search.list", purpose: "interactive" }))).toMatchObject({ allowed: true, units: 1, bucket: "search" });
   expect(await admitYouTube("studio_b", request({ method: "search.list", purpose: "interactive" }))).toMatchObject({ allowed: false, code: "YOUTUBE_BUDGET" });
   expect((await youtubeUsageSummary()).usedUnits).toBe(0); expect((await youtubeUsageSummary()).searches).toBe(1);

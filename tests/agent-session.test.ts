@@ -11,9 +11,9 @@ const consent = [...preview, "publishing-consent-v2"];
 const recovery = [...consent, "publishing-recovery-v1"];
 const quota = [...consent, "youtube-quota-v1", "youtube-usage-v1"];
 const full = [...quota, "publishing-recovery-v1"];
-const generations = [full, quota, recovery, consent, preview, legacy];
+const generations = [[...full, "publishing-auth-generation-v1"], full, quota, recovery, consent, preview, legacy];
 
-it.each([0, 1, 2, 3, 4, 5])("negotiates Cloud generation %i while retaining the strongest supported capability set", async generation => {
+it.each([0, 1, 2, 3, 4, 5, 6])("negotiates Cloud generation %i while retaining the strongest supported capability set", async generation => {
   const supported = generations[generation], allowed = new Set(supported); const result = { session: "accepted", capabilities: supported };
   /** Cloud 替身只拒绝不认识的能力，认证及真实网络不参与本协议单测。 */
   const post = vi.fn(async (_route: string, body: { capabilities: string[] }) => { if (body.capabilities.some(capability => !allowed.has(capability))) throw new AppError("CLOUD_REQUEST", "unsupported capability", 400); return result; });
@@ -29,9 +29,9 @@ it.each(failures)("does not downgrade an initial $code/$status failure", async f
 it.each(failures)("stops negotiation immediately if a later generation returns $code/$status", async failure => {
   const post = vi.fn().mockRejectedValueOnce(new AppError("CLOUD_REQUEST", "unsupported capability", 400)).mockRejectedValue(failure);
   await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure);
-  expect(post).toHaveBeenCalledTimes(2); expect(post.mock.calls[1][1]).toEqual({ protocol: PROTOCOL, ...input, capabilities: quota });
+  expect(post).toHaveBeenCalledTimes(2); expect(post.mock.calls[1][1]).toEqual({ protocol: PROTOCOL, ...input, capabilities: full });
 });
-it("propagates the final protocol rejection after the six known generations", async () => {
+it("propagates the final protocol rejection after the seven known generations", async () => {
   const failure = new AppError("CLOUD_REQUEST", "unsupported capability", 400); const post = vi.fn().mockRejectedValue(failure);
   await expect(connectSession({ post } as unknown as Transport, input)).rejects.toBe(failure);
   expect(post.mock.calls.map(call => call[1].capabilities)).toEqual(generations);

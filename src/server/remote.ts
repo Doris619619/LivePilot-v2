@@ -4,7 +4,7 @@ import type { Member } from "./access";
 import { randomUUID } from "node:crypto";
 import { cloudMode } from "@/core/config";
 import { AppError } from "@/core/errors";
-import { targetSchema, type TaskPayload, type Target } from "@/shared/remote";
+import { targetSchema, type AgentSnapshot, type TaskPayload, type Target } from "@/shared/remote";
 import type { Dashboard } from "@/shared/types";
 import { usesChatConversation } from "@/shared/live-chat";
 import { initialState } from "@/core/control";
@@ -31,6 +31,19 @@ export async function remoteDashboard(destination: Target): Promise<Dashboard> {
   const base: Dashboard = snapshot?.dashboard || { state: initialState(), busy: false, obs: { ready: false, running: false, streaming: null }, youtube: { connected: false }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "public", madeForKids: false } };
   const waiting = !!current && ["queued", "delivering", "accepted", "running", "uncertain"].includes(current.status);
   return { ...base, problems: [...(base.problems || []), ...await problemsFor(destination.agentId,destination.instanceId)], operation: current || base.operation, busy: waiting || base.busy, device: { agentId: agent.id, name: agent.name, online: fresh, lastSeen: agent.lastSeen, observedAt: snapshot?.observedAt }, obs: fresh ? base.obs : { ...base.obs, ready: false, streaming: null, message: agent.online ? "设备状态读取已过期，请检查直播电脑。" : "直播电脑离线；实际推流状态未知，已有直播可能仍在继续。" } };
+}
+/** 人工平台核对只投递给明确声明支持且状态新鲜的Agent；返回本次真实结果而不等待心跳缓存。 */
+export async function checkRemoteYouTube(destination: Target, actor: string): Promise<Dashboard> {
+  await requireTarget(destination.agentId, destination.instanceId, true);
+  const snapshot = await snapshotFor(destination.agentId, destination.instanceId);
+  if (!snapshot?.dashboard.configuration.youtubeRefresh) throw new AppError("CONFIG", "请升级这台直播电脑的 Agent 后重新核对平台，或到 YouTube Studio 手动核对。", 409);
+  if (snapshot.observedAt <= Date.now() - 20_000 || snapshot.observedAt > Date.now() + 5000) throw new AppError("AGENT_STALE", "设备状态已过期，请等待直播电脑重新连接后核对平台。", 409);
+  const checked = await rpc<AgentSnapshot>(destination, actor, { kind: "broadcast-read" });
+  if (checked.observedAt <= Date.now() - 20_000 || checked.observedAt > Date.now() + 5000) throw new AppError("AGENT_STALE", "本次平台核对结果已过期，请重新核对。", 409);
+  const result = checked.dashboard;
+  const latest = await remoteDashboard(destination);
+  if (latest.operation && Date.parse(latest.operation.updatedAt) >= checked.observedAt && (latest.operation.id !== result.operation?.id || latest.operation.status !== result.operation?.status)) throw new AppError("STATE_CHANGED", "平台核对后又有控制操作，已丢弃旧结果。请刷新当前场次状态。", 409);
+  return { ...result, operation: latest.operation, busy: latest.busy || result.busy, device: { ...latest.device!, online: true, observedAt: checked.observedAt } };
 }
 /** 旧 Agent 不识别新任务时提前拒绝，避免把无法解析的任务塞进设备队列。 */
 export async function requireBroadcastDetails(destination: Target) {

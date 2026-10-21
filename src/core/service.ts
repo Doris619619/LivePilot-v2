@@ -8,7 +8,7 @@ import { Control } from "./control";
 import { config, missingConfig, requireInstance, validateInstances } from "./config";
 import { Store } from "./storage";
 import { resolveMedia, scanMedia } from "./media";
-import { safeError, problemFor } from "./errors";
+import { AppError, safeError, problemFor } from "./errors";
 import { LocalObsRuntime } from "./obs/runtime";
 import { YouTubeAuth } from "./youtube/auth";
 import { YouTubeApi } from "./youtube/api";
@@ -73,8 +73,9 @@ export class Service {
   private channelReading?: { key: string; value: Promise<string> };
   private credentialsFingerprint?: string;
   private reading?: Promise<Dashboard>;
-  /** 控制操作完成后丢弃所属实例的 YouTube 状态缓存。 */
-  invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; }
+  private checking?: Promise<Dashboard>;
+  /** 控制完成后释放旧读取的合并句柄；旧HTTP仍受代际校验，新状态读取不必等旧平台请求结束。 */
+  invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; this.reading = undefined; this.checking = undefined; }
   /** 频道授权成功后通知聊天；聊天检查点异常不能把成功授权误报成失败。 */
   async refreshChatCredentials() {
     const tokens = await this.auth.tokens();
@@ -116,11 +117,29 @@ export class Service {
   }
   /** 合并同一实例的并发读取，不与其他实例共享读取锁。 */
   async dashboard() {
-    if (!this.reading) this.reading = this.readDashboard();
-    try { return await this.reading; } finally { this.reading = undefined; }
+    const current = this.reading ??= this.readDashboard();
+    try { return await current; } finally { if (this.reading === current) this.reading = undefined; }
+  }
+  /** 人工核对跳过平台缓存并合并并发点击；所有HTTP仍使用交互准入，普通心跳不触发此入口。 */
+  async checkYouTube(): Promise<Dashboard> {
+    if (!this.checking) {
+      const previous = this.reading;
+      const generation = this.broadcastGeneration;
+      this.checking = (async () => {
+        if (previous) await previous.catch(() => undefined);
+        if (generation !== this.broadcastGeneration) throw new AppError("STATE_CHANGED", "核对等待期间场次发生变化，已丢弃旧请求。请刷新当前场次状态。", 409);
+        this.broadcastGeneration++;
+        return this.readDashboard(true);
+      })();
+      this.reading = this.checking;
+    }
+    const current = this.checking;
+    try { return await current; }
+    finally { if (this.checking === current) this.checking = undefined; if (this.reading === current) this.reading = undefined; }
   }
   /** 组合 OBS、媒体和有期限的 YouTube 状态，返回不含凭据的 DTO。 */
-  private async readDashboard(): Promise<Dashboard> {
+  private async readDashboard(manual = false): Promise<Dashboard> {
+    const generation = this.broadcastGeneration;
     const state = await this.control.state();
     const c = config(this.id);
     const [obs, media] = await Promise.all([
@@ -136,22 +155,36 @@ export class Service {
         const previous = this.ytCache?.key === cacheKey ? this.ytCache.value : undefined;
         const settled = state.phase === "idle" || state.phase === "stopped" || state.stopRequested || state.platformClosePending || previous?.lifecycle === "complete";
         const protectionRetry = previous?.problem?.context?.retryAt;
-        if (settled) youtube = { ...previous, connected: true, authorization: "present", query: previous?.query || "ready", channel: this.channelCache?.key === tokens.channelId ? this.channelCache.title : tokens.channel, channelId: tokens.channelId, ...(state.phase === "stopped" && !state.platformClosePending ? { lifecycle: "complete" } : {}) };
-        else if (this.ytCache?.key === cacheKey && (protectionRetry ? Date.now() < protectionRetry : Date.now() - this.ytCache.at < youtubeBackgroundInterval())) youtube = this.ytCache.value;
+        if (settled && !manual) youtube = { ...previous, nextCheckAt: undefined, connected: true, authorization: "present", query: previous?.query || "ready", channel: this.channelCache?.key === tokens.channelId ? this.channelCache.title : tokens.channel, channelId: tokens.channelId, ...(state.phase === "stopped" && !state.platformClosePending ? { lifecycle: "complete" } : {}) };
+        else if (!manual && this.ytCache?.key === cacheKey && (protectionRetry ? Date.now() < protectionRetry : Date.now() - this.ytCache.at < youtubeBackgroundInterval())) youtube = { ...this.ytCache.value, nextCheckAt: new Date(protectionRetry || this.ytCache.at + youtubeBackgroundInterval()).toISOString() };
         else {
           youtube = { connected: true, authorization: "present", query: "ready", channel: tokens.channel, channelId: tokens.channelId };
           try {
-            youtube.channel = await this.readChannel(tokens.channelId);
-            if (state.broadcastId) youtube.lifecycle = (await this.readBroadcast(state.broadcastId, tokens.channelId))?.status.lifeCycleStatus || "missing";
-            if (state.streamId && youtube.lifecycle !== "complete") youtube.ingest = (await withYouTubeContext({ instanceId: this.id, purpose: "background", trigger: "dashboard" }, () => this.youtube.stream(state.streamId!)))?.status.streamStatus || "missing";
-            youtube.checkedAt = new Date().toISOString();
-          } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome: e instanceof YouTubeProtectionError ? "not-sent" : "rejected", ...(e instanceof YouTubeProtectionError ? { context: { retryAt: e.retryAt } } : {}) }); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
-          this.ytCache = { key: cacheKey, at: Date.now(), value: youtube };
+            youtube.channel = manual ? (this.channelCache?.key === tokens.channelId ? this.channelCache.title : tokens.channel) : await this.readChannel(tokens.channelId);
+            let checkedAt = Date.now();
+            if (state.broadcastId) {
+              const broadcast = manual
+                ? await withYouTubeContext({ instanceId: this.id, purpose: "interactive", trigger: "dashboard" }, () => this.youtube.broadcast(state.broadcastId!))
+                : await this.readBroadcast(state.broadcastId, tokens.channelId);
+              youtube.lifecycle = broadcast?.status.lifeCycleStatus || "missing";
+              checkedAt = manual ? Date.now() : this.broadcastCache?.at ?? Date.now();
+              if (manual && generation === this.broadcastGeneration) this.broadcastCache = { key: tokens.channelId + ":" + state.broadcastId, at: checkedAt, value: broadcast };
+            }
+            if (generation !== this.broadcastGeneration) throw new AppError("STATE_CHANGED", "核对期间场次发生变化，已丢弃旧结果。", 409);
+            if (state.streamId && youtube.lifecycle !== "complete") youtube.ingest = (await withYouTubeContext({ instanceId: this.id, purpose: manual ? "interactive" : "background", trigger: "dashboard" }, () => this.youtube.stream(state.streamId!)))?.status.streamStatus || "missing";
+            if (state.broadcastId || state.streamId) youtube.checkedAt = new Date(checkedAt).toISOString();
+          } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome: e instanceof YouTubeProtectionError ? "not-sent" : "rejected", ...(e instanceof YouTubeProtectionError ? { context: { retryAt: e.retryAt } } : {}) }); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { ...previous, connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
+          youtube.nextCheckAt = settled ? undefined : new Date(youtube.problem?.context?.retryAt || Date.now() + youtubeBackgroundInterval()).toISOString();
+          if (generation === this.broadcastGeneration) this.ytCache = { key: cacheKey, at: Date.now(), value: youtube };
         }
       }
     } catch (e) { youtube.error = safeError(e); youtube.query = "failed"; youtube.problem = problemFor(e, {target:{instanceId:this.id},domain:"youtube"}); }
     const operation = await this.commands.latest();
-    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs, youtube, media, liveChat: await this.chat.status(), configuration: { broadcastDetails: true, liveChat: true, liveChatSelection: true, chatConversation: true, accountAi: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
+    const liveChat = await this.chat.status(), observedObs = manual ? await this.obs.status() : obs;
+    const currentState = await this.control.state();
+    const unchanged = (["phase", "channelId", "broadcastId", "streamId", "stopRequested", "platformClosePending", "obsStartRequested"] as const).every(key => currentState[key] === state[key]);
+    if (generation !== this.broadcastGeneration || !unchanged) throw new AppError("STATE_CHANGED", "核对期间场次发生变化，已丢弃旧结果。请刷新当前场次状态。", 409);
+    return { operation, state, busy: this.control.busy || !!(operation && ["accepted", "running"].includes(operation.status)), obs: observedObs, youtube, media, liveChat, configuration: { youtubeRefresh: true, broadcastDetails: true, liveChat: true, liveChatSelection: true, chatConversation: true, accountAi: true, missing: missingConfig(this.id), privacy: c.privacy, madeForKids: c.madeForKids } };
   }
 }
 const registry = globalThis as typeof globalThis & { livePilotInstances?: Map<string, Service> };

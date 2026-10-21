@@ -33,7 +33,16 @@ async function assertYouTubeContext(agentId: string, input: YouTubeAdmit) {
 }
 /** 真实请求前 fsync 预扣；同一 attempt 的丢失响应重试不会重复扣账。 */
 export async function admitYouTube(agentId: string, raw: YouTubeAdmit) {
-  const input = youtubeAdmitSchema.parse(raw); const publishingPolicy = await assertYouTubeContext(agentId, input);
+  const input = youtubeAdmitSchema.parse(raw);
+  if (input.method === "videos.insert" && input.jobId) {
+    const { admitPublishingUpload } = await import("./publishing");
+    return admitPublishingUpload(agentId, input, () => admitYouTubeOnce(agentId, input));
+  }
+  return admitYouTubeOnce(agentId, input);
+}
+/** 持发布锁的新上传与普通方法使用同一预算实现；锁序固定为 publishing→budget，永不反向取锁。 */
+async function admitYouTubeOnce(agentId: string, input: YouTubeAdmit) {
+  const publishingPolicy = await assertYouTubeContext(agentId, input);
   const project = youtubeProject(input.clientFingerprint);
   const active = (await Promise.all((await listAgents()).filter(a => a.online && !a.revoked).map(async agent => {
     const heartbeat = await agentStore(agent.id).read<{ snapshots: { dashboard: { state: { phase: string }; obs: { streaming?: boolean | null }; youtube: { authorization?: string; connected: boolean } } }[] }>("heartbeat.json");
@@ -116,10 +125,16 @@ export async function seedLegacyYouTubePublishing(input: { day: string; units: n
     day.legacyReservationIds = Object.keys(incoming);
   });
 }
-/** 管理员只可提供当前日历史基线；提高基线不会抹掉应用已记录的调用。 */
+/** 政策在预算锁内按修订比较后替换；旧客户端或过期草稿明确冲突，基线维持原单调约束。 */
 export async function updateYouTubePolicy(raw: YouTubePolicyUpdate, actor: string) {
   const input = youtubePolicyUpdateSchema.parse(raw);
-  await editYouTubeUsage(state => { if (input.policy) state.policy = input.policy; const day = youtubeDay(state);
+  await editYouTubeUsage(state => {
+    if (input.policy) {
+      if (input.policyRevision === undefined || input.policyRevision !== state.policyRevision) throw new AppError("YOUTUBE_POLICY_CONFLICT", "配额政策版本已变化，请刷新并核对最新预算后再保存；当前草稿已保留。", 409);
+      if (state.policyRevision === Number.MAX_SAFE_INTEGER) throw new AppError("STORAGE", "政策修订已达到安全上限，请保留账本并联系管理员。", 503);
+      state.policy = input.policy; state.policyRevision++;
+    }
+    const day = youtubeDay(state);
     if (input.baseline) { if (input.baseline.day !== quotaDay() || day.baseline.known && (input.baseline.units < (day.baseline.reportedUnits ?? day.baseline.units) || input.baseline.uploads < (day.baseline.reportedUploads ?? day.baseline.uploads))) throw new AppError("INPUT", "仅可设置当前 PT 配额日基线，已记录的历史基线不能降低。", 409); day.baseline = { known: true, ...input.baseline, reportedUnits: input.baseline.units, reportedUploads: input.baseline.uploads, units: Math.max(day.baseline.units, input.baseline.units - day.units, 0), uploads: Math.max(day.baseline.uploads, input.baseline.uploads - day.uploads, 0) }; }
   });
   const { audit } = await import("@/core/audit"); await audit(actor, "youtube-quota-policy", "main", "updated", randomUUID()); return youtubeUsageSummary();
@@ -129,6 +144,6 @@ export async function youtubeUsageSummary(dayValue?: string): Promise<YouTubeUsa
   const devices = (await listAgents()).filter(a => a.paired && !a.revoked && !a.pairedTo);
   const coverage = await Promise.all(devices.map(async a => { const capabilities = await agentStore(a.id).read<string[]>("capabilities.json") || []; return { agentId: a.id, name: a.name, online: a.online, protected: ["youtube-quota-v1", "youtube-usage-v1"].every(value => capabilities.includes(value)) }; }));
   const state = await readYouTubeUsage(); const current = youtubeDay(state); const day: YouTubeDay = state.days[dayValue || current.day] || { ...current, day: dayValue!, units: 0, uploads: 0, searches: 0, purposes: {}, receipts: {}, legacy: {}, reservations: {}, baseline: { known: false, units: 0, uploads: 0 } };
-  const value = { project: "current-project", day: day.day, costVersion: YOUTUBE_COST_VERSION, policy: state.policy, baseline: day.baseline, usedUnits: day.units, uploads: day.uploads, searches: day.searches, reservedUnits: youtubeReserved(day).units, remainingUnits: Math.max(0, state.policy.dailyUnits - day.baseline.units - day.units - youtubeReserved(day).units), breakerUntil: day.breakerUntil, byPurpose: day.purposes, storage: youtubeHotCapacity(state), resetAt: youtubeAdmission(state, current, { attemptId: "", clientFingerprint: "", instanceId: "main", method: "channels.list", purpose: "background", trigger: "dashboard" }, 1, "general", 1).resetAt };
+  const value = { project: "current-project", day: day.day, costVersion: YOUTUBE_COST_VERSION, policy: state.policy, policyRevision: state.policyRevision, baseline: day.baseline, usedUnits: day.units, uploads: day.uploads, searches: day.searches, reservedUnits: youtubeReserved(day).units, remainingUnits: Math.max(0, state.policy.dailyUnits - day.baseline.units - day.units - youtubeReserved(day).units), breakerUntil: day.breakerUntil, byPurpose: day.purposes, storage: youtubeHotCapacity(state), resetAt: youtubeAdmission(state, current, { attemptId: "", clientFingerprint: "", instanceId: "main", method: "channels.list", purpose: "background", trigger: "dashboard" }, 1, "general", 1).resetAt };
   return { ...value, coverage: { protected: coverage.filter(a => a.protected).length, total: coverage.length, devices: coverage }, ...await youtubeEventSummary(value.day) };
 }

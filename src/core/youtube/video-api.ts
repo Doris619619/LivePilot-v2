@@ -9,6 +9,7 @@ import type { z } from "zod";
 import type { videoCopySchema } from "@/shared/video-metadata";
 import { youtubeMethodSchema, type YouTubeMethod } from "@/shared/youtube-usage";
 import { withYouTubeContext, youtubeFetch, YouTubePageGuard, type YouTubeContext } from "./usage";
+import { bindAuthorizationFailure } from "./authorization-failure";
 export type VideoResource = { id: string; etag?: string; snippet?: Record<string, unknown> & { title?: string; channelId?: string }; status?: Record<string, unknown> & { privacyStatus?: "private" | "public" | "unlisted"; uploadStatus?: string; publishAt?: string }; processingDetails?: { processingStatus?: string } };
 export type UploadProbe = { offset: number; videoId?: string; expired?: boolean };
 export type Charge = (units: number, upload: boolean) => Promise<void>;
@@ -61,7 +62,7 @@ export class VideoApi implements VideoPort {
       const reasons = body?.error?.errors?.map(item => item.reason) || [];
       const reason = reasons.find(item => item === "quotaExceeded" || item === "dailyLimitExceeded") || reasons[0];
       const retry = response.headers.get("retry-after"); const retryAfterMs = retry ? Math.max(0, /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now()) : 0;
-      throw new VideoApiError(response.status === 401 ? "YOUTUBE_AUTH" : reason === "quotaExceeded" || reason === "dailyLimitExceeded" ? "VIDEO_QUOTA" : response.status === 429 || response.status >= 500 ? "VIDEO_RETRY" : "VIDEO_REJECTED", response.status === 401 ? "YouTube 授权无效，请重新连接原频道。" : "YouTube 未接受请求（HTTP " + response.status + "），请核对频道权限、配额和视频设置。", response.status === 429 || response.status >= 500 || reason === "quotaExceeded" || reason === "dailyLimitExceeded", retryAfterMs);
+      throw bindAuthorizationFailure(new VideoApiError(response.status === 401 ? "YOUTUBE_AUTH" : reason === "quotaExceeded" || reason === "dailyLimitExceeded" ? "VIDEO_QUOTA" : response.status === 429 || response.status >= 500 ? "VIDEO_RETRY" : "VIDEO_REJECTED", response.status === 401 ? "YouTube 授权无效，请重新连接原频道。" : "YouTube 未接受请求（HTTP " + response.status + "），请核对频道权限、配额和视频设置。", response.status === 429 || response.status >= 500 || reason === "quotaExceeded" || reason === "dailyLimitExceeded", retryAfterMs), token.authorizationGeneration);
     }
     return response;
   }

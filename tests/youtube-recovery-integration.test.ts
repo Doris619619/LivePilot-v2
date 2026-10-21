@@ -9,16 +9,19 @@ import { Transport } from "@/agent/transport";
 import { AgentYouTubeUsage } from "@/agent/youtube-usage";
 import { agentStore, createPairing, heartbeatAgent, openSession, pairAgent } from "@/cloud/agents";
 import { beginRemoteOAuth, finishRemoteOAuth } from "@/cloud/oauth";
-import { agentPublishingAccounts, claimPublishingAccount, createPublishingAccount, syncPublishingAccounts } from "@/cloud/publishing-accounts";
-import { acceptPublishingPrivacy, changePublishingJob, completePublishingCleanup, connectPublishingAccount, publishingCleanups, publishingStore, reportPublishing, savePublishingPolicy } from "@/cloud/publishing";
-import { pollTasks, reportTasks, terminal, type TaskRecord } from "@/cloud/tasks";
+import { agentPublishingAccounts, claimPublishingAccount, createPublishingAccount, syncPublishingAccounts, publishingReauthorizationEpoch } from "@/cloud/publishing-accounts";
+import { acceptPublishingPrivacy, changePublishingJob, completePublishingCleanup, connectPublishingAccount, publishingCleanups, publishingStore, reportPublishing, requestPublishingAccountCleanup, savePublishingPolicy } from "@/cloud/publishing";
+import { enqueue, pollTasks, reportTasks, terminal, type TaskRecord } from "@/cloud/tasks";
+import * as taskPorts from "@/cloud/tasks";
+import { cloudStore } from "@/cloud/store";
 import { admitYouTube, reportYouTubeResult, updateYouTubePolicy } from "@/cloud/youtube-usage";
 import { ingestYouTubeUsage } from "@/cloud/youtube-usage-events";
 import { readYouTubeUsage, youtubeDay } from "@/cloud/youtube-usage-store";
 import { quotaDay } from "@/core/publishing/schedule";
 import { PublishingRunner } from "@/core/publishing/runner";
 import { PublishingStore } from "@/core/publishing/storage";
-import { seal } from "@/core/storage";
+import { Store, seal, unseal } from "@/core/storage";
+import { AppError } from "@/core/errors";
 import { VideoApi } from "@/core/youtube/video-api";
 import { installYouTubeRuntime } from "@/core/youtube/usage";
 import { sleep } from "@/core/errors";
@@ -35,6 +38,7 @@ let root: string, executor: Executor, runtime: AgentYouTubeUsage;
 let recoveryRunner: PublishingRunner | undefined;
 let google: ReturnType<typeof vi.fn>;
 let reads: "ok" | "first-401" | "always-401", refreshInvalid: boolean, rejectWrite: boolean, videoReads: number, serial: number;
+let omitAuthorizationProof: boolean;
 const attempts: YouTubeAdmit[] = [];
 const pendingOperations = new Set<Promise<unknown>>(), pendingDeliveries = new Set<Promise<unknown>>();
 let cancellation: AbortController;
@@ -51,18 +55,18 @@ beforeEach(async ({ signal }) => {
   await accessStore().write("access.json", access);
   const pair = await createPairing(agentId, "Synthetic recovery", alice.username); await pairAgent(agentId, pair.code, "b".repeat(64));
   const session = await openSession(agentId, randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent(agentId, session.session, []);
-  await agentStore(agentId).write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-recovery-v1", "youtube-quota-v1", "youtube-usage-v1"]);
+  await agentStore(agentId).write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-recovery-v1", "youtube-quota-v1", "youtube-usage-v1", "publishing-auth-generation-v1"]);
   await acceptPublishingPrivacy(alice, PRIVACY_VERSION); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true });
   await updateYouTubePolicy({ baseline: { day: quotaDay(), units: 0, uploads: 0, source: "conservative-estimate" } }, admin.username);
   const transport = new Transport("https://synthetic.invalid", agentId, "b".repeat(64)); transport.session = session.session;
-  attempts.length = 0; recoveryRunner = undefined; reads = "ok"; refreshInvalid = false; rejectWrite = false; videoReads = 0; serial = 0;
+  attempts.length = 0; recoveryRunner = undefined; reads = "ok"; refreshInvalid = false; rejectWrite = false; videoReads = 0; serial = 0; omitAuthorizationProof = false;
   vi.spyOn(transport, "post").mockImplementation(async (route, raw) => {
     if (route.endsWith("youtube-quota/admit")) { const input = raw as YouTubeAdmit; attempts.push(input); return await admitYouTube(agentId, input) as never; }
     if (route.endsWith("youtube-quota/result")) return await reportYouTubeResult(agentId, raw as YouTubeResult) as never;
     if (route.endsWith("youtube-usage")) return await ingestYouTubeUsage(agentId, (raw as { events: YouTubeUsageEvent[] }).events) as never;
     if (route.endsWith("publishing/accounts-binding")) {
-      const input = raw as { accountId: string; instanceId: string; channelId: string; channel: string; channelCheckedAt: number; confirm: boolean };
-      return await claimPublishingAccount(agentId, input.accountId, input.instanceId, input.channelId, input.channel, input.confirm, input.channelCheckedAt) as never;
+      const input = raw as { accountId: string; instanceId: string; channelId: string; channel: string; channelCheckedAt: number; confirm: boolean; authorizationEpoch?: string; authorizationGeneration?: string };
+      return await claimPublishingAccount(agentId, input.accountId, input.instanceId, input.channelId, input.channel, input.confirm, input.channelCheckedAt, omitAuthorizationProof ? undefined : { epoch: input.authorizationEpoch, generation: input.authorizationGeneration }) as never;
     }
     if (route.endsWith("publishing/sync")) {
       const input = raw as { reports: PublishingReport[]; accounts?: PublishingAccountReport[] };
@@ -181,7 +185,7 @@ async function checkpoint(accountId: string) {
   const state = await publishingStore().read<{ jobs: VideoJob[] }>("state.json"); state!.jobs.push({ spec, createdAt: Date.now() }); await publishingStore().write("state.json", state);
   const storage = new PublishingStore(path.join(root, "restarted-runner"));
   await storage.write("entries.enc", seal([{ spec, report: { id: spec.id, revision: 1, sequence: 1, state: "processing", videoId: "video_original", offset: spec.asset.size, total: spec.asset.size, updatedAt: Date.now(), metadata: { title: "Synthetic", description: "Description" } }, playlistsDone: [], failures: 0 }]));
-  recoveryRunner = new PublishingRunner(executor.services, { store: storage, accountAuth: id => executor.publishingAccounts.auth(id) });
+  recoveryRunner = new PublishingRunner(executor.services, { store: storage, accountAuth: id => executor.publishingAccounts.auth(id), accountAuthorizationGeneration: id => executor.publishingAccounts.authorizationGeneration(id) });
   return { spec, runner: recoveryRunner };
 }
 
@@ -189,19 +193,23 @@ async function checkpoint(accountId: string) {
 it("combines genuine needs/epoch OAuth recovery with the original Runner video checkpoint", async () => {
   const account = await createPublishingAccount(alice, agentId, "main", "First OAuth"); await finish(await begin(account.id));
   expect(await accountStatus(account.id)).toBe("connected");
-  const { spec, runner } = await checkpoint(account.id), oldBrowser = await begin(account.id);
+  const firstGeneration = await executor.publishingAccounts.authorizationGeneration(account.id); expect(firstGeneration).toEqual(expect.any(String));
+  const { spec, runner } = await checkpoint(account.id);
   reads = "always-401"; refreshInvalid = true;
   await runner.tick(); const [failed] = await runner.reports();
   expect(failed).toMatchObject({ state: "needs_attention", authorizationInvalid: true, videoId: "video_original" });
+  expect(failed.authorizationGeneration).toBe(firstGeneration); expect(failed.authorizationFailureId).toEqual(expect.any(String));
   await reportPublishing(agentId, [failed]); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
   await expect(admitYouTube(agentId, { attemptId: randomUUID(), clientFingerprint: createHash("sha256").update(clientId).digest("hex"), instanceId: "main", accountId: account.id, method: "videos.list", purpose: "publishing", trigger: "publishing-tick", jobId: spec.id })).rejects.toMatchObject({ code: "FORBIDDEN" });
   reads = "ok"; refreshInvalid = false;
-  await finish(oldBrowser); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
-  const firstRecovery = await begin(account.id), newerFailure = { ...failed, sequence: failed.sequence + 1 };
-  await finish(firstRecovery, async () => { await reportPublishing(agentId, [newerFailure]); });
+  const oldBrowser = await begin(account.id), newerFailure = { ...failed, sequence: failed.sequence + 1, authorizationFailureId: randomUUID() };
+  await reportPublishing(agentId, [newerFailure]); await expect(finish(oldBrowser)).rejects.toMatchObject({ code: "OAUTH_SUPERSEDED" }); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+  const firstRecovery = await begin(account.id), newestFailure = { ...newerFailure, sequence: newerFailure.sequence + 1, authorizationFailureId: randomUUID() };
+  await expect(finish(firstRecovery, async () => { await reportPublishing(agentId, [newestFailure]); })).rejects.toMatchObject({ code: "OAUTH_SUPERSEDED" });
   expect(await accountStatus(account.id)).toBe("needs_reauthorization");
-  await finish(await begin(account.id), async () => { await reportPublishing(agentId, [newerFailure]); });
+  await finish(await begin(account.id), async () => { await reportPublishing(agentId, [newestFailure]); });
   expect(await accountStatus(account.id)).toBe("connected");
+  expect(await executor.publishingAccounts.authorizationGeneration(account.id)).not.toBe(firstGeneration);
   const resumed = await changePublishingJob(alice, spec.id, "resume"); await runner.apply(resumed.spec); await runner.tick();
   const [report] = await runner.reports();
   expect(report).toMatchObject({ id: spec.id, revision: 2, state: "processing", videoId: "video_original", offset: spec.asset.size, total: spec.asset.size });
@@ -209,6 +217,20 @@ it("combines genuine needs/epoch OAuth recovery with the original Runner video c
   expect(attempts.some(attempt => ["videos.insert", "videos.upload.chunk"].includes(attempt.method))).toBe(false);
   expect(attempts.filter(attempt => attempt.method === "channels.list").every(attempt => !!attempt.operationId && !attempt.jobId && attempt.accountId === account.id)).toBe(true);
 }, 20_000);
+
+it("rejects an obsolete OAuth task at real admission even after a newer browser transaction connected", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Concurrent OAuth"); await finish(await begin(account.id));
+  const older = await begin(account.id); const encrypted = await cloudStore().read<string>("oauth-" + older.state + ".json");
+  const old = unseal<{ cookie: string; state: string; publishingReauthorizationEpoch: string; authorizationGeneration: string }>(encrypted!);
+  const newer = await begin(account.id); expect(await publishingReauthorizationEpoch(agentId, account.id)).not.toBe(old.publishingReauthorizationEpoch); await finish(newer); expect(await accountStatus(account.id)).toBe("connected");
+  // 即使旧队列任务仍满足所有路由/时效条件，准入也必须独立核对事务epoch，不能因账号connected放行。
+  const saved = await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-finish", accountId: account.id, cookie: old.cookie, state: old.state, code: "synthetic-stale-code", authorizationGeneration: old.authorizationGeneration, authorizationEpoch: old.publishingReauthorizationEpoch });
+  const task = (await pollTasks(agentId)).find(value => value.id === saved.id)!; await reportTasks(agentId, [{ id: task.id, status: "running" }]);
+  const calls = google.mock.calls.length;
+  for (const method of ["oauth.token", "channels.list"] as const) await expect(admitYouTube(agentId, { attemptId: randomUUID(), clientFingerprint: createHash("sha256").update(clientId).digest("hex"), instanceId: "main", accountId: account.id, operationId: task.id, purpose: "authorization", trigger: "oauth-finish", method })).rejects.toMatchObject({ code: "OAUTH_SUPERSEDED" });
+  await expect(finish(older)).rejects.toMatchObject({ code: "OAUTH_SUPERSEDED" }); expect(google.mock.calls.length).toBe(calls);
+  await reportTasks(agentId, [{ id: task.id, status: "failed", error: "Synthetic obsolete task", httpStatus: 409 }]);
+}, 15_000);
 
 it.each([false, true])("GET401 re-read has its own Cloud admission and honors a second-read block=%s", async blocked => {
   const account = await seededAccount(); reads = "first-401";
@@ -236,3 +258,170 @@ it.each(["insert", "probe"] as const)("%s401 refreshes once without replaying th
   expect(await executor.publishingAccounts.auth(account.id).tokens()).toMatchObject({ accessToken: "synthetic-access-1", channelId });
   const day = youtubeDay(await readYouTubeUsage()); expect(Object.keys(day.receipts)).toHaveLength(2); expect(day.uploads).toBe(kind === "insert" ? 1 : 0);
 });
+
+it("keeps legacy first OAuth compatible but requires the generation protocol to recover a failed account", async () => {
+  await agentStore(agentId).write("capabilities.json", ["publishing-v1", "publishing-v2", "publishing-accounts-v1", "publishing-recovery-v1", "youtube-quota-v1", "youtube-usage-v1"]);
+  const account = await createPublishingAccount(alice, agentId, "main", "Legacy first OAuth"); await finish(await begin(account.id)); expect(await accountStatus(account.id)).toBe("connected");
+  expect(await executor.publishingAccounts.authorizationGeneration(account.id)).toBeUndefined();
+  const { runner } = await checkpoint(account.id); reads = "always-401"; refreshInvalid = true; await runner.tick(); await reportPublishing(agentId, await runner.reports()); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "AGENT_VERSION" });
+}, 10_000);
+
+it("binds a fresh 401 to the token actually read after OAuth changed while the Runner was awaiting access", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Token handoff"); await finish(await begin(account.id));
+  const oldGeneration = await executor.publishingAccounts.authorizationGeneration(account.id); const { runner } = await checkpoint(account.id);
+  const auth = executor.publishingAccounts.auth(account.id), original = auth.access.bind(auth); const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  vi.spyOn(auth, "access").mockImplementationOnce(async rejected => { entered.resolve(); await release.promise; return original(rejected); });
+  reads = "always-401"; refreshInvalid = true; const ticking = runner.tick(); void ticking.catch(() => {});
+  try {
+    await entered.promise; await finish(await begin(account.id)); const currentGeneration = await executor.publishingAccounts.authorizationGeneration(account.id); expect(currentGeneration).not.toBe(oldGeneration);
+    release.resolve(); await ticking; const [failed] = await runner.reports(); expect(failed).toMatchObject({ authorizationInvalid: true, authorizationGeneration: currentGeneration });
+    await reportPublishing(agentId, [failed]); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+  } finally { release.resolve(); await Promise.allSettled([ticking]); }
+}, 15_000);
+
+it.each(["invalid-grant", "success"] as const)("late old refresh %s cannot overwrite new OAuth credentials or mislabel its failure", async result => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Refresh handoff"); await finish(await begin(account.id));
+  const auth = executor.publishingAccounts.auth(account.id), oldToken = (await auth.tokens())!; const { runner } = await checkpoint(account.id);
+  const original = google.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>, entered = Promise.withResolvers<void>(), release = Promise.withResolvers<Response>();
+  google.mockImplementation(async (url: string, init?: RequestInit) => {
+    if (url === "https://oauth2.googleapis.com/token") {
+      if ((init?.body as URLSearchParams).get("grant_type") === "refresh_token") { entered.resolve(); return release.promise; }
+      // Google允许同频道复用refresh token；旧刷新更长expiresAt也不能越过Cloud凭据代次覆盖B。
+      return Response.json({ access_token: "synthetic-token-B", refresh_token: oldToken.refreshToken, expires_in: 3600 });
+    }
+    return original(url, init);
+  });
+  reads = "always-401"; const ticking = runner.tick(); void ticking.catch(() => {});
+  try {
+    await entered.promise; await finish(await begin(account.id)); const current = (await auth.tokens())!; expect(current.authorizationGeneration).not.toBe(oldToken.authorizationGeneration);
+    release.resolve(result === "invalid-grant" ? Response.json({ error: "invalid_grant" }, { status: 400 }) : Response.json({ access_token: "synthetic-stale-refresh", refresh_token: oldToken.refreshToken, expires_in: 7200 }));
+    await ticking; expect(await auth.tokens()).toMatchObject({ accessToken: "synthetic-token-B", authorizationGeneration: current.authorizationGeneration });
+    const [failed] = await runner.reports(); expect(failed.authorizationGeneration).toBe(result === "invalid-grant" ? oldToken.authorizationGeneration : current.authorizationGeneration);
+    await reportPublishing(agentId, [failed]); expect(await accountStatus(account.id)).toBe(result === "invalid-grant" ? "connected" : "needs_reauthorization");
+  } finally { release.resolve(Response.json({ error: "invalid_grant" }, { status: 400 })); await Promise.allSettled([ticking]); }
+}, 15_000);
+
+it("requires an upgrade after a protected account downgrades while preserving original cleanup revoke", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Downgraded Agent"); await finish(await begin(account.id));
+  await agentStore(agentId).write("capabilities.json", ["publishing-v1", "publishing-accounts-v1", "youtube-quota-v1", "youtube-usage-v1"]);
+  const context = { clientFingerprint: createHash("sha256").update(clientId).digest("hex"), instanceId: "main", accountId: account.id };
+  await expect(admitYouTube(agentId, { ...context, attemptId: randomUUID(), method: "videos.list", purpose: "publishing", trigger: "publishing-tick" })).rejects.toMatchObject({ code: "AGENT_VERSION" });
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "AGENT_VERSION" }); expect(await accountStatus(account.id)).toBe("connected");
+  const cleanup = await requestPublishingAccountCleanup(alice, account.id);
+  expect((await admitYouTube(agentId, { ...context, attemptId: randomUUID(), operationId: cleanup.id, method: "oauth.revoke", purpose: "authorization", trigger: "publishing-command" })).allowed).toBe(true);
+}, 10_000);
+
+it("V02 explicit OAuth cancellation restores an unchanged healthy account and its original job controls", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Cancel healthy reauthorization"); await finish(await begin(account.id));
+  const { spec, runner } = await checkpoint(account.id); await reportPublishing(agentId, await runner.reports()); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  const transaction = await begin(account.id); expect(await accountStatus(account.id)).toBe("needs_reauthorization"); const calls = google.mock.calls.length;
+  await deliver(finishRemoteOAuth(transaction.state, transaction.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish");
+  expect(google.mock.calls.length).toBe(calls); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original); expect(await accountStatus(account.id)).toBe("connected");
+  expect((await admitYouTube(agentId, { attemptId: randomUUID(), clientFingerprint: createHash("sha256").update(clientId).digest("hex"), instanceId: "main", accountId: account.id, jobId: spec.id, method: "videos.list", purpose: "publishing", trigger: "publishing-tick" })).allowed).toBe(true);
+  await expect(changePublishingJob(alice, spec.id, "reconcile")).resolves.toMatchObject({ spec: { id: spec.id } }); await expect(changePublishingJob(alice, spec.id, "cancel")).resolves.toMatchObject({ spec: { desired: "cancel" } });
+}, 15_000);
+
+it.each(["already-invalid", "new-401", "superseded", "unknown-confirmation", "write-possible", "wrong-channel"] as const)("V02 cancellation preserves protection for %s", async boundary => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Cancellation boundary"); await finish(await begin(account.id));
+  const { spec } = await checkpoint(account.id); const originalToken = (await executor.publishingAccounts.auth(account.id).tokens())!;
+  const failure = { id: spec.id, revision: 1, sequence: 1, state: "needs_attention" as const, offset: spec.asset.size, total: spec.asset.size, videoId: "video_original", updatedAt: Date.now(), authorizationInvalid: true, authorizationFailureId: randomUUID(), authorizationGeneration: originalToken.authorizationGeneration };
+  if (boundary === "already-invalid") await reportPublishing(agentId, [failure]);
+  const transaction = await begin(account.id); const googleBefore = google.mock.calls.length;
+  if (boundary === "new-401") await reportPublishing(agentId, [failure]);
+  const newer = boundary === "superseded" ? await begin(account.id) : undefined;
+  if (boundary === "write-possible") {
+    const saved = unseal<{ publishingReauthorizationEpoch: string; authorizationGeneration: string }>((await cloudStore().read<string>("oauth-" + transaction.state + ".json"))!);
+    // 模拟已持久确认的Token写入屏障；其后的磁盘写入结果未知，明确取消也不能推断旧凭据仍可用。
+    await claimPublishingAccount(agentId, account.id, "main", channelId, "Synthetic channel", false, Date.now(), { epoch: saved.publishingReauthorizationEpoch, generation: saved.authorizationGeneration });
+  }
+  if (boundary === "wrong-channel") {
+    const original = google.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>;
+    google.mockImplementation((url: string, init?: RequestInit) => url.startsWith("https://www.googleapis.com/youtube/v3/channels?") ? Promise.resolve(Response.json({ items: [{ id: "different_channel", snippet: { title: "Synthetic wrong channel" } }] })) : original(url, init));
+    await expect(finish(transaction)).rejects.toBeDefined();
+  } else {
+    const operation = deliver(finishRemoteOAuth(transaction.state, transaction.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish", boundary === "unknown-confirmation" ? async () => { throw new Error("Synthetic lost cancellation acknowledgement"); } : undefined);
+    if (boundary === "unknown-confirmation") await expect(operation).rejects.toBeDefined(); else await operation;
+    expect(google.mock.calls.length).toBe(googleBefore);
+  }
+  expect(await accountStatus(account.id)).toBe("needs_reauthorization"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(originalToken);
+  if (newer) {
+    const stillCurrent = unseal<{ publishingReauthorizationEpoch: string }>((await cloudStore().read<string>("oauth-" + newer.state + ".json"))!); expect(await publishingReauthorizationEpoch(agentId, account.id)).toBe(stillCurrent.publishingReauthorizationEpoch);
+    await deliver(finishRemoteOAuth(newer.state, newer.cookie, alice.username, "", alice, true), "publishing-account-oauth-finish"); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+  }
+}, 15_000);
+
+it("V02 a prior generation-capable Agent missing the write proof is rejected before replacing tokens", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Prior Agent proof"); await finish(await begin(account.id)); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  omitAuthorizationProof = true; const transaction = await begin(account.id); await expect(finish(transaction)).rejects.toMatchObject({ code: "AGENT_VERSION" });
+  expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original); expect(await accountStatus(account.id)).toBe("needs_reauthorization");
+}, 15_000);
+
+it("V02 a definitely refused begin restores the original healthy account", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Busy begin"); await finish(await begin(account.id)); const original = await executor.publishingAccounts.auth(account.id).tokens();
+  await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-begin", accountId: account.id });
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "BUSY" }); expect(await accountStatus(account.id)).toBe("connected"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
+}, 10_000);
+
+/** 准入未受理就不能更改账号或epoch，恢复在线后原视频的核对和取消必须仍可执行。 */
+it.each(["offline", "maintenance", "busy"] as const)("R03 rejected %s begin preserves the exact healthy account transaction and original job controls", async refusal => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Rejected reauthorization"); await finish(await begin(account.id));
+  const { spec, runner } = await checkpoint(account.id); await reportPublishing(agentId, await runner.reports());
+  const originalToken = await executor.publishingAccounts.auth(account.id).tokens();
+  const before = await cloudStore().read("publishing-accounts.json"); const calls = google.mock.calls.length;
+  const beat = (await agentStore(agentId).read<{ at: number; session: string; snapshots: [] }>("heartbeat.json"))!;
+  if (refusal === "offline") await agentStore(agentId).write("heartbeat.json", { ...beat, at: Date.now() - 60_000 });
+  if (refusal === "maintenance") await agentStore(agentId).write("maintenance.json", { token: "d".repeat(64), activities: {} });
+  if (refusal === "busy") await enqueue({ agentId, instanceId: "main" }, alice.username, { kind: "publishing-account-oauth-begin", accountId: account.id });
+  const tasksBefore = (await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records.length;
+  await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: { offline: "AGENT_OFFLINE", maintenance: "MAINTENANCE", busy: "BUSY" }[refusal] });
+  expect(await cloudStore().read("publishing-accounts.json")).toEqual(before); expect(google.mock.calls.length).toBe(calls);
+  expect((await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records).toHaveLength(tasksBefore);
+  await agentStore(agentId).write("heartbeat.json", { ...beat, at: Date.now() });
+  if (refusal === "maintenance") await agentStore(agentId).write("maintenance.json", { activities: {} });
+  await syncPublishingAccounts(agentId, await executor.publishingAccounts.statuses());
+  expect(await accountStatus(account.id)).toBe("connected"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(originalToken);
+  await expect(changePublishingJob(alice, spec.id, "reconcile")).resolves.toMatchObject({ spec: { id: spec.id } });
+  await expect(changePublishingJob(alice, spec.id, "cancel")).resolves.toMatchObject({ spec: { desired: "cancel" } });
+}, 15_000);
+
+/** 第二个明确未入队的begin不能覆盖第一个finish的epoch；释放真实Token交换后第一事务仍能完成。 */
+it("R03 a BUSY second begin cannot invalidate a legitimate in-flight token exchange", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Overlapping reauthorization"); await finish(await begin(account.id));
+  const original = await executor.publishingAccounts.auth(account.id).tokens(), transaction = await begin(account.id);
+  let entered!: () => void, release!: () => void; const ready = new Promise<void>(resolve => { entered = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const originalFetch = google.getMockImplementation() as (url: string, init?: RequestInit) => Promise<Response>; let paused = false;
+  google.mockImplementation(async (url: string, init?: RequestInit) => { if (!paused && url === "https://oauth2.googleapis.com/token") { paused = true; entered(); await held; } return originalFetch(url, init); });
+  const finishing = finish(transaction).then(value => ({ value }), error => ({ error }));
+  try {
+    await ready; const before = await cloudStore().read("publishing-accounts.json");
+    await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "BUSY" });
+    expect(await cloudStore().read("publishing-accounts.json")).toEqual(before);
+    release(); expect(await finishing).toMatchObject({ value: { accountId: account.id } });
+    expect(await accountStatus(account.id)).toBe("connected"); expect((await executor.publishingAccounts.auth(account.id).tokens())?.authorizationGeneration).not.toBe(original?.authorizationGeneration);
+  } finally { release(); await finishing; }
+}, 15_000);
+
+/** Cloud队列写入之前的确定故障不应改账号；故障消除后正常重试仍走原频道。 */
+it("R03 a definite queue persistence failure leaves the account usable and permits a subsequent real authorization", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Queue admission failure"); await finish(await begin(account.id));
+  const before = await cloudStore().read("publishing-accounts.json"), original = await executor.publishingAccounts.auth(account.id).tokens();
+  const write = Store.prototype.write, machine = agentStore(agentId).dir;
+  const failing = vi.spyOn(Store.prototype, "write").mockImplementation(async function(this: Store, name, value) { if (this.dir === machine && name === "tasks.json") throw new Error("Synthetic queue commit refused before write"); return write.call(this, name, value); });
+  try { await expect(connectPublishingAccount(alice, account.id)).rejects.toThrow("Synthetic queue commit refused before write"); }
+  finally { failing.mockRestore(); }
+  expect(await cloudStore().read("publishing-accounts.json")).toEqual(before); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
+  await finish(await begin(account.id)); expect(await accountStatus(account.id)).toBe("connected");
+}, 15_000);
+
+/** 仅替代已入队之后的等待结果，真实队列/epoch仍执行；未知受理不能走拒绝回滚。 */
+it("R03 an admitted begin with an unknown receipt retains authorization protection", async () => {
+  const account = await createPublishingAccount(alice, agentId, "main", "Unknown begin receipt"); await finish(await begin(account.id));
+  const original = await executor.publishingAccounts.auth(account.id).tokens();
+  const waiting = vi.spyOn(taskPorts, "rpc").mockRejectedValue(new AppError("AGENT_TIMEOUT", "Synthetic unknown begin receipt", 504));
+  try { await expect(connectPublishingAccount(alice, account.id)).rejects.toMatchObject({ code: "AGENT_TIMEOUT" }); }
+  finally { waiting.mockRestore(); }
+  expect(await accountStatus(account.id)).toBe("needs_reauthorization"); expect(await executor.publishingAccounts.auth(account.id).tokens()).toEqual(original);
+  const tasks = (await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))!.records;
+  expect(tasks.some(task => task.kind === "publishing-account-oauth-begin" && task.status === "queued")).toBe(true);
+}, 15_000);

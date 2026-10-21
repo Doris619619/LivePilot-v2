@@ -10,6 +10,11 @@ import type { Broadcast, Stream, YouTubePort } from "@/server/youtube/api";
 import type { ObsRuntime } from "@/server/obs/runtime";
 import type { ControlState } from "@/shared/types";
 import { makeProblem } from "@/shared/problems";
+import { YouTubeApi } from "@/core/youtube/api";
+import type { YouTubeAuth } from "@/core/youtube/auth";
+import { installYouTubeRuntime, type YouTubeRuntime } from "@/core/youtube/usage";
+import { youtubeCost } from "@/shared/youtube-usage";
+import { hasPendingBroadcast } from "@/shared/broadcast-recovery";
 
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -344,4 +349,45 @@ it("retains safe retry metadata after local stop while describing the full opera
   vi.mocked(f.yt.channel).mockRejectedValue(new AppError("YOUTUBE_PROTECTION_WAIT", "synthetic safe wait", 429, makeProblem("YOUTUBE_PROTECTION_WAIT", "synthetic safe wait", { outcome: "not-sent", context: { retryAt } })));
   await expect(f.control.stop()).rejects.toMatchObject({ code: "YOUTUBE_PROTECTION_WAIT", problem: { outcome: "partial", context: { retryAt }, stage: "结束 YouTube 场次" } });
   expect(f.obs.stopStream).toHaveBeenCalledOnce(); expect(await f.control.state()).toMatchObject({ platformClosePending: true, obsStartRequested: false });
+});
+
+/** 运行真实创建API与准入，只替代平台HTTP；未发送意图可重试，已发出但未知的结果仍查重。 */
+it.each(["broadcast", "stream"] as const)("reclaims only definitely unsent %s creation across budget, offline and dispatch denials", async kind => {
+  const f = await fixture(), method = kind === "broadcast" ? "liveBroadcasts.insert" : "liveStreams.insert";
+  const api = new YouTubeApi({ requestContext: { instanceId: "main" }, access: async () => ({ accessToken: "synthetic" }) } as unknown as YouTubeAuth, f.storage);
+  const fetcher = vi.fn(async (url: string) => { expect(new URL(url).hostname).toBe("www.googleapis.com"); return Response.json({ id: "synthetic-created" }); }); vi.stubGlobal("fetch", fetcher);
+  const original = kind === "broadcast" ? f.yt.createBroadcast : f.yt.createStream;
+  if (kind === "broadcast") f.yt.createBroadcast = vi.fn(async title => { await api.createBroadcast(title); return original(title) as Promise<Broadcast>; });
+  else f.yt.createStream = vi.fn(async title => { await api.createStream(title); return original(title) as Promise<Stream>; });
+  /** 每个真实HTTP都需新准入，拒绝发生在request回调前；仅测试边界控制能否发送。 */
+  const gate = (allowed: boolean, canSend = true): YouTubeRuntime => ({ async admit(input) { return { allowed, attemptId: input.attemptId, project: "synthetic", quotaDay: "2026-10-21", ...youtubeCost(input.method), remaining: 9000, backgroundRemaining: 2000, activeInstances: 1, resetAt: Date.now() + 86400_000, ...(allowed ? {} : { code: "YOUTUBE_BUDGET" }) }; }, canSend: () => canSend, async record() {} });
+  try {
+    for (const runtime of [gate(false), undefined, gate(true, false)]) {
+      installYouTubeRuntime(runtime);
+      await expect(f.control.start(selection)).rejects.toMatchObject({ problem: { outcome: "not-sent" } });
+      const state = await f.control.state();
+      expect(fetcher).not.toHaveBeenCalled(); expect(state[kind === "broadcast" ? "broadcastIntent" : "streamIntent"]).toBe(false);
+      expect(state[kind === "broadcast" ? "broadcastTitle" : "streamTitle"]).toBeUndefined();
+      expect(hasPendingBroadcast(state)).toBe(kind === "stream");
+      if (kind === "stream") expect(state.broadcastId).toBe("b1");
+    }
+    installYouTubeRuntime(gate(true));
+    expect((await f.control.start(selection)).phase).toBe("live");
+    expect(fetcher).toHaveBeenCalledOnce(); expect(new URL(String(fetcher.mock.calls[0][0])).pathname).toContain(method.split(".")[0]);
+  } finally { installYouTubeRuntime(); vi.unstubAllGlobals(); }
+});
+
+/** 已经调用Google却未收到响应不能回收意图；恢复只查找原对象，绝不创建第二个。 */
+it.each(["broadcast", "stream"] as const)("preserves an ambiguous %s create after a lost HTTP response", async kind => {
+  const f = await fixture();
+  const api = new YouTubeApi({ requestContext: { instanceId: "main" }, access: async () => ({ accessToken: "synthetic" }) } as unknown as YouTubeAuth, f.storage);
+  const fetcher = vi.fn(async () => { throw new Error("synthetic lost response"); }); vi.stubGlobal("fetch", fetcher);
+  if (kind === "broadcast") f.yt.createBroadcast = title => api.createBroadcast(title);
+  else f.yt.createStream = title => api.createStream(title);
+  try {
+    await expect(f.control.start(selection)).rejects.toMatchObject({ code: "YOUTUBE_NETWORK" });
+    expect((await f.control.state())[kind === "broadcast" ? "broadcastIntent" : "streamIntent"]).toBe(true);
+    await expect(f.control.start(selection)).rejects.toMatchObject({ code: "UNCERTAIN" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllGlobals(); }
 });

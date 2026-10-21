@@ -3,6 +3,9 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { Manager } from "../electron/manager";
 import { separateCandidates } from "../electron/candidates";
 import type { Settings } from "../electron/settings";
+import { AppError } from "../src/core/errors";
+import { Shutdown } from "../electron/shutdown";
+import { RETIREMENT_INVENTORY_TIMEOUT_MS } from "../electron/retirement-inventory";
 const f = vi.hoisted(() => ({ sequence: 0, write: vi.fn(), rpc: vi.fn(), initialize: vi.fn(), idle: vi.fn(), start: vi.fn(), stop: vi.fn(), ready: vi.fn(), fetch: vi.fn() }));
 vi.mock("../electron/data-root", () => ({ordinaryPath:vi.fn(),hasData:vi.fn()}));
 vi.mock("node:fs/promises", () => ({ mkdir: vi.fn() }));
@@ -18,7 +21,7 @@ let manager: Manager;
 afterEach(() => vi.useRealTimers());
 /** 所有磁盘、网络和 OBS 副作用均替换为合成边界。 */
 beforeEach(() => {
-  f.sequence=0; vi.clearAllMocks(); f.write.mockResolvedValue(undefined); f.rpc.mockResolvedValue({}); f.idle.mockResolvedValue(undefined); f.initialize.mockRejectedValue(new Error("fixture initialization failure"));
+  f.sequence=0; vi.clearAllMocks(); f.fetch.mockReset(); f.write.mockResolvedValue(undefined); f.rpc.mockResolvedValue({}); f.idle.mockResolvedValue(undefined); f.initialize.mockRejectedValue(new Error("fixture initialization failure"));
   manager = new Manager("fixture", () => {}); manager.settings = { dataRoot: "fixture", encryptionKey: "a".repeat(64), paired: true, identity: { agentId: "test", origin: "https://example.invalid", token: "b".repeat(64) }, instances: [{ id: "main", name: "Old", managed: true, exe: "fixture", port: 4455, password: "old-secret", initialized: true }] };
 });
 it("retains a failed candidate without publishing it and restores the old device", async () => {
@@ -137,4 +140,62 @@ it.each([true, false])("reconciles retirement after restart against authoritativ
 it("preserves retirement intent when old Cloud cannot provide inventory recovery", async () => {
   manager.settings.retirementPending = "obs_second"; (manager.agent as unknown as { child?: unknown }).child = undefined; f.fetch.mockResolvedValueOnce(new Response(null, { status: 404 }));
   await expect(manager.start()).rejects.toThrow("升级 Cloud"); expect(manager.settings.retirementPending).toBe("obs_second"); expect(f.start).not.toHaveBeenCalled();
+});
+/** 同一真实Manager action覆盖挂起的响应头/响应体；迟到数据不能越过期限修改原事务。 */
+it.each(["fetch", "body"] as const)("bounds a stalled retirement inventory %s and permits shutdown or a later authoritative retry", async phase => {
+  vi.useFakeTimers();
+  const second = { ...manager.settings.instances[0], id: "obs_second", port: 4456 }; manager.settings.instances.push(second);
+  const identity = structuredClone(manager.settings.identity); const withheld = Promise.withResolvers<unknown>(); let signal: AbortSignal | undefined;
+  f.rpc.mockImplementation(async route => { if (route === "instance-retire") throw new AppError("BUSY", "associated account", 409); return {}; });
+  f.fetch.mockImplementationOnce(async (_url, init) => { signal = init.signal; return phase === "fetch" ? withheld.promise : { ok: true, json: () => withheld.promise }; });
+  const attempt = manager.act("retire", { id: second.id, confirmed: true }); const failed = expect(attempt).rejects.toThrow("待核对");
+  await vi.advanceTimersByTimeAsync(0); expect(manager.busy).toBe(true);
+  const prompts = { confirm: vi.fn().mockResolvedValue(true), notify: vi.fn().mockResolvedValue(undefined), finish: vi.fn() }; const shutdown = new Shutdown(manager, prompts);
+  await shutdown.request(); expect(prompts.finish).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(RETIREMENT_INVENTORY_TIMEOUT_MS - 1); expect(manager.busy).toBe(true);
+  await vi.advanceTimersByTimeAsync(2); await failed;
+  expect(signal?.aborted).toBe(true); expect(manager.busy).toBe(false); expect(manager.settings.identity).toEqual(identity);
+  expect(manager.settings.retirementPending).toBe(second.id); expect(manager.settings.maintenance).toBeTruthy(); expect(manager.settings.instances.map(item => item.id)).toEqual(["main"]);
+  const inventory = { instances: [{ id: "main", name: "Old" }, { id: second.id, name: second.name }], retiredInstanceIds: [] };
+  withheld.resolve(phase === "fetch" ? Response.json(inventory) : inventory); await vi.advanceTimersByTimeAsync(0);
+  expect(manager.settings.retirementPending).toBe(second.id); expect(f.rpc.mock.calls.filter(call => call[0] === "maintenance-end")).toHaveLength(0);
+  if (phase === "fetch") { await shutdown.request(); expect(prompts.finish).toHaveBeenCalledOnce(); expect(f.stop).toHaveBeenCalledOnce(); }
+  else { f.fetch.mockResolvedValueOnce(Response.json(inventory)); const retry = manager.act("start"); await vi.advanceTimersByTimeAsync(22_000); await retry; expect(manager.settings.instances).toContainEqual(second); expect(manager.settings.retirementPending).toBeUndefined(); expect(manager.settings.maintenance).toBeUndefined(); expect(manager.busy).toBe(false); }
+});
+/** 启动恢复共用相同期限；下一轮Cloud确认墓碑及清理完成后才同步本地库存，不复活已退休目标。 */
+it.each(["fetch", "body"] as const)("bounds a pending reconnect at %s then accepts a completed retirement on the next read", async phase => {
+  vi.useFakeTimers(); const second = { ...manager.settings.instances[0], id: "obs_second", port: 4456 };
+  f.stop.mockImplementation(async () => { (manager.agent as unknown as { child?: unknown }).child = undefined; });
+  manager.settings.retirementPending = second.id; manager.settings.retirementAgentId = "test"; manager.settings.retiredInstances = [second]; manager.settings.maintenance = "d".repeat(64);
+  const withheld = Promise.withResolvers<unknown>(); f.fetch.mockImplementationOnce(async () => phase === "fetch" ? withheld.promise : { ok: true, json: () => withheld.promise });
+  const pending = manager.act("start"); const failed = expect(pending).rejects.toThrow("待核对"); await vi.advanceTimersByTimeAsync(RETIREMENT_INVENTORY_TIMEOUT_MS + 1); await failed;
+  expect(manager.busy).toBe(false); expect(manager.settings.retirementPending).toBe(second.id); expect(manager.settings.maintenance).toBeTruthy(); expect(f.stop).not.toHaveBeenCalled(); expect(f.start).not.toHaveBeenCalled();
+  const inventory = { instances: [{ id: "main", name: "Old" }], retiredInstanceIds: [second.id] };
+  withheld.resolve(phase === "fetch" ? Response.json(inventory) : inventory); await vi.advanceTimersByTimeAsync(0); expect(manager.settings.retirementPending).toBe(second.id);
+  f.fetch.mockResolvedValueOnce(Response.json(inventory)); const retry = manager.act("start"); await vi.advanceTimersByTimeAsync(22_000); await retry;
+  expect(manager.settings.instances.map(item => item.id)).toEqual(["main"]); expect(manager.settings.retiredInstances).toContainEqual(second); expect(manager.settings.retirementPending).toBeUndefined(); expect(manager.settings.inventoryPending).toBeUndefined(); expect(manager.settings.maintenance).toBeUndefined(); expect(manager.busy).toBe(false); expect(f.start).toHaveBeenCalledOnce();
+});
+it.each(["unbound", "needs_reauthorization", "cleanup_pending"])("restores the original active instance after an explicit retirement refusal for a %s account", async account => {
+  const second = { ...manager.settings.instances[0], id: "obs_second", port: 4456 }; manager.settings.instances.push(second);
+  f.rpc.mockImplementation(async route => { if (route === "instance-retire") throw new AppError("BUSY", account + " account still associated", 409); return {}; });
+  f.fetch.mockResolvedValue(Response.json({ instances: manager.settings.instances.map(({ id, name }) => ({ id, name })), retiredInstanceIds: [] }));
+  await expect(manager.act("retire", { id: second.id, confirmed: true })).rejects.toMatchObject({ code: "BUSY" });
+  expect(manager.settings.instances.map(i => i.id)).toEqual(["main", second.id]); expect(manager.settings.retirementPending).toBeUndefined(); expect(manager.settings.maintenance).toBeUndefined();
+  expect(manager.settings.retiredInstances).toEqual([]); expect(f.rpc.mock.calls.map(call => call[0])).toEqual(["maintenance-begin", "instance-retire", "maintenance-end"]);
+});
+it("reconciles an unknown retirement through ordinary reconnect without repeatedly submitting the retirement", async () => {
+  const second = { ...manager.settings.instances[0], id: "obs_second", port: 4456 }; manager.settings.retirementPending = second.id; manager.settings.retirementAgentId = "test"; manager.settings.retiredInstances = [second]; manager.settings.maintenance = "d".repeat(64);
+  f.fetch.mockResolvedValueOnce(Response.json({ instances: [{ id: "main", name: "Old" }, { id: second.id, name: second.name }], retiredInstanceIds: [] }));
+  await manager.start(); expect(manager.settings.instances).toContainEqual(second); expect(manager.settings.maintenance).toBeUndefined();
+  expect(f.rpc.mock.calls.map(call => call[0])).toEqual(["maintenance-end"]); expect(f.start).toHaveBeenCalledOnce();
+});
+it.each([false, true])("archives an old-identity retirement before a new Agent starts (legacy=%s)", async legacy => {
+  manager.settings.retirementPending = "obs_second"; if (!legacy) manager.settings.retirementAgentId = "old_agent";
+  manager.settings.identity!.agentId = "fresh"; f.fetch.mockResolvedValueOnce(Response.json({ instances: [], retiredInstanceIds: [] }));
+  await manager.start(); expect(manager.settings.retirementPending).toBeUndefined(); expect(manager.settings.orphanedRetirements).toEqual([expect.objectContaining({ instanceId: "obs_second" })]);
+  expect(f.start).toHaveBeenCalledOnce(); expect(f.rpc).not.toHaveBeenCalled(); expect(f.fetch).toHaveBeenCalledTimes(legacy ? 1 : 0);
+});
+it("preserves a bound retirement when its own Cloud inventory is unexpectedly empty", async () => {
+  manager.settings.retirementPending = "obs_second"; manager.settings.retirementAgentId = "test"; f.fetch.mockResolvedValueOnce(Response.json({ instances: [], retiredInstanceIds: [] }));
+  await expect(manager.start()).rejects.toThrow("协议不匹配"); expect(manager.settings.retirementPending).toBe("obs_second"); expect(f.start).not.toHaveBeenCalled();
 });

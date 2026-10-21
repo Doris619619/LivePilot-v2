@@ -6,8 +6,10 @@ import os from "node:os";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { POST as agentPost, GET as agentGet } from "@/app/api/agent/[...path]/route";
 import { POST as controlPost } from "@/app/api/control/route";
-import { GET as statusGet } from "@/app/api/status/route";
-import { createPairing } from "@/cloud/agents";
+import { GET as statusGet, POST as statusPost } from "@/app/api/status/route";
+import { agentStore, createPairing, heartbeatAgent, openSession, pairAgent } from "@/cloud/agents";
+import { enqueue, pollTasks, reportTasks, terminal, type TaskRecord } from "@/cloud/tasks";
+import type { Dashboard } from "@/shared/types";
 import { DELETE as removeDevice } from "@/app/api/devices/route";
 import { authenticate } from "@/server/access";
 import { AppError } from "@/core/errors";
@@ -47,3 +49,61 @@ it("protects device removal with browser authentication, CSRF and explicit confi
   vi.mocked(authenticate).mockRejectedValueOnce(new AppError("AUTH", "请先登录。", 401)); expect((await removeDevice(make())).status).toBe(401);
   expect((await removeDevice(make())).status).toBe(200); expect((await removeDevice(make())).status).toBe(200);
 });
+
+/** 只构造有权限的合成设备与过期平台证据，状态接口仍经过真实Cloud/RPC和白名单输出。 */
+async function refreshDevice(supported: boolean) {
+  const pairing = await createPairing("studio_a", "Synthetic", "alice"); await pairAgent("studio_a", pairing.code, "b".repeat(64));
+  const session = await openSession("studio_a", randomUUID(), [{ id: "main", name: "Main" }]);
+  const dashboard: Dashboard = { busy: false, state: { phase: "live", stage: "Synthetic", broadcastId: "b", updatedAt: new Date().toISOString() }, obs: { ready: true, running: true, streaming: true }, youtube: { connected: true, lifecycle: "live", checkedAt: new Date(Date.now() - 30 * 60_000).toISOString() }, media: { videos: [], music: [] }, configuration: { youtubeRefresh: supported, missing: [], privacy: "private", madeForKids: false } };
+  await heartbeatAgent("studio_a", session.session, [{ instance: { id: "main", name: "Main" }, observedAt: Date.now(), dashboard }]);
+  return dashboard;
+}
+/** 人工核对是带CSRF保护的显式操作，不能通过GET/外站请求静默消耗平台预算。 */
+function refreshRequest() { return new Request("https://cloud.example.com/api/status?agentId=studio_a&instanceId=main", { method: "POST", headers: { host: "cloud.example.com", origin: "https://cloud.example.com", "x-livepilot": "1" } }); }
+it("guards explicit platform checks against anonymous, cross-origin, foreign-owner and unsupported Agents", async () => {
+  await refreshDevice(false);
+  const cross = refreshRequest(); cross.headers.set("origin", "https://foreign.example.com"); expect((await statusPost(cross)).status).toBe(403);
+  vi.mocked(authenticate).mockRejectedValueOnce(new AppError("AUTH", "请先登录。", 401)); expect((await statusPost(refreshRequest())).status).toBe(401);
+  vi.mocked(authenticate).mockResolvedValueOnce({ username: "bob", role: "customer" } as Awaited<ReturnType<typeof authenticate>>); expect((await statusPost(refreshRequest())).status).toBe(403);
+  expect((await statusPost(refreshRequest())).status).toBe(409);
+  expect((await agentStore("studio_a").read<{ records: TaskRecord[] }>("tasks.json"))?.records || []).toHaveLength(0);
+});
+it("returns the new platform evidence from a real RPC instead of the old heartbeat snapshot", async () => {
+  const old = await refreshDevice(true), operation = statusPost(refreshRequest());
+  const settled = operation.then(value => ({ value }), error => ({ error }));
+  try {
+    await vi.waitFor(async () => { expect((await agentStore("studio_a").read<{ records: TaskRecord[] }>("tasks.json"))?.records.some(record => record.kind === "broadcast-read" && record.status === "queued")).toBe(true); }, { interval: 50, timeout: 3000 });
+    const [task] = await pollTasks("studio_a"); expect(task.payload.kind).toBe("broadcast-read");
+    await reportTasks("studio_a", [{ id: task.id, status: "succeeded", result: { instance: { id: "main", name: "Main" }, observedAt: Date.now(), dashboard: { ...old, youtube: { ...old.youtube, lifecycle: "complete", checkedAt: new Date().toISOString() }, secret: "must-be-stripped" } } }]);
+    const response = await operation; expect(response.status).toBe(200); const result = await response.json();
+    expect(result.youtube.lifecycle).toBe("complete"); expect(result.youtube.checkedAt).not.toBe(old.youtube.checkedAt);
+    expect(JSON.stringify(result)).not.toContain("must-be-stripped");
+    const cached = await statusGet(new Request("https://cloud.example.com/api/status?agentId=studio_a&instanceId=main", { headers: { host: "cloud.example.com" } })); expect((await cached.json()).youtube.lifecycle).toBe("live");
+  } finally {
+    await pollTasks("studio_a");
+    const records = (await agentStore("studio_a").read<{ records: TaskRecord[] }>("tasks.json"))?.records || [];
+    await reportTasks("studio_a", records.filter(record => !terminal(record.status)).map(record => ({ id: record.id, status: "failed", error: "Synthetic fixture cancelled", httpStatus: 409 })));
+    await settled;
+  }
+}, 20_000);
+
+/** Agent核对也不能为其他实例作证，或由Cloud把过期采样重新盖上当前时间。 */
+it.each(["wrong-instance", "expired", "superseded"])("rejects %s platform RPC evidence", async mode => {
+  const dashboard = await refreshDevice(true), operation = statusPost(refreshRequest());
+  const settled = operation.then(value => ({ value }), error => ({ error }));
+  try {
+    await vi.waitFor(async () => { expect((await agentStore("studio_a").read<{ records: TaskRecord[] }>("tasks.json"))?.records.some(record => record.kind === "broadcast-read" && record.status === "queued")).toBe(true); }, { interval: 50, timeout: 3000 });
+    const [task] = await pollTasks("studio_a");
+    const observedAt = Date.now() - (mode === "superseded" ? 100 : 30_000);
+    if (mode === "superseded") await enqueue({ agentId: "studio_a", instanceId: "main" }, "alice", { kind: "control", input: { action: "stop" } });
+    const reporting = reportTasks("studio_a", [{ id: task.id, status: "succeeded", result: { instance: { id: mode === "wrong-instance" ? "other" : "main", name: "Synthetic" }, dashboard, observedAt } }]);
+    if (mode === "wrong-instance") { await expect(reporting).rejects.toMatchObject({ code: "INSTANCE" }); await reportTasks("studio_a", [{ id: task.id, status: "failed", error: "Synthetic mismatched target", httpStatus: 409 }]); }
+    else await reporting;
+    expect((await operation).status).toBe(409);
+  } finally {
+    await pollTasks("studio_a");
+    const records = (await agentStore("studio_a").read<{ records: TaskRecord[] }>("tasks.json"))?.records || [];
+    await reportTasks("studio_a", records.filter(record => !terminal(record.status)).map(record => ({ id: record.id, status: "failed", error: "Synthetic fixture cancelled", httpStatus: 409 })));
+    await settled;
+  }
+}, 20_000);

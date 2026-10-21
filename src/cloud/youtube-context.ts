@@ -4,7 +4,7 @@ import { AppError } from "@/core/errors";
 import type { YouTubeAdmit } from "@/shared/youtube-usage";
 import type { TaskPayload } from "@/shared/remote";
 import { requireTarget, agentStore } from "./agents";
-import { requirePublishingAccount, requirePublishingAccountOwner, publishingAccountCleanups } from "./publishing-accounts";
+import { requirePublishingAccount, requirePublishingAccountOwner, publishingAccountCleanups, assertPublishingAuthorizationEpoch } from "./publishing-accounts";
 import type { TaskRecord } from "./tasks";
 
 /** 首次/恢复授权只接受已经下发、未过期且未取消的原账号OAuth-finish任务，不信任设备自报purpose。 */
@@ -15,6 +15,7 @@ async function assertOAuthTask(agentId: string, input: YouTubeAdmit, owner?: str
   if (!task || owner && task.customer !== owner) throw new AppError("FORBIDDEN", "频道连接任务已结束、过期或不属于当前设备。", 403);
   const payload = unseal<TaskPayload>(task.payload);
   if (payload.kind !== "publishing-account-oauth-finish" || payload.accountId !== input.accountId || payload.cancelled) throw new AppError("FORBIDDEN", "频道连接任务与发布账号不一致。", 403);
+  if (payload.authorizationGeneration) { if (!payload.authorizationEpoch) throw new AppError("FORBIDDEN", "频道连接任务缺少原服务端事务。", 403); await assertPublishingAuthorizationEpoch(agentId, payload.accountId, payload.authorizationEpoch); }
 }
 /** 撤销只匹配原pending清理请求；deadline是既有清理目标，离线超过它仍允许原请求继续撤销。 */
 async function assertCleanupRequest(agentId: string, input: YouTubeAdmit, owner?: string) {
@@ -35,7 +36,8 @@ export async function assertYouTubeLifecycleContext(agentId: string, input: YouT
   if (input.method === "oauth.revoke") { await assertCleanupRequest(agentId, input, machine.owner); return machine; }
   if (input.accountId) {
     const account = await requirePublishingAccountOwner(agentId, input.instanceId, input.accountId);
-    if (account.status !== "connected" && !["cleanup_pending", "deleted"].includes(account.status)) await assertOAuthTask(agentId, input, machine.owner);
+    if (!["cleanup_pending", "deleted"].includes(account.status) && input.trigger === "oauth-finish" && input.purpose === "authorization") await assertOAuthTask(agentId, input, machine.owner);
+    else if (account.status !== "connected" && !["cleanup_pending", "deleted"].includes(account.status)) await assertOAuthTask(agentId, input, machine.owner);
     else await requirePublishingAccount(agentId, input.instanceId, input.accountId);
   } else {
     const { publishingStore } = await import("./publishing");

@@ -1,12 +1,13 @@
 /** 已登录工作区共用的侧栏账户区；只传递公开身份，设置与会话继续使用原有入口。 */
 "use client";
-import { createContext, useContext } from "react";
+import { useContext } from "react";
+import { WorkspaceUserContext } from "./workspace-user-context";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import AccountSwitcher from "../account-switcher";
 import { ApiSettingsButton } from "./api-settings";
 
-export const WorkspaceUserContext = createContext<{ username: string; role: "admin" | "customer" } | undefined>(undefined);
+export { WorkspaceUserContext } from "./workspace-user-context";
 
 /** 侧栏底部集中放置设置与头像；未登录或桌面独立界面不显示网页账户。 */
 export default function WorkspaceAccount() {

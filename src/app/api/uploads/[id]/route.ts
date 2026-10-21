@@ -6,6 +6,8 @@ import { authenticate, requireAdmin } from "@/server/access";
 import { guard, failed } from "@/server/http";
 import { uploadStatus, uploadChunk, cancelUpload } from "@/server/uploads";
 import { AppError } from "@/server/errors";
+import { cancelLocalPreparedUpload } from "@/cloud/upload-admission";
+import { preparedUploadId } from "@/shared/upload-admission";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
@@ -29,5 +31,5 @@ export async function PUT(request: Request, context: Context) {
 }
 /** 取消只影响临时文件，直播素材和直播状态保留。 */
 export async function DELETE(request: Request, context: Context) {
-  try { const p = await identity(request, context, true); if (cloudMode()) await uploadRpc(queryTarget(request), p.actor, { kind: "upload-cancel", uploadId: p.id }); else await cancelUpload(p.instanceId, p.actor, p.id); return Response.json({ ok: true }); } catch (e) { return failed(e); }
+  try { const p = await identity(request, context, true); if (cloudMode()) await uploadRpc(queryTarget(request), p.actor, { kind: "upload-cancel", uploadId: p.id }); else if (preparedUploadId(p.id)) await cancelLocalPreparedUpload(p.actor, { instanceId: p.instanceId }, p.id, () => uploadStatus(p.instanceId, p.actor, p.id), () => cancelUpload(p.instanceId, p.actor, p.id)); else await cancelUpload(p.instanceId, p.actor, p.id); return Response.json({ ok: true }); } catch (e) { return failed(e); }
 }
