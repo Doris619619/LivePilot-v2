@@ -60,6 +60,8 @@ YouTube 配额异常的源码审计、服务器与备份证据、离线计数测
 
 本仓库为 [Doris619619/LivePilot-v2](https://github.com/Doris619619/LivePilot-v2)，独立于旧 LivePilot。开发验证：`npm.cmd ci` → `npm.cmd run verify`。真实频道授权及音画验收由用户主动完成。
 
+`npm test` 先运行常规回归，再单独运行文件锁原生回归；全部用例仍包含在 `verify` 中。锁测试保留六个 Node 进程的真实并发，单独调度避免 Windows 原生 helper 冷启动与其他测试争用资源。
+
 界面组件、动效与 localhost 演示入口见 [工作台组件与动效](docs/UI组件来源.md)。PR #34 同时收紧直播/发布信息层级、统一客户端更新提示，并补齐 AI 环境同步的自动重试；这些分支改动尚未发布到安装包，检查边界见 [前端回归检查](docs/前端回归检查.md)。
 
 发布前预览已接入 Agent：普通视频从发布包、确认计划和编辑弹窗读取已有配置；直播跟随当前素材。支持设备文件播放、声音与时长抽查、可取消的完整解码、提前准备并复用正式成片。Cloud 与 Agent 需升级，旧 Agent 提示升级且保留原功能。`/preview` 仍为本地文件体验页；运行 `node tests/media-preview.integration.mjs --serve` 可在 3031 端口体验隔离 Agent 的真实读取与检查。详见 [发布前预览](docs/发布前预览.md) 和 [媒体预览中转](docs/媒体预览中转.md)。
