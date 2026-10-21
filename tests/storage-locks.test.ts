@@ -77,11 +77,20 @@ it.each(["empty", "corrupt", "valid-pid", "directory", "junction"])("preserves t
   expect(await lstat(filename)).toBeDefined();
 });
 it("retries an existing lock while its owner has not yet written the PID", async () => {
+  const { releaseOwnedLock } = await import("../src/core/file-lock");
   const filename = path.join(root, "metadata.lock"), owner = await open(filename, "wx"), run = vi.fn(async () => "released");
-  const waiting = transaction(new Store(root), run);
-  await new Promise(resolve => setTimeout(resolve, 35)); expect(run).not.toHaveBeenCalled();
-  await owner.writeFile(String(process.pid)); await owner.close(); await unlink(filename);
-  await expect(waiting).resolves.toBe("released"); expect(run).toHaveBeenCalledOnce();
+  const store = new Store(root), attempts = vi.spyOn(store, "exclusive"); let releasing: Promise<void> | undefined;
+  // 立即订阅拒绝，保留真实 EEXIST 重试；fixture owner 使用与生产相同的安全释放协议。
+  const waiting = transaction(store, run).then(value => ({ status: "fulfilled", value }), error => ({ status: "rejected", error }));
+  try {
+    await vi.waitFor(() => { expect(attempts.mock.calls.length).toBeGreaterThan(1); }, { timeout: 1500, interval: 10 });
+    expect((await owner.stat()).size).toBe(0); expect(run).not.toHaveBeenCalled();
+    await owner.writeFile(String(process.pid)); await (releasing ??= releaseOwnedLock(filename, owner));
+    await expect(waiting).resolves.toEqual({ status: "fulfilled", value: "released" }); expect(run).toHaveBeenCalledOnce();
+  } finally {
+    try { await (releasing ??= releaseOwnedLock(filename, owner)); }
+    finally { await waiting; }
+  }
 });
 it.runIf(process.platform === "win32")("moves its owned lock before cleanup even when observed during the empty PID window", async () => {
   const filename = path.join(root, "control.lock"); let created!: () => void, writePid!: () => void, cleaning!: () => void, finish!: () => void;
