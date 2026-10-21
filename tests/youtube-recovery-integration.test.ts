@@ -11,7 +11,7 @@ import { agentStore, createPairing, heartbeatAgent, openSession, pairAgent } fro
 import { beginRemoteOAuth, finishRemoteOAuth } from "@/cloud/oauth";
 import { agentPublishingAccounts, claimPublishingAccount, createPublishingAccount, syncPublishingAccounts } from "@/cloud/publishing-accounts";
 import { acceptPublishingPrivacy, changePublishingJob, completePublishingCleanup, connectPublishingAccount, publishingCleanups, publishingStore, reportPublishing, savePublishingPolicy } from "@/cloud/publishing";
-import { pollTasks, reportTasks } from "@/cloud/tasks";
+import { pollTasks, reportTasks, terminal, type TaskRecord } from "@/cloud/tasks";
 import { admitYouTube, reportYouTubeResult, updateYouTubePolicy } from "@/cloud/youtube-usage";
 import { ingestYouTubeUsage } from "@/cloud/youtube-usage-events";
 import { readYouTubeUsage, youtubeDay } from "@/cloud/youtube-usage-store";
@@ -21,6 +21,7 @@ import { PublishingStore } from "@/core/publishing/storage";
 import { seal } from "@/core/storage";
 import { VideoApi } from "@/core/youtube/video-api";
 import { installYouTubeRuntime } from "@/core/youtube/usage";
+import { sleep } from "@/core/errors";
 import { accessStore, emptyAccess } from "@/server/access";
 import { defaultPolicy, PRIVACY_VERSION, type JobSpec, type PublishingAccountReport, type PublishingReport, type VideoJob } from "@/shared/publishing";
 import type { RemoteTask, TaskPayload } from "@/shared/remote";
@@ -35,9 +36,12 @@ let recoveryRunner: PublishingRunner | undefined;
 let google: ReturnType<typeof vi.fn>;
 let reads: "ok" | "first-401" | "always-401", refreshInvalid: boolean, rejectWrite: boolean, videoReads: number, serial: number;
 const attempts: YouTubeAdmit[] = [];
+const pendingOperations = new Set<Promise<unknown>>(), pendingDeliveries = new Set<Promise<unknown>>();
+let cancellation: AbortController;
 
 /** 网络替身只路由到真实Cloud函数；测试内不安装always-allow准入或模拟RPC。 */
-beforeEach(async () => {
+beforeEach(async ({ signal }) => {
+  const controller = new AbortController(); cancellation = controller; signal.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
   root = await mkdtemp(path.join(os.tmpdir(), "livepilot-youtube-recovery-"));
   vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64));
   vi.stubEnv("LIVEPILOT_INSTANCES", "main"); vi.stubEnv("LIVEPILOT_ORIGIN", "https://synthetic.invalid");
@@ -89,28 +93,67 @@ beforeEach(async () => {
 
 /** 停止真实后台对象后，只清理本轮独立临时目录。 */
 afterEach(async () => {
+  cancellation.abort(new Error("Synthetic recovery fixture stopped"));
   const stopped = await Promise.allSettled([recoveryRunner?.stop(), executor?.stopPublishing()]);
+  // 原RPC可能仍在等任务结果；用真实失败回报唤醒，排空后才能恢复环境或删除本例目录。
+  const deadline = Date.now() + 50_000;
+  while ((pendingOperations.size || pendingDeliveries.size) && Date.now() < deadline) {
+    const records = (await agentStore(agentId).read<{ records: TaskRecord[] }>("tasks.json"))?.records || [];
+    if (records.some(record => !terminal(record.status))) {
+      const tasks = await pollTasks(agentId);
+      if (tasks.length) await reportTasks(agentId, tasks.map(task => ({ id: task.id, status: "failed" as const, error: "Synthetic recovery fixture cancelled", httpStatus: 409 })));
+    }
+    await Promise.race([Promise.allSettled([...pendingOperations, ...pendingDeliveries]), sleep(500)]);
+  }
+  if (pendingOperations.size || pendingDeliveries.size) throw new Error("Synthetic recovery RPC did not drain; temporary data and environment retained");
   const runtimeStopped = await Promise.allSettled([runtime?.stop()]);
   installYouTubeRuntime(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
   if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("livepilot-youtube-recovery-")) throw new Error("Unsafe cleanup");
   await rm(root, { recursive: true, force: true });
   const failure = [...stopped, ...runtimeStopped].find(result => result.status === "rejected"); if (failure?.status === "rejected") throw failure.reason;
-});
+}, 60_000);
 
 /** 驱动真实RPC下发的一个短任务；可在本机落盘与Cloud确认之间插入确定的竞态。 */
-async function deliver<T>(operation: Promise<T>, kind: TaskPayload["kind"], beforeReport?: () => Promise<void>) {
-  const settled = operation.then(value => ({ value }), error => ({ error }));
+function deliver<T>(operation: Promise<T>, kind: TaskPayload["kind"], beforeReport?: () => Promise<void>): Promise<T> {
+  const delivery = deliverOnce(operation, kind, beforeReport); pendingDeliveries.add(delivery);
+  void delivery.then(() => pendingDeliveries.delete(delivery), () => pendingDeliveries.delete(delivery));
+  return delivery;
+}
+/** 入队握手只读安全任务摘要，不用10ms写轮询争夺enqueue的tasks.lock；原RPC拒绝立即透出。 */
+async function deliverOnce<T>(operation: Promise<T>, kind: TaskPayload["kind"], beforeReport?: () => Promise<void>) {
+  type Outcome = { status: "fulfilled"; value: T } | { status: "rejected"; error: unknown };
+  let outcome: Outcome | undefined;
+  const settled = operation.then(value => { outcome = { status: "fulfilled", value }; return outcome; }, error => { outcome = { status: "rejected", error }; return outcome; });
+  pendingOperations.add(settled); void settled.then(() => pendingOperations.delete(settled));
+  const assertUnsettled = () => {
+    if (outcome?.status === "rejected") throw outcome.error;
+    if (outcome?.status === "fulfilled") throw new Error("Synthetic RPC settled before its task was delivered: " + kind);
+  };
   let task: RemoteTask | undefined;
-  await vi.waitFor(async () => { task = (await pollTasks(agentId)).find(value => value.payload.kind === kind); expect(task).toBeDefined(); }, { timeout: 3000, interval: 10 });
-  await reportTasks(agentId, [{ id: task!.id, status: "running" }]);
   try {
-    const result = await executor.execute(task!); await beforeReport?.();
+    let queued: Pick<TaskRecord, "id" | "kind" | "status"> | undefined;
+    const deadline = Date.now() + 3000;
+    do {
+      cancellation.signal.throwIfAborted();
+      assertUnsettled();
+      const records = (await agentStore(agentId).read<{ records: Pick<TaskRecord, "id" | "kind" | "status">[] }>("tasks.json"))?.records || [];
+      assertUnsettled();
+      queued = records.find(record => record.kind === kind && record.status === "queued");
+      if (queued) break;
+      await Promise.race([settled, sleep(50)]);
+    } while (Date.now() < deadline);
+    if (!queued) { assertUnsettled(); throw new Error("Synthetic RPC task was not queued within its fixture deadline: " + kind); }
+    // 只有真实任务已落盘才执行一次下发事务，仍使用真实解密、任务状态和Executor流程。
+    task = (await pollTasks(agentId)).find(value => value.id === queued.id);
+    expect(task, "Persisted RPC task must be delivered: " + kind).toBeDefined();
+    await reportTasks(agentId, [{ id: task!.id, status: "running" }]);
+    const result = await executor.execute(task!); cancellation.signal.throwIfAborted(); await beforeReport?.(); cancellation.signal.throwIfAborted();
     await reportTasks(agentId, [{ id: task!.id, status: "succeeded", result }]);
   } catch (error) {
-    await reportTasks(agentId, [{ id: task!.id, status: "failed", error: "Synthetic task failed" }]);
-    await settled; throw error;
+    if (task) await reportTasks(agentId, [{ id: task.id, status: "failed", error: "Synthetic task failed", httpStatus: 409 }]);
+    throw error;
   }
-  const result = await settled; if ("error" in result) throw result.error;
+  const result = await settled; if (result.status === "rejected") throw result.error;
   return result.value;
 }
 
