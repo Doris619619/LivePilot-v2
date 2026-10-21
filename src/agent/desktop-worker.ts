@@ -5,6 +5,7 @@ import type { Transport } from "./transport";
 import { AppError, safeError, problemFor } from "@/core/errors";
 const initSchema = z.object({ type: z.literal("init"), env: z.record(z.string(), z.string().optional()), identity: z.object({ agentId: z.string(), origin: z.string(), token: z.string() }) });
 let started = false; let stopped = false; let transport: Transport | undefined;
+let localStop: ((instanceId: string) => Promise<unknown>) | undefined;
 /** 父进程通道失效时停止接收新任务，排空后退出。 */
 process.on("disconnect", () => { stopped = true; });
 /** 回传结构化状态，底层错误不含原始 HTTP/OBS 数据。 */
@@ -13,6 +14,14 @@ function send(value: unknown) { if (process.connected) process.send?.(value); }
 process.on("message", async raw => {
   const message = raw as { type?: string; id?: string; route?: string; data?: unknown };
   if (message.type === "stop") { stopped = true; return; }
+  if (message.type === "local-stop") {
+    try {
+      const value = z.object({ type: z.literal("local-stop"), id: z.string().uuid(), instanceId: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) }).strict().parse(raw);
+      if (!localStop || stopped) throw new AppError("AGENT_CONNECTION", "本机控制器尚未就绪，请检查 OBS 后重试。");
+      send({ type: "reply", id: value.id, result: await localStop(value.instanceId) });
+    } catch (error) { send({ type: "reply", id: message.id, error: safeError(error), problem: problemFor(error) }); }
+    return;
+  }
   if (message.type === "rpc") {
     try {
       if (!["maintenance-begin", "maintenance-end", "instances"].includes(message.route || "")) throw new AppError("AGENT_REQUEST", "此设备操作不受支持。");
@@ -27,6 +36,7 @@ process.on("message", async raw => {
   try {
     await runAgent(parsed.data.identity, {
       stopped: () => stopped,
+      localStop: callback => { localStop = callback; },
       snapshots: snapshots => send({ type: "snapshots", snapshots }),
       problems: problems => send({type:"problems", problems}),
       heartbeat: () => send({ type: "heartbeat", at: Date.now() }),

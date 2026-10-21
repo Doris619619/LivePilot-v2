@@ -11,6 +11,7 @@ export default function ProblemCard({ problem, objectName, disabled, showGuidanc
   const [expanded, setExpanded] = useState(false);
   const info = guidance(problem);
   const presentation = problemPresentation(problem);
+  const retryAt = problem.context?.retryAt === undefined ? undefined : new Date(problem.context.retryAt);
   const handlers: Partial<Record<ProblemAction, (() => void) | undefined>> = { login:onLogin, refresh:onRefresh, authorize:onAuthorize, settings:onSettings, help:onHelp };
   const labels: Partial<Record<ProblemAction,string>> = { login:"重新登录", refresh:problem.stage === "读取本机状态" ? "重新读取" : problem.attemptId ? "查询本次操作" : "重新检查", authorize:"重新授权原频道", settings:settingsLabel, help:"查看对应步骤" };
   /** 复制失败只影响复制提示，不覆盖原故障。 */
@@ -22,6 +23,7 @@ export default function ProblemCard({ problem, objectName, disabled, showGuidanc
   return <section className="problem-card error" role="alert">
     <strong>{objectName && objectName + " · "}{info.title}</strong>
     <p>{customerMessage}</p>
+    {retryAt && Number.isFinite(retryAt.getTime()) && <p>下次检查时间：<time dateTime={retryAt.toISOString()}>{retryAt.toLocaleString()}</time></p>}
     {showGuidance && <p>{info.steps[0]}</p>}
     {problem.outcome === "unknown" && <p>结果尚未确认，请先查询，避免重复操作。</p>}
 

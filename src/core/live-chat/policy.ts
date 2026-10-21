@@ -21,7 +21,7 @@ export const errorMessages: Record<string, string> = {
 /** 只识别应用登记过的代码，未知错误固定归为网络故障。 */
 export function chatErrorCode(error: unknown, sending = false) {
   if (!isAppError(error)) return sending ? "CHAT_UNCERTAIN" : "CHAT_NETWORK";
-  const aliases: Record<string, string> = { GOOGLE_AUTH: "YOUTUBE_AUTH", YOUTUBE_DISCONNECTED: "YOUTUBE_AUTH", GOOGLE_CONFIG: "YOUTUBE_AUTH", YOUTUBE_NETWORK: "CHAT_NETWORK", GOOGLE_NETWORK: "CHAT_NETWORK", YOUTUBE_QUOTA: "CHAT_RATE", YOUTUBE_DAILY_QUOTA: "CHAT_QUOTA", STORAGE: "CHAT_STORAGE" };
+  const aliases: Record<string, string> = { GOOGLE_AUTH: "YOUTUBE_AUTH", YOUTUBE_DISCONNECTED: "YOUTUBE_AUTH", GOOGLE_CONFIG: "YOUTUBE_AUTH", YOUTUBE_NETWORK: "CHAT_NETWORK", GOOGLE_NETWORK: "CHAT_NETWORK", YOUTUBE_QUOTA: "CHAT_RATE", YOUTUBE_PROTECTION_OFFLINE: "CHAT_RATE", YOUTUBE_PROTECTION_WAIT: "CHAT_RATE", YOUTUBE_DAILY_QUOTA: "CHAT_QUOTA", STORAGE: "CHAT_STORAGE" };
   return error.code in errorMessages ? error.code : aliases[error.code] || (sending ? "CHAT_UNCERTAIN" : "CHAT_NETWORK");
 }
 /** 使用太平洋当地日期求下一午夜，避免把夏令时日误当作固定 24 小时。 */

@@ -4,7 +4,8 @@ import { rename, readFile, unlink, readdir } from "node:fs/promises";
 import path from "node:path";
 import { config } from "../config";
 import { store, Store, seal, unseal } from "../storage";
-import { AppError } from "../errors";
+import { AppError, isAppError } from "../errors";
+import { youtubeFetch, type YouTubeContext } from "./usage";
 type Tokens = { accessToken: string; refreshToken: string; expiresAt: number; channelId: string; channel: string };
 type TokenReply = { access_token?: string; refresh_token?: string; expires_in?: number };
 type Transaction = { actor?: string; instanceId: string; state: string; verifier: string; expiresAt: number };
@@ -13,11 +14,11 @@ const hash = (v: string) => createHash("sha256").update(v).digest("hex");
 /** 等长字节使用常量时间比较，避免 OAuth state 的逐字符比较。 */
 export function same(a: string, b: string) { const x = Buffer.from(a); const y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); }
 /** 通过有超时的服务端请求交换或刷新 Token，并过滤上游诊断。 */
-async function tokenRequest(body: Record<string, string>): Promise<TokenReply> {
+async function tokenRequest(body: Record<string, string>, context: YouTubeContext): Promise<TokenReply> {
   let response: Response;
   try {
-    response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams(body), cache: "no-store", signal: AbortSignal.timeout(20_000) });
-  } catch { throw new AppError("GOOGLE_NETWORK", "无法连接 Google 授权服务。请检查本机服务的网络连接。"); }
+    response = await youtubeFetch("oauth.token", context, () => fetch("https://oauth2.googleapis.com/token", { method: "POST", body: new URLSearchParams(body), cache: "no-store", signal: AbortSignal.timeout(20_000) }));
+  } catch (error) { if (isAppError(error) && (error.code.startsWith("YOUTUBE_PROTECTION") || error.code === "YOUTUBE_DAILY_QUOTA")) throw error; throw new AppError("GOOGLE_NETWORK", "无法连接 Google 授权服务。请检查本机服务的网络连接。"); }
   if (!response.ok) {
     const reply = await response.json().catch(() => null) as { error?: string } | null;
     if (response.status === 429) throw new AppError("YOUTUBE_QUOTA", "Google 请求次数暂时受限，请稍后重新查询。", 429);
@@ -32,7 +33,9 @@ async function tokenRequest(body: Record<string, string>): Promise<TokenReply> {
 export class YouTubeAuth {
   private refreshing?: Promise<Tokens>;
   /** 使用实例专属目录；可注入跨实例频道归属校验及保存逻辑。 */
-  constructor(private storage: Store = store(), private instanceId = "main", private saveBinding?: (tokens: Tokens) => Promise<void>) {}
+  constructor(private storage: Store = store(), private instanceId = "main", private saveBinding?: (tokens: Tokens) => Promise<void>, private usageIdentity?: () => Pick<YouTubeContext, "instanceId" | "accountId">) {}
+  /** 授权事务身份可以包含独立发布账号；日志仅使用设备内真实实例及账号 UUID。 */
+  get requestContext(): YouTubeContext { return { ...(this.usageIdentity?.() || { instanceId: this.instanceId }), purpose: "authorization", trigger: "oauth-finish" }; }
   /** 令牌保存与刷新写入共用短锁，避免旧刷新覆盖新授权。 */
   private async save(tokens: Tokens) {
     await this.storage.exclusive(async () => {
@@ -56,8 +59,8 @@ export class YouTubeAuth {
     }, "tokens.lock");
     if (pending) {
       let response: Response;
-      try { response = await fetch("https://oauth2.googleapis.com/revoke", { method: "POST", body: new URLSearchParams({ token: unseal<{ token: string }>(pending).token }), redirect: "error", signal: AbortSignal.timeout(20_000) }); }
-      catch { throw new AppError("GOOGLE_NETWORK", "本机授权已停用，Google 撤销仍等待网络恢复。", 503); }
+      try { response = await youtubeFetch("oauth.revoke", this.requestContext, () => fetch("https://oauth2.googleapis.com/revoke", { method: "POST", body: new URLSearchParams({ token: unseal<{ token: string }>(pending!).token }), redirect: "error", signal: AbortSignal.timeout(20_000) })); }
+      catch (error) { if (isAppError(error) && error.code.startsWith("YOUTUBE_PROTECTION")) throw error; throw new AppError("GOOGLE_NETWORK", "本机授权已停用，Google 撤销仍等待网络恢复。", 503); }
       // invalid_token 说明该凭据已失效，不需要继续持有它。
       const body = response.ok ? null : await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok && body?.error !== "invalid_token") throw new AppError("GOOGLE_UNAVAILABLE", "Google 撤销尚未确认，本机授权已停用。", 503);
@@ -93,12 +96,16 @@ export class YouTubeAuth {
     if (tx.actor !== actor || tx.instanceId !== this.instanceId || tx.expiresAt < Date.now() || !same(tx.state, state)) throw new AppError("OAUTH_STATE", "授权校验失败，请在发起授权的浏览器中重试。");
     if(cancelled)return;
     const c = config();
-    const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: c.redirectUri, grant_type: "authorization_code", code, code_verifier: tx.verifier });
+    const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, redirect_uri: c.redirectUri, grant_type: "authorization_code", code, code_verifier: tx.verifier }, this.requestContext);
     if (!reply.refresh_token) throw new AppError("GOOGLE_AUTH", "Google 没有返回离线授权。请在 Google 账号中撤销本应用授权后重新连接。");
     let response: Response;
-    try { response = await fetch("https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true", { headers: { Authorization: "Bearer " + reply.access_token }, signal: AbortSignal.timeout(20_000), cache: "no-store" }); }
-    catch { throw new AppError("GOOGLE_NETWORK", "授权后无法读取 YouTube Channel，请检查网络并重新连接。"); }
-    if (!response.ok) throw new AppError("YOUTUBE_CHANNEL", "无法读取 YouTube Channel。请启用 YouTube Data API v3 并检查授权。");
+    try { response = await youtubeFetch("channels.list", this.requestContext, () => fetch("https://www.googleapis.com/youtube/v3/channels?part=id,snippet&mine=true", { headers: { Authorization: "Bearer " + reply.access_token }, signal: AbortSignal.timeout(20_000), cache: "no-store" })); }
+    catch (error) { if (isAppError(error) && (error.code.startsWith("YOUTUBE_PROTECTION") || error.code === "YOUTUBE_DAILY_QUOTA")) throw error; throw new AppError("GOOGLE_NETWORK", "授权后无法读取 YouTube Channel，请检查网络并重新连接。"); }
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { errors?: { reason?: string }[] } } | null;
+      if (body?.error?.errors?.some(error => ["quotaExceeded", "dailyLimitExceeded"].includes(error.reason || ""))) throw new AppError("YOUTUBE_DAILY_QUOTA", "YouTube 配额已耗尽，频道确认尚未完成，请等待太平洋时间次日恢复。", 429);
+      throw new AppError("YOUTUBE_CHANNEL", "无法读取 YouTube Channel。请启用 YouTube Data API v3 并检查授权。");
+    }
     const data = await response.json() as { items?: { id: string; snippet: { title: string } }[] };
     if (data.items?.length !== 1) throw new AppError("YOUTUBE_CHANNEL", "请授权一个明确的 YouTube Channel。");
     const channel = data.items[0];
@@ -112,7 +119,7 @@ export class YouTubeAuth {
     if (tokens.expiresAt > Date.now() + 60_000) return tokens;
     if (!this.refreshing) this.refreshing = (async () => {
       const c = config();
-      const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, grant_type: "refresh_token", refresh_token: tokens.refreshToken });
+      const reply = await tokenRequest({ client_id: c.clientId, client_secret: c.clientSecret, grant_type: "refresh_token", refresh_token: tokens.refreshToken }, this.requestContext);
       const next = { ...tokens, accessToken: reply.access_token!, refreshToken: reply.refresh_token || tokens.refreshToken, expiresAt: Date.now() + (reply.expires_in || 3600) * 1000 };
       return this.storage.exclusive(async () => {
         const current = await this.tokens();

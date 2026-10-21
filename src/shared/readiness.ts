@@ -7,6 +7,7 @@ export function startBlocker(data: Dashboard | undefined, selection: Selection, 
   if (stale) return "状态已过期，请检查服务并刷新";
   if (!data) return "正在读取这个实例的状态";
   if (busy) return "当前实例正在处理操作";
+  if (data.state.platformClosePending || data.state.stopRequested && data.state.phase !== "stopped") return "OBS 停止后仍需结束 YouTube 场次，请先完成平台收尾";
   if (live) return "这个实例正在直播";
   const problem = data.problems?.find(blocksStart);
   if (problem) return problem.message;
@@ -29,6 +30,7 @@ export function canStopBroadcast(data?: Dashboard): boolean {
 export function broadcastActionMode(data: Dashboard | undefined, busy: boolean, stale: boolean, live: boolean): "working" | "check" | "retry" | "start" | "live" {
   if (stale || !data) return "check";
   if (busy || (data.operation && ["queued", "delivering", "accepted", "running"].includes(data.operation.status))) return "working";
+  if (data.state.platformClosePending) return "check";
   if (live) return "live";
   if (data.operation && ["uncertain", "interrupted"].includes(data.operation.status)) return "check";
   if (data.state.broadcastIntent && !data.state.broadcastId) return "check";

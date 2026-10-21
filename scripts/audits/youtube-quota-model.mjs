@@ -1,0 +1,7 @@
+/** 纯离线配额模型：将源码间隔与 2026-10-19 官方成本换算为规模表，不访问 API 或读取凭据。 */
+const hour = 3600; const day = 86400; const projectUnits = 10000;
+/** 从明确的每实例每秒成本外推；耗尽时间假设额度未重置且请求持续，不代表现场测量。 */
+function scenario(name, unitsPerSecond) {
+  return { name, scales: [1, 10, 50, 100].map(instances => ({ instances, unitsPerHour: Math.round(hour * unitsPerSecond * instances), unitsPer24Hours: Math.round(day * unitsPerSecond * instances), secondsTo10000IgnoringReset: projectUnits / (unitsPerSecond * instances) })) };
+}
+console.log(JSON.stringify({ description: "Offline capacity estimates, not production usage measurements", sourceAsOf: "2026-10-19", assumptions: { idealCacheSeconds: 30, dashboardReadsWithIds: 3, channelReadWithoutIds: 1, chatStreamCallUnits: 5, chatSendUnits: 20, defaultSendSeconds: 5, generalDailyDefault: projectUnits, uploadCallsDailyDefault: 100, searchCallsDailyDefault: 100 }, scenarios: [scenario("retained-ids-or-live-no-chat", 3 / 30), scenario("authorized-no-ids", 1 / 30), scenario("default-send-queue-saturated-plus-status", 3 / 30 + 20 / 5), scenario("one-second-empty-batch-eof-plus-status", 3 / 30 + 5)], failedDashboardAttempts: { name: "first-channel-request-quota-or-network-failure", billedUnits: null, note: "Count attempts only. Pre-send failure can cost zero; uncertain or rejected request billing requires provider evidence. Do not compute depletion time after quota is exhausted.", scales: [1, 10, 50, 100].map(instances => ({ instances, attemptsPerHour: 120 * instances, attemptsPer24Hours: 2880 * instances })) } }, null, 2));

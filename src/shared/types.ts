@@ -12,6 +12,7 @@ export type ControlState = {
   stage: string; error?: string; channelId?: string; broadcastId?: string; streamId?: string;
   broadcastTitle?: string; streamTitle?: string; broadcastIntent?: boolean; streamIntent?: boolean;
   detailsApplied?: boolean; obsStartRequested?: boolean; selection?: Selection; startedAt?: string; updatedAt: string;
+  stopRequested?: boolean; platformClosePending?: boolean; obsStoppedAt?: string;
 };
 /** 最近控制命令的真实受理与执行状态，不等同于直播 lifecycle。 */
 export type CommandStatus = { problem?: Problem; id: string; action: string; actor: string; status: "accepted" | "running" | "succeeded" | "failed" | "interrupted" | "queued" | "delivering" | "uncertain" | "expired"; updatedAt: string; message?: string };

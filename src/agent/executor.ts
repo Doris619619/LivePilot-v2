@@ -21,6 +21,7 @@ import type { PublishingAccount } from "@/shared/publishing";
 import { audit } from "@/core/audit";
 import { AgentPreviewSessions } from "@/core/preview/session";
 import { MediaPreviewConnection } from "./media-preview";
+import { withYouTubeContext } from "@/core/youtube/usage";
 export class Executor {
   readonly mediaPreview: MediaPreviewConnection;
   readonly services = new Map<string, Service>();
@@ -73,7 +74,7 @@ export class Executor {
         const app = this.services.get(cleanup.instanceId); if (!app) throw new AppError("INSTANCE", "待清理实例不存在。");
         await this.purgeYouTubeTasks?.(cleanup.instanceId);
         await app.commands.withIdle(() => app.control.exclusive(async () => {
-          await app.auth.revoke();
+          await withYouTubeContext({ instanceId: cleanup.instanceId, accountId: undefined, operationId: cleanup.id, jobId: undefined, purpose: "authorization", trigger: "publishing-command" }, () => app.auth.revoke());
           const state = await app.control.state();
           for (const key of ["channelId", "broadcastId", "streamId", "broadcastTitle", "streamTitle"] as const) delete state[key];
           await store.write("control.json", state);
@@ -85,7 +86,7 @@ export class Executor {
     } catch { /* 发布错误由持久状态回报；不污染心跳或输出上游请求。 */ } await sleep(1000); } })();
   }
   /** 仅停止并撤销指定发布账号；同意撤销先落盘，Cloud 接收确认后保存不可复用的删除事实。 */
-  private async cleanPublishingAccount(accountId: string, instanceId: string, createdAt: number, requestId?: string) { await this.publishingAccounts.startCleanup(accountId, instanceId, createdAt); await this.publishing.purge(instanceId, accountId); await this.purgeYouTubeTasks?.(instanceId, accountId); await this.publishingAccounts.revoke(accountId); if (requestId) await this.transport.post("/api/agent/publishing/cleanup", { id: requestId }); await this.publishingAccounts.completeCleanup(accountId); }
+  private async cleanPublishingAccount(accountId: string, instanceId: string, createdAt: number, requestId?: string) { await this.publishingAccounts.startCleanup(accountId, instanceId, createdAt); await this.publishing.purge(instanceId, accountId); await this.purgeYouTubeTasks?.(instanceId, accountId); await withYouTubeContext({ instanceId, accountId, operationId: requestId, jobId: undefined, purpose: "authorization", trigger: "publishing-command" }, () => this.publishingAccounts.revoke(accountId)); if (requestId) await this.transport.post("/api/agent/publishing/cleanup", { id: requestId }); await this.publishingAccounts.completeCleanup(accountId); }
   /** 退出时安全中断长上传；保留加密检查点供下次恢复。 */
   async stopPublishing() { this.publishingStopped = true; await this.mediaPreview.stop(); await this.publishing.stop(); await this.publishingLoop; await this.publishingAccounts.drain(); }
   /** 频道归属完成登记后启动一次；连接中断不取消已经启用的本机聊天。 */
@@ -106,7 +107,13 @@ export class Executor {
     const observedAt = Date.now(); const snapshot = { instance, dashboard: await app.dashboard(), observedAt }; this.observed.set(id, snapshot); return snapshot;
   }
   /** 上传与控制独立执行；同实例控制仍由 Commands/Control 锁保护。 */
-  async execute(task: RemoteTask): Promise<unknown> {
+  execute(task: RemoteTask): Promise<unknown> {
+    const payload = task.payload;
+    const accountId = payload.kind === "publishing-apply" ? payload.job.profile.accountId : "accountId" in payload ? payload.accountId : undefined;
+    return withYouTubeContext({ instanceId: task.instanceId, operationId: task.id, accountId, purpose: payload.kind === "control" ? "control" : payload.kind.includes("oauth") ? "authorization" : "interactive", trigger: payload.kind === "control" ? payload.input.action === "start" ? "control-start" : payload.input.action === "stop" ? "control-stop" : "control-recover" : payload.kind.includes("oauth") ? "oauth-finish" : payload.kind.startsWith("publishing-") ? "publishing-command" : payload.kind === "broadcast-playlists" ? "playlists" : "unknown" }, () => this.executeScoped(task));
+  }
+  /** 白名单操作继承已认证任务的来源，后台循环不借用人工控制预留。 */
+  private async executeScoped(task: RemoteTask): Promise<unknown> {
     if (task.agentId !== this.transport.agentId) throw new AppError("AGENT", "任务不属于这台设备。", 403);
     const app = this.services.get(task.instanceId); if (!app) throw new AppError("INSTANCE", "实例不存在。", 404);
     const p = task.payload;

@@ -5,6 +5,7 @@ import { Store } from "../storage";
 import { AppError } from "../errors";
 import { readCheckpoint, writeCheckpoint, type Checkpoint, messageSchema, checkpointSchema } from "./checkpoint";
 import { chatErrorCode, errorMessages, MAX_AGE_MS, nextQuotaMidnight, spamKey } from "./policy";
+import { withYouTubeContext, YouTubeProtectionError } from "../youtube/usage";
 
 export class LiveChatRunner {
   private checkpoint!: Checkpoint;
@@ -24,6 +25,8 @@ export class LiveChatRunner {
   private configured = false;
   private target?: LiveChatTarget;
   private failures = 0;
+  private shortStreams = 0;
+  private streamRetries = 0;
   private view: Pick<LiveChatStatus, "state" | "message" | "nextRetryAt" | "updatedAt" | "recoveryAction"> = { state: "connecting", message: "正在读取聊天配置。", updatedAt: 0 };
   /** 注入只含聊天能力的端口；构造不会联网，也不会启动直播。 */
   constructor(private store: Store, private ports: LiveChatPorts) {}
@@ -89,6 +92,12 @@ export class LiveChatRunner {
     await Promise.allSettled([this.loops, this.streamTask]); await this.writes;
     if (this.checkpoint?.queue.length && !this.initializationFailed) await this.mutate(() => this.clearQueue("运行进程已退出，待回复消息已跳过。"));
   }
+  /** 停播意图立即取消连接、生成和发送；保留常驻循环，下次场次仍可正常启动。 */
+  async broadcastStopping(): Promise<void> {
+    this.cancel(); await this.initialize();
+    await this.mutate(() => this.clearQueue("本机正在停播，待回复消息已跳过。"));
+    this.setView(this.checkpoint.config.enabled ? "waiting_live" : "disabled");
+  }
   /** 返回公开且独立复制的快照，密钥和内部游标永不进入浏览器。 */
   async status(): Promise<LiveChatStatus> {
     await this.initialize(); await this.writes;
@@ -104,9 +113,9 @@ export class LiveChatRunner {
       this.clearQueue("互动设置已修改，旧待回复消息已跳过。");
       this.checkpoint.config = parsed.data;
       if (enabling) { this.checkpoint.enabledAt = this.now(); this.checkpoint.sessionAt = this.now(); this.checkpoint.pageToken = undefined; }
-      if (this.checkpoint.block?.code !== "CHAT_QUOTA" && this.checkpoint.block?.code !== "CHAT_UNAVAILABLE") this.checkpoint.block = undefined;
+      if (this.checkpoint.block?.code !== "CHAT_QUOTA" && this.checkpoint.block?.code !== "CHAT_UNAVAILABLE" && !this.checkpoint.block?.until) this.checkpoint.block = undefined;
     });
-    this.failures = 0; this.setView(parsed.data.enabled ? this.configured ? "waiting_live" : "needs_key" : "disabled");
+    this.setView(parsed.data.enabled ? this.configured ? "waiting_live" : "needs_key" : "disabled");
     if (this.requested && this.stopped) this.start();
     return this.status();
   }
@@ -115,10 +124,10 @@ export class LiveChatRunner {
     this.cancel(); await this.initialize();
     await this.mutate(() => {
       this.clearQueue("授权配置已更新，旧待回复消息已跳过。");
-      if (this.checkpoint.block?.code !== "CHAT_QUOTA" && this.checkpoint.block?.code !== "CHAT_UNAVAILABLE") this.checkpoint.block = undefined;
+      if (this.checkpoint.block?.code !== "CHAT_QUOTA" && this.checkpoint.block?.code !== "CHAT_UNAVAILABLE" && !this.checkpoint.block?.until) this.checkpoint.block = undefined;
       this.checkpoint.enabledAt = this.now(); this.checkpoint.sessionAt = this.now(); this.checkpoint.pageToken = undefined;
     });
-    this.configured = await this.ports.configured(); this.failures = 0;
+    this.configured = await this.ports.configured();
     if (this.requested && this.stopped) this.start();
   }
   /** 存储失败停止所有网络工作；已初始化的公开状态仍可读取，显式配置成功后才恢复。 */
@@ -188,7 +197,7 @@ export class LiveChatRunner {
         this.clearQueue("直播场次已变化，旧消息已跳过。");
         this.checkpoint.target = identity; this.checkpoint.chatId = target.liveChatId; this.checkpoint.pageToken = undefined; this.checkpoint.seen = []; this.checkpoint.seenAuthors = []; this.checkpoint.spam = []; this.checkpoint.sessionAt = this.now();
         if (this.checkpoint.block?.code === "CHAT_UNAVAILABLE") this.checkpoint.block = undefined;
-      }); this.failures = 0;
+      }); this.failures = 0; this.shortStreams = 0; this.streamRetries = 0;
     }
     if (!target.live || !target.liveChatId || !target.channelId || !target.broadcastId || target.available === false) {
       if (this.streamAbort && !this.streamAbort.signal.aborted || this.checkpoint.queue.length) { this.cancel(); await this.mutate(() => this.clearQueue("当前场次未在直播，待回复消息已跳过。")); }
@@ -208,14 +217,25 @@ export class LiveChatRunner {
   }
   /** 接收批次与游标同时落盘；正常流结束仍从最后游标退避重连。 */
   private async readStream(chatId: string, epoch: number, abort: AbortController) {
+    return withYouTubeContext({ retryCount: Math.min(10000, this.streamRetries) }, async () => {
+    const connectedAt = this.now();
+    /** 只有持续稳定连接才能重置退避；空批次不是一次成功恢复。 */
+    const closed = () => {
+      if (this.now() - connectedAt >= 120_000) { this.failures = 0; this.shortStreams = 0; this.streamRetries = 0; }
+      else this.shortStreams++;
+      this.streamRetries++;
+    };
     try {
       for await (const batch of this.ports.stream(chatId, this.checkpoint.pageToken, abort.signal)) {
         if (epoch !== this.epoch || abort.signal.aborted || this.stopped) return;
-        await this.receive(batch, epoch); this.failures = 0; this.streamConnected = true; this.setView("running");
+        await this.receive(batch, epoch);
+        if (this.now() - connectedAt >= 120_000) { this.failures = 0; this.shortStreams = 0; this.streamRetries = 0; }
+        this.streamConnected = true; this.setView("running");
         if (batch.offlineAt) { await this.fail(new AppError("CHAT_UNAVAILABLE", errorMessages.CHAT_UNAVAILABLE)); return; }
       }
-      if (!abort.signal.aborted && epoch === this.epoch) await this.fail(new AppError("CHAT_NETWORK", errorMessages.CHAT_NETWORK));
-    } catch (error) { if (!abort.signal.aborted && epoch === this.epoch) await this.fail(error); }
+      if (!abort.signal.aborted && epoch === this.epoch) { closed(); await this.fail(new AppError("CHAT_NETWORK", errorMessages.CHAT_NETWORK)); }
+    } catch (error) { if (!abort.signal.aborted && epoch === this.epoch) { if (!(error instanceof YouTubeProtectionError)) closed(); await this.fail(error); } }
+    });
   }
   /** 过滤历史、自身、非文字和同文刷屏；有限队列拥堵时明确跳过新增消息。 */
   private async receive(batch: LiveChatBatch, epoch: number) {
@@ -313,9 +333,12 @@ export class LiveChatRunner {
   /** 保存固定错误策略；配置错误等待人工操作，配额按太平洋午夜恢复。 */
   private async fail(error: unknown, sending = false) {
     const code = chatErrorCode(error, sending); this.cancel(); this.failures++;
+    const hintedAt = error instanceof AppError && "retryAt" in error && typeof error.retryAt === "number" ? error.retryAt : 0;
+    const delay = this.shortStreams >= 5 ? 900_000 : [1000, 2000, 4000, 8000, 16000, 30000, 60000][Math.min(this.failures - 1, 6)];
+    const retryAt = Math.max(hintedAt, this.now() + delay + Math.floor(Math.random() * Math.min(500, delay * 0.1)));
     await this.mutate(() => {
       const permanent = ["AI_CONFIG", "AI_BALANCE", "YOUTUBE_AUTH", "CHAT_STORAGE", "CHAT_UNAVAILABLE"].includes(code);
-      this.checkpoint.block = { code, ...(code === "CHAT_QUOTA" ? { until: nextQuotaMidnight(this.now()) } : permanent ? {} : { until: this.now() + Math.min(30_000, 1000 * 2 ** Math.min(this.failures - 1, 5)) }), ...(code === "CHAT_UNAVAILABLE" ? { target: this.checkpoint.target } : {}) };
+      this.checkpoint.block = { code, ...(code === "CHAT_QUOTA" ? { until: nextQuotaMidnight(this.now()) } : permanent ? {} : { until: retryAt }), ...(code === "CHAT_UNAVAILABLE" ? { target: this.checkpoint.target } : {}) };
       if (permanent || code === "CHAT_QUOTA") this.clearQueue("互动暂时停止，待回复消息已跳过。");
     });
     const block = this.checkpoint.block!;
