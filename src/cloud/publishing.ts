@@ -394,7 +394,8 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
     const removing = s.removals.some(record => record.batchId === job.spec.batchId);
     const retryCancellation = removing && action === "cancel" && job.observed?.revision === job.spec.revision && ["needs_attention", "failed"].includes(job.observed.state);
     if (action === "cancel" && job.spec.desired === "cancel" && removing && !retryCancellation) return job;
-    if (publishingTerminal(job.observed?.state) && action !== "reconcile" && !retryCancellation) throw new AppError("TERMINAL", "任务已结束；已公开视频请在 Studio 管理。");
+    const cancellingUnconfirmedRevision = action === "cancel" && !!job.observed && job.observed.revision < job.spec.revision;
+    if (publishingTerminal(job.observed?.state) && action !== "reconcile" && !retryCancellation && !cancellingUnconfirmedRevision) throw new AppError("TERMINAL", "任务已结束；已公开视频请在 Studio 管理。");
     // 上传 admission 在 begin 请求前持久化 hadUpload；尚未开始的任务没有远端对象，不投递新执行入口。
     if (action === "reconcile" && !job.hadUpload && !job.observed?.videoId) throw new AppError("VIDEO_NOT_UPLOADED", "视频尚未上传，暂无远端状态可核对。", 409);
     if (action === "reschedule") {
@@ -407,6 +408,7 @@ export async function changePublishingJob(user: Member, id: string, action: "pau
     }
     if (action === "repair") {
       if (!(await agentStore(job.spec.profile.agentId).read<string[]>("capabilities.json"))?.includes("publishing-recovery-v1")) throw new AppError("AGENT_VERSION", "请升级这台电脑的 Agent 后修复原视频设置。", 409);
+      if (job.observed?.revision !== job.spec.revision) throw new AppError("REPAIR_PENDING", "上一份任务设置仍在等待设备确认，请先核对状态；取消原视频仍可提交。", 409);
       if (job.observed?.state !== "needs_attention" || !job.observed.videoId || job.spec.desired === "cancel") throw new AppError("REPAIR", "只有已上传且需要处理的原视频可修复设置。", 409);
       const settings = publishingRepairSchema.parse(repair);
       job.spec.profile = profileSchema.parse({ ...job.spec.profile, ...settings, thumbnailFilename: settings.thumbnailMode === "fixed" ? settings.thumbnailFilename : undefined });

@@ -91,9 +91,11 @@ export class PublishingRunner {
     await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
     const repairing = !!old && spec.repairRevision === spec.revision && old.report.state === "needs_attention" && !!old.report.videoId && samePublishingSourceProfile(old.spec.profile, spec.profile);
-    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || !repairing && JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
+    const profileChanged = !!old && JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile);
+    const originalVideoControl = !!old && (spec.desired === "cancel" || spec.reconcileRevision === spec.revision) && samePublishingSourceProfile(old.spec.profile, spec.profile);
+    if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || !repairing && !originalVideoControl && profileChanged)) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
     // 执行标记属于真实已执行的旧配置；核对先持久保存修复待办再替换目标，不能把旧封面成功当成新封面已设置。
-    if (old && repairing) {
+    if (old && (repairing || originalVideoControl && profileChanged)) {
       if (old.spec.profile.thumbnailMode !== spec.profile.thumbnailMode || old.spec.profile.thumbnailFilename !== spec.profile.thumbnailFilename) old.thumbnailDone = false;
       old.playlistsDone = old.playlistsDone.filter(id => spec.profile.playlistIds.includes(id)); old.finalized = false; old.resumeState = "finalizing"; old.repairPending = true;
     }
@@ -102,6 +104,8 @@ export class PublishingRunner {
       const entry: Entry = old || { spec, report: { id: spec.id, revision: spec.revision, sequence: 1, state: "needs_attention", offset: 0, total: spec.reconcileTotal || spec.asset.size, updatedAt: this.now() }, expiredData: true, playlistsDone: [], failures: 0 };
       // 核对修订会更新公开报告版本；先固定原候选归属，不能把旧修订的结果当作当前排期。
       const precisionRecoveryCandidate = old && old.report.revision === old.spec.revision ? old.report.effectivePublishAt : undefined;
+      // 旧错配的可编辑设置尚未执行；核对只接回原视频，不能把旧完成标记冒充新封面/列表已完成。
+      if (old && profileChanged && old.report.state !== "published") { old.report.state = "needs_attention"; old.report.message = "修复设置尚未应用；核对仅检查原视频，继续后再处理设置。"; }
       entry.spec = spec; entry.reconciliation = { revision: spec.revision, nextAttemptAt: this.now(), precisionRecoveryCandidate };
       clearAuthorizationFailure(entry.report);
       if (old && spec.desired !== "run") this.aborters.get(spec.id)?.abort();
@@ -196,8 +200,12 @@ export class PublishingRunner {
   }
   /** 捕获真实请求使用的凭据代次；OAuth切换后的迟到错误不能改写成新凭据失败。 */
   private async executeCurrent(entry: Entry) {
-    let generation: string | undefined;
-    try { generation = entry.spec.profile.accountId ? await this.options.accountAuthorizationGeneration?.(entry.spec.profile.accountId) : undefined; await this.execute(entry); } catch (error) { await this.failure(entry, error, generation); }
+    let generation: string | undefined; const revision = entry.spec.revision;
+    try { generation = entry.spec.profile.accountId ? await this.options.accountAuthorizationGeneration?.(entry.spec.profile.accountId) : undefined; await this.execute(entry, revision); }
+    catch (error) {
+      // 旧封面/列表失败不能封死新取消；真实凭据拒绝仍保留其请求代次，交Cloud判断是否当前失效。
+      if (entry.spec.revision === revision || error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code)) await this.failure(entry, error, generation);
+    }
   }
   /** 单步操作失败保留当前阶段；每个真实授权错误有独立身份，普通进度不会重发新失效。 */
   private async failure(entry: Entry, error: unknown, generation?: string) {
@@ -211,18 +219,23 @@ export class PublishingRunner {
     const authorizationInvalid = error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code) || undefined;
     await this.update(entry, { state: retry || this.stopped ? "retry_wait" : "needs_attention", authorizationInvalid, authorizationFailureId: authorizationInvalid && generation ? randomUUID() : undefined, authorizationGeneration: authorizationInvalid ? generation : undefined, message: safeError(error).slice(0, 500), nextAttemptAt: retry ? this.now() + Math.max(error instanceof VideoApiError ? error.retryAfterMs : 0, Math.min(1_800_000, 30_000 * 2 ** Math.min(entry.failures - 1, 6))) : undefined });
   }
-  /** 续传前先核对远端 session；末块结果不明时从不盲目重新开始。 */
-  private async execute(entry: Entry) {
+  /** 执行只属于启动修订；授权和频道的早期等待也不能让旧协程接管新的只读核对。 */
+  private async execute(entry: Entry, revision: number) {
+    const currentExecution = () => entry.spec.revision === revision && !this.stopped;
+    if (!currentExecution()) return;
     if (entry.expiredData) throw new AppError("DATA_EXPIRED", "API 数据已清除；请在 Studio 人工核对，不会创建第二次上传。");
     if (entry.spec.desired === "pause") { if (entry.report.state !== "paused") { entry.resumeState = entry.report.state === "retry_wait" ? entry.resumeState : entry.report.state; await this.update(entry, { state: "paused", nextAttemptAt: undefined }); } return; }
     if (entry.spec.contentPackage && !entry.finalUpload && !entry.report.videoId && (entry.session || entry.finalChunkPossible)) throw new AppError("UPLOAD_UNCERTAIN", "最终文件检查点缺失，禁止重新生成和重复上传。");
     const api = this.api(entry); await this.checkChannel(entry);
-    if (entry.repairPending && entry.report.videoId) {
+    if (!currentExecution()) return;
+    if (entry.repairPending && entry.report.videoId && entry.spec.desired === "run") {
       const current = (await api.list([entry.report.videoId]))[0];
+      if (!currentExecution()) return;
       if (!current || current.snippet?.channelId && current.snippet.channelId !== entry.spec.profile.channelId) throw new AppError("REPAIR", "原视频暂时无法安全核对，请保留原任务并检查频道。", 409);
       if (current.status?.privacyStatus === "public") { entry.repairPending = false; await this.alreadyPublic(entry); return; }
       entry.repairPending = false; await this.save();
     }
+    if (!currentExecution()) return;
     if (entry.spec.desired === "cancel") {
       if (entry.report.state === "cancelled") return;
       const cancellingRevision = entry.spec.revision;
@@ -298,21 +311,26 @@ export class PublishingRunner {
       await this.update(entry, { state: "processing", nextAttemptAt: this.now() }); return;
     }
     if (entry.report.state === "processing") return;
-    const finalizingRevision = entry.spec.revision; const finalizingSpec = entry.spec;
+    if (!currentExecution()) return;
+    const finalizingRevision = revision; const finalizingSpec = entry.spec;
     await this.update(entry, { state: "finalizing" });
     if (!this.currentFinalization(entry, finalizingRevision)) return;
     if (entry.spec.contentPackage) await validatePackage(publishingRoot(), entry.spec.contentPackage);
     if (entry.spec.profile.thumbnailMode !== "none" && !entry.thumbnailDone) {
       const filename = entry.spec.profile.thumbnailMode === "fixed" ? entry.spec.profile.thumbnailFilename : entry.spec.asset.thumbnail;
+      let file: string | undefined;
       if (entry.spec.contentPackage && entry.spec.profile.thumbnailMode === "matching") {
-        if (entry.spec.contentPackage.cover) { await validatePackage(publishingRoot(), entry.spec.contentPackage); await api.thumbnail(entry.report.videoId, await resolvePackageFile(publishingRoot(), entry.spec.contentPackage, entry.spec.contentPackage.cover, "cover")); }
+        if (entry.spec.contentPackage.cover) { await validatePackage(publishingRoot(), entry.spec.contentPackage); file = await resolvePackageFile(publishingRoot(), entry.spec.contentPackage, entry.spec.contentPackage.cover, "cover"); }
       } else {
         if (!filename) throw new AppError("THUMBNAIL", "缺少提前准备的缩略图，请补充同名图片后重新确认素材。");
-        await api.thumbnail(entry.report.videoId, await resolvePublishingThumbnail(config(entry.spec.profile.instanceId).mediaRoot, filename));
+        file = await resolvePublishingThumbnail(config(entry.spec.profile.instanceId).mediaRoot, filename);
       }
+      if (!this.currentFinalization(entry, finalizingRevision)) return;
+      if (file) await api.thumbnail(entry.report.videoId, file);
+      if (!this.currentFinalization(entry, finalizingRevision)) return;
       entry.thumbnailDone = true; await this.save();
     }
-    for (const id of entry.spec.profile.playlistIds) if (!entry.playlistsDone.includes(id)) { if (entry.spec.desired !== "run" || this.stopped) return; await api.playlist(entry.report.videoId, id); entry.playlistsDone.push(id); await this.save(); }
+    for (const id of entry.spec.profile.playlistIds) if (!entry.playlistsDone.includes(id)) { if (!this.currentFinalization(entry, finalizingRevision)) return; await api.playlist(entry.report.videoId, id); if (!this.currentFinalization(entry, finalizingRevision)) return; entry.playlistsDone.push(id); await this.save(); }
     if (!this.currentFinalization(entry, finalizingRevision)) return;
     const current = (await api.list([entry.report.videoId]))[0];
     if (!this.currentFinalization(entry, finalizingRevision)) return;
@@ -328,6 +346,8 @@ export class PublishingRunner {
       if (!this.currentFinalization(entry, finalizingRevision)) return;
       try { await api.finalize(entry.report.videoId, finalizingSpec, metadata, publishAt); }
       catch (error) {
+        // 真实请求层已关联实际凭据；新控制只淘汰旧业务结果，不能吞掉该凭据刚发生的拒绝。
+        if (authorizationFailureCredential(error)) throw error;
         if (!this.currentFinalization(entry, finalizingRevision)) return;
         if (error instanceof VideoApiError && ["ALREADY_PUBLIC", "VIDEO_CHANGED"].includes(error.code)) {
           const latest = (await api.list([entry.report.videoId]))[0];
