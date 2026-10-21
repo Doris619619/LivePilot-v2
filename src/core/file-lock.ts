@@ -1,7 +1,9 @@
-/** Windows 锁竞争证据：只读观察原锁，只有已打开句柄证实删除挂起才允许短事务重试。 */
-import { lstat, open, type FileHandle } from "node:fs/promises";
+/** 文件锁释放与 Windows 兼容证据：先移走自己的锁名，旧版本删除挂起只凭原句柄短重试。 */
+import { lstat, open, rename, unlink, type FileHandle } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { AppError } from "./errors";
 type Identity = { dev: bigint; ino: bigint; birthtimeNs: bigint };
 export type LockObservation = Identity & { handle: FileHandle };
 type Pending = Identity & { expires: number };
@@ -17,6 +19,20 @@ export function claimLocalLock(filename: string): boolean { const key = lockIden
 export function releaseLocalLock(filename: string) { local.delete(lockIdentity(filename)); }
 /** 元数据一致性不使用路径存在与否猜测归属，拒绝链接替换和不同文件 ID。 */
 function sameIdentity(left: Identity, right: Identity) { return left.dev === right.dev && left.ino === right.ino && left.birthtimeNs === right.birthtimeNs; }
+/** Windows 保持自己的句柄，将已完成临界区的锁原子移出公共锁名，再关闭并删除随机释放名；失败保留原错和文件。 */
+export async function releaseOwnedLock(filename: string, handle: FileHandle): Promise<void> {
+  let released: string | undefined;
+  try {
+    if (process.platform === "win32") {
+      const held = await handle.stat({ bigint: true }), named = await lstat(filename, { bigint: true });
+      if (!held.isFile() || held.nlink < 1n || !named.isFile() || named.isSymbolicLink() || !sameIdentity(held, named)) throw new AppError("STORAGE", "锁文件归属已变化，请保留本机状态并核对旧进程。");
+      const destination = filename + "." + randomBytes(16).toString("hex") + ".released";
+      await rename(filename, destination); released = destination;
+    } else released = filename;
+  } finally { await handle.close(); }
+  // 被观察者仍打开时，Windows 只会让随机释放名删除挂起，公共锁名已可供下一位 owner 原子创建。
+  if (released) await unlink(released);
+}
 /** 只观察普通、可读、小尺寸合法活进程 PID 锁；失败仅放弃证据，实际 wx 错误仍原样返回。 */
 export async function observeLock(filename: string): Promise<LockObservation | undefined> {
   let handle: FileHandle | undefined; let retained = false;

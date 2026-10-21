@@ -1,6 +1,6 @@
 /** 文件锁回归：真实跨进程互斥、Windows 删除挂起及 ACL 拒绝；不调用外部平台。 */
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, mkdir, writeFile, rm, open, lstat, symlink, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, open, lstat, symlink, unlink, rename, type FileHandle } from "node:fs/promises";
 import { spawn, execFile, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -9,22 +9,29 @@ import { build } from "esbuild";
 import { AppError } from "../src/core/errors";
 import { Store, LockBusyError } from "../src/core/storage";
 import { transaction } from "../src/cloud/store";
-const controls = vi.hoisted(() => ({ beforeCreate: undefined as undefined | ((filename: string) => Promise<void>) }));
+const controls = vi.hoisted(() => ({
+  beforeCreate: undefined as undefined | ((filename: string) => Promise<void>),
+  afterCreate: undefined as undefined | ((filename: string, handle: FileHandle) => Promise<void>),
+  beforeRename: undefined as undefined | ((filename: string) => Promise<void>),
+  beforeUnlink: undefined as undefined | ((filename: string) => Promise<void>),
+}));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual,
     /** 只协调测试中的 wx 时序；错误仍由真实文件系统产生。 */
-    open: async (...args: Parameters<typeof actual.open>) => { if (args[1] === "wx") await controls.beforeCreate?.(String(args[0])); return actual.open(...args); },
-    unlink: vi.fn(actual.unlink),
+    open: async (...args: Parameters<typeof actual.open>) => { if (args[1] === "wx") await controls.beforeCreate?.(String(args[0])); const handle = await actual.open(...args); if (args[1] === "wx") await controls.afterCreate?.(String(args[0]), handle); return handle; },
+    /** 只注入合成 owner 的释放时序或原始错误，仍执行真实 rename/unlink。 */
+    rename: vi.fn(async (...args: Parameters<typeof actual.rename>) => { await controls.beforeRename?.(String(args[0])); return actual.rename(...args); }),
+    unlink: vi.fn(async (...args: Parameters<typeof actual.unlink>) => { await controls.beforeUnlink?.(String(args[0])); return actual.unlink(...args); }),
   };
 });
 const execute = promisify(execFile);
 let root: string; const children = new Set<ChildProcessWithoutNullStreams>();
 /** 所有锁、子进程和权限变更只作用于每例新建的直接临时目录。 */
-beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "ln-storage-locks-")); controls.beforeCreate = undefined; });
+beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "ln-storage-locks-")); controls.beforeCreate = controls.afterCreate = controls.beforeRename = controls.beforeUnlink = undefined; });
 /** 子进程正常释放自己的句柄；不删除他人的锁来使测试通过。 */
 afterEach(async () => {
-  controls.beforeCreate = undefined;
+  controls.beforeCreate = controls.afterCreate = controls.beforeRename = controls.beforeUnlink = undefined;
   for (const child of children) { child.stdin.on("error", () => {}); child.stdin.end(); await new Promise<void>(resolve => { if (child.exitCode !== null) resolve(); else child.once("exit", () => resolve()); }); }
   children.clear();
   if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("ln-storage-locks-")) throw new Error("Unsafe cleanup");
@@ -73,6 +80,38 @@ it("retries an existing lock while its owner has not yet written the PID", async
   await owner.writeFile(String(process.pid)); await owner.close(); await unlink(filename);
   await expect(waiting).resolves.toBe("released"); expect(run).toHaveBeenCalledOnce();
 });
+it.runIf(process.platform === "win32")("moves its owned lock before cleanup even when observed during the empty PID window", async () => {
+  const filename = path.join(root, "control.lock"); let created!: () => void, writePid!: () => void, cleaning!: () => void, finish!: () => void;
+  const ready = new Promise<void>(resolve => { created = resolve; }), allowPid = new Promise<void>(resolve => { writePid = resolve; });
+  const moved = new Promise<void>(resolve => { cleaning = resolve; }), allowCleanup = new Promise<void>(resolve => { finish = resolve; });
+  controls.afterCreate = async name => { if (name === filename) { controls.afterCreate = undefined; created(); await allowPid; } };
+  controls.beforeUnlink = async name => { if (name.startsWith(filename + ".") && name.endsWith(".released")) { cleaning(); await allowCleanup; } };
+  const owner = new Store(root).exclusive(async () => {}); await ready;
+  const observer = await open(filename, "r"); expect((await observer.stat()).size).toBe(0);
+  try {
+    writePid(); await moved;
+    // 旧观察句柄仍然打开，新的 owner 已可原子认领 canonical；旧清理不能碰新锁。
+    const next = await open(filename, "wx"); await next.writeFile("new-owner"); finish(); await owner;
+    await expect(readFile(filename, "utf8")).resolves.toBe("new-owner");
+    expect(vi.mocked(rename).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(1);
+    expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
+    await next.close(); await unlink(filename);
+  } finally { writePid(); finish(); await observer.close(); await owner; }
+  expect(await readdir(root)).toEqual([]);
+});
+it.runIf(process.platform === "win32")("preserves a replacement canonical lock instead of retiring another owner's file", async () => {
+  const filename = path.join(root, "control.lock"), original = path.join(root, "original.lock");
+  await expect(new Store(root).exclusive(async () => { await rename(filename, original); await writeFile(filename, "replacement-owner"); })).rejects.toMatchObject({ code: "STORAGE" });
+  await expect(readFile(filename, "utf8")).resolves.toBe("replacement-owner");
+  await expect(readFile(original, "utf8")).resolves.toBe(String(process.pid));
+  expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+});
+it.runIf(process.platform === "win32")("preserves the original release permission error and its canonical lock", async () => {
+  const filename = path.join(root, "control.lock"), denied = Object.assign(new Error("synthetic rename denial"), { code: "EPERM", syscall: "rename" });
+  controls.beforeRename = async name => { if (name === filename) throw denied; };
+  await expect(new Store(root).exclusive(async () => {})).rejects.toBe(denied);
+  await expect(readFile(filename, "utf8")).resolves.toBe(String(process.pid)); expect(vi.mocked(unlink)).not.toHaveBeenCalled();
+});
 it.runIf(process.platform === "win32")("retries only a real delete-pending lock and closes the observer before the next create", async () => {
   const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename); const store = new Store(root), run = vi.fn(async () => "done");
   controls.beforeCreate = async name => {
@@ -80,7 +119,9 @@ it.runIf(process.platform === "win32")("retries only a real delete-pending lock 
     owner.child.stdin.write("delete\n"); await owner.wait("pending"); setTimeout(owner.release, 45);
   };
   await expect(transaction(store, run)).resolves.toBe("done"); await owner.exited;
-  expect(run).toHaveBeenCalledOnce(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(1);
+  expect(run).toHaveBeenCalledOnce(); expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]) === filename)).toHaveLength(0);
+  expect(vi.mocked(unlink).mock.calls.filter(call => String(call[0]).startsWith(filename + ".") && String(call[0]).endsWith(".released"))).toHaveLength(1);
+  expect(await readdir(root)).toEqual([]);
 });
 it.runIf(process.platform === "win32")("returns the real EPERM when a proven pending deletion outlives the bounded window", async () => {
   const filename = path.join(root, "metadata.lock"), owner = await pendingOwner(filename), run = vi.fn();
@@ -100,9 +141,22 @@ it.runIf(process.platform === "win32")("preserves a real directory ACL denial in
 });
 it("keeps independent Node processes mutually exclusive and accounts for every committed write", async () => {
   const script = path.join(root, "worker.cjs");
-  await build({ stdin: { contents: `import {Store} from './src/core/storage';import {transaction} from './src/cloud/store';import {open,unlink} from 'node:fs/promises';import path from 'node:path';const store=new Store(process.argv[2]);(async()=>{for(let i=0;i<20;i++)await transaction(store,async()=>{const marker=path.join(store.dir,'critical.marker');const guard=await open(marker,'wx');try{const previous=await store.read('counter.json');await store.write('counter.json',{count:(previous?.count||0)+1});}finally{await guard.close();await unlink(marker);}})})().catch(error=>{console.error(error.code||error.name);process.exitCode=1});`, loader: "ts", resolveDir: process.cwd(), sourcefile: "lock-worker.ts" }, outfile: script, bundle: true, platform: "node", format: "cjs", alias: { "@": path.resolve("src") }, logLevel: "silent" });
+  // 此 worker 只接触合成临时文件；记录失败阶段和原始堆栈，避免把业务写入与锁释放混为一谈。
+  await build({ stdin: { contents: `
+    import {Store} from './src/core/storage';
+    import {transaction} from './src/cloud/store';
+    import {open,unlink} from 'node:fs/promises';
+    import path from 'node:path';
+    const store=new Store(process.argv[2]);let phase='transaction';let iteration=-1;
+    (async()=>{for(let i=0;i<20;i++){iteration=i;phase='transaction';await transaction(store,async()=>{
+      const marker=path.join(store.dir,'critical.marker');phase='marker-open';const guard=await open(marker,'wx');
+      try{phase='counter-read';const previous=await store.read('counter.json');phase='counter-write';await store.write('counter.json',{count:(previous?.count||0)+1});}
+      finally{phase='marker-close';await guard.close();phase='marker-unlink';await unlink(marker);phase='lock-release';}
+    });}})().catch(error=>{console.error(JSON.stringify({phase,iteration,code:error.code,syscall:error.syscall,stack:error.stack}));process.exitCode=1});
+  `, loader: "ts", resolveDir: process.cwd(), sourcefile: "lock-worker.ts" }, outfile: script, bundle: true, platform: "node", format: "cjs", sourcemap: "inline", alias: { "@": path.resolve("src") }, logLevel: "silent" });
   await Promise.all(Array.from({ length: 6 }, () => new Promise<void>((resolve, reject) => {
-    const child = spawn(process.execPath, [script, root], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); children.add(child); let error = ""; child.stderr.on("data", bytes => { error += bytes.toString(); }); child.once("error", reject); child.once("exit", code => { children.delete(child); if (code) reject(new Error("Lock worker failed: " + error)); else resolve(); });
+    const child = spawn(process.execPath, ["--enable-source-maps", script, root], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); children.add(child); let error = ""; child.stderr.on("data", bytes => { error += bytes.toString(); }); child.once("error", reject); child.once("exit", code => { children.delete(child); if (code) reject(new Error("Lock worker failed: " + error)); else resolve(); });
   })));
   expect(await new Store(root).read("counter.json")).toEqual({ count: 120 }); await expect(lstat(path.join(root, "critical.marker"))).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await readdir(root)).filter(name => name.endsWith(".lock") || name.endsWith(".released"))).toEqual([]);
 }, 20000);

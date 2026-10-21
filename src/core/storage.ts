@@ -4,7 +4,7 @@ import path from "node:path";
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { config } from "./config";
 import { AppError, sleep } from "./errors";
-import { claimLocalLock, releaseLocalLock, observeLock, confirmedPendingDelete } from "./file-lock";
+import { claimLocalLock, releaseLocalLock, observeLock, confirmedPendingDelete, releaseOwnedLock } from "./file-lock";
 /** 仅文件锁竞争可重试，业务 BUSY 必须立即返回。 */
 export class LockBusyError extends AppError {
   /** 保存内部锁名供事务重试识别，不改变现有 HTTP 错误码。 */
@@ -53,7 +53,7 @@ export class Store {
           throw error;
         } finally { await observation?.handle.close(); }
         await handle.writeFile(String(process.pid)); return await fn();
-      } finally { if (handle) { await handle.close(); await unlink(filename); } }
+      } finally { if (handle) await releaseOwnedLock(filename, handle); }
     } finally {
       releaseLocalLock(filename);
     }
