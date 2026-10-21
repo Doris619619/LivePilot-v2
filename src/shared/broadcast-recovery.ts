@@ -8,7 +8,7 @@ export function hasPendingBroadcast(state: ControlState): boolean {
 
 /** 新鲜查询确认原场次仍可准备时才显示显式继续；未知交付、已直播和已结束不能盲目重放。 */
 export function canResumeBroadcast(data: Dashboard): boolean {
-  if (!hasPendingBroadcast(data.state) || !data.state.selection || data.state.phase === "stopping") return false;
+  if (!hasPendingBroadcast(data.state) || !data.state.selection || data.state.phase === "stopping" || data.state.stopRequested || data.state.platformClosePending) return false;
   if (data.busy || ["queued", "delivering", "accepted", "running", "uncertain"].includes(data.operation?.status || "")) return false;
   if (!data.obs.ready || data.obs.streaming === null || !data.youtube.connected || data.youtube.query === "failed") return false;
   return data.state.broadcastId

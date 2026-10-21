@@ -4,6 +4,8 @@ import { fromJSON, type ServiceDefinition } from "@grpc/proto-loader";
 import type { LiveChatBatch, LiveChatMessage } from "@/shared/live-chat";
 import { AppError, isAppError } from "../errors";
 import type { YouTubeAuth } from "./auth";
+import { admitYouTubeCall, youtubeFetch, YouTubeProtectionError, type YouTubeCall } from "./usage";
+import type { YouTubeResult } from "@/shared/youtube-usage";
 
 // 最小 wire 子集保留官方 proto 的字段号；未知事件及字段由 protobuf 解码器安全跳过。
 // 一手来源：https://developers.google.com/youtube/v3/live/streaming-live-chat#stream_listproto
@@ -35,6 +37,7 @@ export function createLiveChatGrpcClient(address = "youtube.googleapis.com:443",
 
 /** 只解析已知 OAuth 应用错误的类别，任何原始异常消息都被固定文案替换。 */
 function authFailure(error: unknown): AppError {
+  if (isAppError(error) && ["YOUTUBE_PROTECTION_OFFLINE", "YOUTUBE_PROTECTION_WAIT", "YOUTUBE_DAILY_QUOTA"].includes(error.code)) return error;
   if (isAppError(error) && error.code === "YOUTUBE_QUOTA") return new AppError("CHAT_RATE", "YouTube 授权服务暂时限流，稍后自动重试。", 429);
   if (isAppError(error) && ["GOOGLE_NETWORK", "GOOGLE_UNAVAILABLE"].includes(error.code)) return new AppError("CHAT_NETWORK", "YouTube 授权服务暂时不可用。", 502);
   if (isAppError(error)) return new AppError("YOUTUBE_AUTH", "YouTube 授权不可用，请检查频道连接。", 409);
@@ -80,7 +83,7 @@ function toBatch(response: WireBatch): LiveChatBatch {
 
 export class YouTubeLiveChat {
   /** 仅接收 Agent 所属实例的授权；可注入模拟 I/O，默认固定 Google 官方端点。 */
-  constructor(private auth: Pick<YouTubeAuth, "access">, private dependencies: Dependencies = {}) {}
+  constructor(private auth: Pick<YouTubeAuth, "access"> & Partial<Pick<YouTubeAuth, "requestContext">>, private dependencies: Dependencies = {}) {}
 
   /** 一次调用对应一个 server stream；调用方保存每批 cursor 并负责断线退避，取消立即关闭 socket。 */
   async *stream(chatId: string, pageToken: string | undefined, signal: AbortSignal): AsyncIterable<LiveChatBatch> {
@@ -91,21 +94,37 @@ export class YouTubeLiveChat {
     const metadata = new grpc.Metadata(); metadata.set("authorization", "Bearer " + token.accessToken);
     let client: LiveChatGrpcClient | undefined;
     let call: grpc.ClientReadableStream<WireBatch> | undefined;
+    let usage: YouTubeCall | undefined;
+    let streamBatches = 0; let streamMessages = 0;
+    let outcome: YouTubeResult["outcome"] = "succeeded";
+    let errorCode: YouTubeResult["errorCode"]; let grpcStatus: number | undefined;
     /** 取消只终止当前读取连接，不改动频道或广播状态。 */
     const cancel = () => { call?.cancel(); };
     try {
+      usage = await admitYouTubeCall("liveChatMessages.streamList", { instanceId: "main", ...this.auth.requestContext, purpose: "chat-stream", trigger: "chat-connect" });
+      if (signal.aborted) return;
+      usage.assertReady();
       client = (this.dependencies.createClient || createLiveChatGrpcClient)();
       call = client.StreamList({ liveChatId: chatId, part: ["id", "snippet", "authorDetails"], ...(pageToken ? { pageToken } : {}) }, metadata);
       signal.addEventListener("abort", cancel, { once: true });
       if (signal.aborted) call.cancel();
       for await (const response of call) {
         if (signal.aborted) return;
-        yield toBatch(response as WireBatch);
+        const batch = toBatch(response as WireBatch); streamBatches++; streamMessages += batch.messages.length;
+        yield batch;
       }
     } catch (error) {
-      if (!signal.aborted) throw streamFailure(error);
+      if (!signal.aborted) {
+        if (isAppError(error)) { if (error instanceof YouTubeProtectionError) { outcome = "cancelled"; errorCode = "cancelled"; } throw error; }
+        const failure = streamFailure(error); outcome = "failed";
+        const status = (error as { code?: unknown } | null)?.code;
+        if (typeof status === "number" && status >= 0 && status <= 16) grpcStatus = status;
+        errorCode = failure.code === "CHAT_QUOTA" ? "quotaExceeded" : failure.code === "CHAT_RATE" ? "rateLimitExceeded" : failure.code === "YOUTUBE_AUTH" ? "auth" : failure.code === "CHAT_NETWORK" ? "network" : "rejected";
+        throw failure;
+      }
     } finally {
       signal.removeEventListener("abort", cancel); call?.cancel(); client?.close();
+      await usage?.finish({ outcome: signal.aborted ? "cancelled" : outcome, ...(signal.aborted ? { errorCode: "cancelled" } : errorCode ? { errorCode } : {}), ...(grpcStatus === undefined ? {} : { grpcStatus }), streamBatches, streamMessages });
     }
   }
 
@@ -118,11 +137,11 @@ export class YouTubeLiveChat {
     if (signal.aborted) throw new AppError("CHAT_NETWORK", "聊天回复已取消，尚未发送。", 409);
     let response: Response;
     try {
-      response = await (this.dependencies.fetch || fetch)("https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet", {
+      response = await youtubeFetch("liveChatMessages.insert", { instanceId: "main", ...this.auth.requestContext, purpose: "chat-send", trigger: "chat-send" }, () => (this.dependencies.fetch || fetch)("https://www.googleapis.com/youtube/v3/liveChat/messages?part=snippet", {
         method: "POST", headers: { Authorization: "Bearer " + token.accessToken, "Content-Type": "application/json" }, cache: "no-store", redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
         body: JSON.stringify({ snippet: { liveChatId: chatId, type: "textMessageEvent", textMessageDetails: { messageText: text } } }),
-      });
-    } catch { throw new AppError("CHAT_UNCERTAIN", "YouTube 聊天发送结果尚未确认，此条回复不会自动重发。", 502); }
+      }));
+    } catch (error) { if (isAppError(error) && ["YOUTUBE_PROTECTION_OFFLINE", "YOUTUBE_PROTECTION_WAIT", "YOUTUBE_DAILY_QUOTA"].includes(error.code)) throw error; throw new AppError("CHAT_UNCERTAIN", "YouTube 聊天发送结果尚未确认，此条回复不会自动重发。", 502); }
     const data = await response.json().catch(() => null) as { id?: unknown; error?: { errors?: { reason?: unknown }[] } } | null;
     if (!response.ok) throw sendFailure(response.status, (data?.error?.errors || []).flatMap(item => typeof item.reason === "string" ? [item.reason] : []));
     if (typeof data?.id !== "string" || !data.id) throw new AppError("CHAT_UNCERTAIN", "YouTube 未返回消息确认，此条回复不会自动重发。", 502);

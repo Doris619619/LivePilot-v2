@@ -7,6 +7,7 @@ import { AppError } from "../errors";
 import { YouTubeAuth } from "../youtube/auth";
 import { YouTubeApi } from "../youtube/api";
 import { PublishingStore } from "./storage";
+import { withYouTubeContext } from "../youtube/usage";
 
 type Record = { id: string; instanceId: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; channelAttemptAt?: number; deleted?: boolean; purge?: { createdAt: number; pending: boolean } };
 export type PublishingAccountStatus = { id: string; instanceId: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; cleanupPending?: boolean };
@@ -18,6 +19,7 @@ export function requirePublishingAccount(id: string) { if (!accountId.test(id)) 
 
 export class PublishingAccounts {
   private auths = new Map<string, YouTubeAuth>(); private operations = new Map<string, Promise<unknown>>();
+  private accountInstances = new Map<string, string>();
   readonly root: string;
   /** 只保存公开频道身份到 Cloud；令牌在永久占位成功后于账号专属目录原子加密落盘。 */
   constructor(private bind: Binding, root = path.join(dataRoot(), "agent", "publishing", "accounts")) { this.root = path.resolve(root); }
@@ -28,9 +30,9 @@ export class PublishingAccounts {
   /** 创建并固定账号宿主；重启、重连不能把同一 UUID 路由到另一实例。 */
   private async record(id: string, instanceId?: string): Promise<Record> {
     id = requirePublishingAccount(id); const store = this.store(id); const saved = await store.read<Record>("account.json");
-    if (saved) { if (instanceId && saved.instanceId !== instanceId) throw new AppError("ACCOUNT", "发布账号所属设备实例不能改变。", 409); return saved; }
+    if (saved) { if (instanceId && saved.instanceId !== instanceId) throw new AppError("ACCOUNT", "发布账号所属设备实例不能改变。", 409); this.accountInstances.set(id, saved.instanceId); return saved; }
     if (!instanceId) throw new AppError("ACCOUNT", "请先连接这个发布账号。", 404);
-    const created = { id, instanceId: requireInstance(instanceId) }; await store.write("account.json", created); return created;
+    const created = { id, instanceId: requireInstance(instanceId) }; await store.write("account.json", created); this.accountInstances.set(id, created.instanceId); return created;
   }
   /** 账号必须未在清理；清理记录跨进程保留，不能因网络断开重新启用旧授权。 */
   async assertAvailable(id: string, instanceId?: string, acceptedAt?: number) { const record = await this.record(id, instanceId); if (record.deleted) throw new AppError("ACCOUNT_DELETED", "这个发布账号已删除，请新建发布账号。", 409); if (record.purge?.pending) throw new AppError("CLEANUP", "这个发布账号正在清理授权。", 409); if (record.purge && acceptedAt !== undefined && acceptedAt <= record.purge.createdAt) throw new AppError("CONSENT", "这个发布账号的旧发布授权已撤销，请重新确认批次。", 409); return record; }
@@ -46,7 +48,7 @@ export class PublishingAccounts {
       await store.write("youtube.enc", seal(tokens));
       await store.write("account.json", { ...record, channelId: tokens.channelId, channel: tokens.channel, connectedAt: Date.now(), channelCheckedAt });
       await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, channelCheckedAt }, true);
-    });
+    }, () => ({ instanceId: this.accountInstances.get(id) || "main", accountId: id }));
     this.auths.set(id, auth); return auth;
   }
   /** 开始独立发布 OAuth；actor 和账号身份保存在一次性加密 PKCE 事务中。 */
@@ -65,7 +67,7 @@ export class PublishingAccounts {
     if (!record.channelAttemptAt || record.channelAttemptAt <= now - 1800_000) {
       record.channelAttemptAt = now; await store.write("account.json", record);
       try {
-        const channel = await new YouTubeApi(this.auth(id), store).channel();
+        const channel = await withYouTubeContext({ instanceId: record.instanceId, accountId: id, purpose: "background", trigger: "metadata" }, () => new YouTubeApi(this.auth(id), store).channel());
         await store.exclusive(async () => { const token = await this.auth(id).tokens(); if (!token || channel.id !== token.channelId || record.channelId && channel.id !== record.channelId) throw new AppError("CHANNEL", "频道查询结果与这个发布账号不一致。", 409); await store.write("youtube.enc", seal({ ...token, channel: channel.title })); record = { ...record, channelId: channel.id, channel: channel.title, channelCheckedAt: Date.now() }; await store.write("account.json", record); }, "tokens.lock");
         return;
       } catch { /* 保留原频道身份；网络失败不伪造API刷新时间，也不输出上游诊断。 */ }

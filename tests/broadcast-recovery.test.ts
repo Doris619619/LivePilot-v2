@@ -32,3 +32,12 @@ it("lets a completed OBS launch be explicitly confirmed after a process interrup
   expect(runtimeActionMode({ ...input, data })).toBe("confirm-obs");
   expect(runtimeActionMode({ ...input, data: { ...data, obs: { ...data.obs, streaming: true } } })).toBe("check");
 });
+it("keeps a stopped local stream in closing recovery even when cached platform readiness would permit resume", () => {
+  const data: Dashboard = { ...base, state: { ...base.state, broadcastId: "known" }, youtube: { ...base.youtube, lifecycle: "ready" } };
+  for (const closing of [{ platformClosePending: true }, { stopRequested: true }]) {
+    const pending = { ...data, state: { ...data.state, ...closing } };
+    expect(canResumeBroadcast(pending)).toBe(false);
+    expect(runtimeActionMode({ ...input, data: pending })).toBe("check");
+    expect(runtimeActionMode({ ...input, busy: true, data: pending })).toBe("working");
+  }
+});

@@ -6,11 +6,13 @@ import { DESKTOP_ORIGIN } from "../src/shared/desktop";
 type Customer = { username: string; role: "customer" };
 type Requester = (url: string, init?: RequestInit) => Promise<Response>;
 export class DesktopAuth {
- private token = ""; private user?: Customer; private expires = 0; private checked = 0; private checkedAgent?: string;
+ private token = ""; private user?: Customer; private expires = 0; private checked = 0; private checkedAgent?: string; private generation = 0;
  /** 请求实现由 Electron Session 注入，沿用 Windows 代理。 */
  constructor(private request: Requester = fetch) {}
  /** 公开状态不含令牌；过期会话立即锁定界面。 */
  session() { if (this.expires <= Date.now()) this.clear(); return { authenticated: !!this.user, username: this.user?.username }; }
+ /** 仅宿主验证缓存使用的登录轮次；重新登录同名账号也不能继承旧绑定许可。 */
+ sessionGeneration() { return this.generation; }
  /** 主进程经云端验证角色；错误仅回显安全 API 消息。 */
  async login(username: unknown, password: unknown) {
   if(typeof username !== "string" || typeof password !== "string" || username.length > 32 || password.length > 256) return {ok:false,message:"请输入有效账号和密码。"};
@@ -58,5 +60,5 @@ export class DesktopAuth {
  /** 配对请求携带客户会话，禁止 UI 接触原始令牌。 */
  headers() { if(!this.session().authenticated)throw new AppError("AUTH", "请先登录客户账号。");return {Authorization:"Bearer "+this.token}; }
  /** 会话清理不触碰设备身份。 */
- private clear(){this.token="";this.user=undefined;this.expires=0;this.checked=0;this.checkedAgent=undefined;}
+ private clear(){this.generation++;this.token="";this.user=undefined;this.expires=0;this.checked=0;this.checkedAgent=undefined;}
 }

@@ -1,4 +1,5 @@
 /** 批次删除的 Cloud/API 回归：真实文件事务和权限，扫描及远端状态均为合成输入。 */
+import { seedTestYouTubeBaseline } from "./youtube-usage-baseline";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -33,6 +34,8 @@ beforeEach(async () => {
   remote.rpc.mockReset(); remote.rpc.mockImplementation(async (_target, _actor, payload) => ({ ...(payload.kind === "publishing-packages" ? { root: "Synthetic/Publishing/Inbox", batches: [batch] } : { assets: Array.from({ length: 3 }, (_, i) => ({ ...fixtureJob().asset, id: String(i + 1).repeat(64), filename: `movie${i}.mp4` })) }), thumbnails: [], channelId: profile.channelId, channel: "Test" }));
 });
 /** 仅删除本用例新建的临时目录，绝不触碰客户素材。 */
+/** 新配额保护要求显式合成基线，不能依赖生产默认放行。 */
+beforeEach(async () => { await seedTestYouTubeBaseline(); });
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-removal-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 创建三个旧扁平私密任务，不建立 YouTube 上传会话。 */
 async function flat() { const b = await previewPublishingBatch(alice, profile.id, ["1".repeat(64), "2".repeat(64), "3".repeat(64)]); return { id: b.id, jobs: await confirmPublishingBatch(alice, b.id, false, true) }; }

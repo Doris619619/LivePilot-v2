@@ -61,7 +61,7 @@ export async function syncLiveChatEnvironment(transport: Pick<Transport, "post">
     if (next?.trim() !== current?.trim()) for (const service of services) environment.pendingRefresh.add(service);
     // 某个实例刷新失败后，即使环境 Key 相同，下一次仍必须补齐该实例。
     const pending = environment.pendingRefresh;
-    const results = await Promise.allSettled([...pending].map(async service => { await service.refreshChatCredentials(); pending.delete(service); }));
+    const results = await Promise.allSettled([...pending].map(async service => { await (service.refreshChatEnvironment ? service.refreshChatEnvironment() : service.refreshChatCredentials()); pending.delete(service); }));
     if (results.some(result => result.status === "rejected")) throw new AppError("CHAT_ENVIRONMENT", unavailable, 503);
   } catch {
     // 上游响应、验证细节及实例异常都不能把密钥带入日志或公开错误。

@@ -19,6 +19,7 @@ import { YouTubeAuth } from '@/core/youtube/auth';
 import { VideoApi, VideoApiError } from '@/core/youtube/video-api';
 import { seal } from '@/core/storage';
 import { finishRemoteOAuth } from '@/cloud/oauth';
+import { seedTestYouTubeBaseline } from './youtube-usage-baseline';
 const remote = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock('@/cloud/tasks', async orig => ({ ...await orig<typeof import("@/cloud/tasks")>(), rpc: remote.rpc }));
 const alice={username:'alice',role:'customer' as const}, admin={username:'admin',role:'admin' as const};
@@ -36,6 +37,8 @@ beforeEach(async()=>{
  remote.rpc.mockReset(); remote.rpc.mockResolvedValue({assets:[fixtureJob().asset],thumbnails:[],channelId:'channel_one',channel:'Synthetic'});
  vi.stubGlobal('fetch',vi.fn(()=>{throw new Error('Unexpected external request: network prohibited');}));
 });
+/** 组合配额保护后显式确认合成零历史基线，恢复测试不依赖未知预算默认放行。 */
+beforeEach(async()=>{await seedTestYouTubeBaseline();});
 afterEach(async()=>{vi.useRealTimers();vi.unstubAllEnvs();vi.unstubAllGlobals();if(path.dirname(root)!==os.tmpdir()||!path.basename(root).startsWith('publishing-recovery-'))throw new Error('Unsafe cleanup');await rm(root,{recursive:true,force:true});});
 /** 建立合成同频道发布账号，不交换任何真实OAuth凭据。 */
 async function connected(){const a=await createPublishingAccount(alice,'pc','main','Synthetic');await claimPublishingAccount('pc',a.id,'main','channel_one','Synthetic',true,Date.now());return a;}

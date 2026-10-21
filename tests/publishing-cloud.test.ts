@@ -1,6 +1,10 @@
 /** Cloud 集成覆盖真实权限、文件事务和投递；素材 RPC 用假 Agent 回应。 */
+import { seedTestYouTubeBaseline } from "./youtube-usage-baseline";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises"; import os from "node:os"; import path from "node:path"; import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises"; import os from "node:os"; import path from "node:path"; import { createHash, randomUUID } from "node:crypto";
+import { editYouTubeUsage, youtubeDay } from "@/cloud/youtube-usage-store";
+import { admitYouTube, youtubeUsageSummary, updateYouTubePolicy } from "@/cloud/youtube-usage";
+import { quotaDay } from "@/core/publishing/schedule";
 const remote = vi.hoisted(() => ({ scan: vi.fn() }));
 vi.mock("@/cloud/tasks", async importOriginal => ({ ...await importOriginal<typeof import("@/cloud/tasks")>(), rpc: remote.scan }));
 import { createPairing, pairAgent, openSession, heartbeatAgent, agentStore, setAgentOwner } from "@/cloud/agents";
@@ -13,9 +17,24 @@ import { PublishingRunner } from "@/core/publishing/runner";
 import { PublishingStore } from "@/core/publishing/storage";
 let root: string; const alice = { username: "alice", role: "customer" as const }; const admin = { username: "admin", role: "admin" as const };
 beforeEach(async () => { root = await mkdtemp(path.join(os.tmpdir(), "publishing-cloud-")); vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-01T00:00:00Z")); vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_INSTANCES", "main"); const access = emptyAccess(); access.users.push(...[alice, admin].map(u => ({ ...u, salt: "synthetic", hash: "synthetic", revision: randomUUID(), disabled: false }))); await accessStore().write("access.json", access); const p = await createPairing("pc", "Synthetic", "alice"); await pairAgent("pc", p.code, "b".repeat(64)); const session = await openSession("pc", randomUUID(), [{ id: "main", name: "Main" }]); await heartbeatAgent("pc", session.session, []); await agentStore("pc").write("capabilities.json", ["publishing-v1", "publishing-consent-v2"]); await cloudStore().write("bindings.json", [{ agentId: "pc", instanceId: "main", channelId: "channel_one", confirmed: true }]); await savePublishingPolicy(admin, { ...defaultPolicy, enabled: true, privacyContact: "synthetic@example.invalid" }); remote.scan.mockResolvedValue({ assets: [fixtureJob().asset], thumbnails: [], channelId: "channel_one", channel: "Test" }); });
+/** 新配额保护要求显式合成基线，不能依赖生产默认放行。 */
+beforeEach(async () => { await seedTestYouTubeBaseline(); });
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-cloud-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 确认一个私密发布批次；不会发起实际上传或公开。 */
 async function batch() { await acceptPublishingPrivacy(alice, PRIVACY_VERSION); const profile = await savePublishingProfile(alice, fixtureJob().profile); return previewPublishingBatch(alice, profile.id, [fixtureJob().asset.id]); }
+/** 新保护在派发前拦截未知历史基线及不足的全项目正常池，不能由旧局部预算绕过。 */
+it("waits for both a known baseline and sufficient global budget before publishing dispatch", async () => {
+  const b = await batch(); await confirmPublishingBatch(alice, b.id, false, true); await editYouTubeUsage(state => { youtubeDay(state).baseline.known = false; });
+  await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull(); expect((await publishingView(alice)).jobs[0].budgetWaiting).toBe(true);
+  await updateYouTubePolicy({ baseline: { day: quotaDay(), units: 8480, uploads: 0, source: "conservative-estimate" } }, "synthetic-admin"); await publishingTick(); expect(await agentStore("pc").read("tasks.json")).toBeNull();
+});
+/** 新Agent只扣一次总账，旧发布预留快照不能把已经消费的units再次加回。 */
+it("consumes global reservations once on the unified path and releases them on a terminal report", async () => {
+  vi.stubEnv("GOOGLE_CLIENT_ID", "synthetic-publishing-client"); const b = await batch(); const [job] = await confirmPublishingBatch(alice, b.id, false, true); await publishingTick(); const before = await youtubeUsageSummary(); expect(before.reservedUnits).toBeGreaterThan(1);
+  const grant = await admitYouTube("pc", { attemptId: randomUUID(), clientFingerprint: createHash("sha256").update("synthetic-publishing-client").digest("hex"), instanceId: "main", jobId: job.spec.id, method: "videos.list", purpose: "publishing", trigger: "publishing-tick" }); expect(grant.allowed).toBe(true);
+  await publishingTick(); const after = await youtubeUsageSummary(); expect(after.usedUnits).toBe(1); expect(after.reservedUnits).toBe(before.reservedUnits - 1);
+  await reportPublishing("pc", [{ id: job.spec.id, revision: job.spec.revision, sequence: 1, state: "cancelled", offset: 0, total: job.spec.asset.size, updatedAt: Date.now() }]); expect((await youtubeUsageSummary()).reservedUnits).toBe(0);
+});
 it.each(["run", "pause", "cancel"] as const)("reconciliation keeps the %s intent and ordinary controls clear only the query marker", async desired => {
   const b = await batch(); const [original] = await confirmPublishingBatch(alice, b.id, false, true);
   await chargePublishing("pc", original.spec.id, randomUUID(), 0, true);

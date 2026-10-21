@@ -8,14 +8,12 @@ type SessionResult = { session: string; protocol?: number; capabilities?: string
 export async function connectSession(transport: Transport, input: SessionInput): Promise<SessionResult> {
   const legacy = ["publishing-v1", "publishing-v2", "publishing-accounts-v1"];
   const body = { protocol: PROTOCOL, ...input };
-  try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2", "publishing-recovery-v1"] }); }
-  catch (error) {
-    if (!(error instanceof AppError) || error.status !== 400) throw error;
-    try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1", "publishing-consent-v2"] }); }
-    catch (fallback) {
-      if (!(fallback instanceof AppError) || fallback.status !== 400) throw fallback;
-      try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: [...legacy, "media-preview-v1"] }); }
-      catch (last) { if (!(last instanceof AppError) || last.status !== 400) throw last; return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy }); }
-    }
+  const consent = [...legacy, "media-preview-v1", "publishing-consent-v2"];
+  const quota = [...consent, "youtube-quota-v1", "youtube-usage-v1"];
+  // 两组能力代际均有独立回退；只有 Cloud 明确拒绝协议才移除能力。
+  for (const capabilities of [[...quota, "publishing-recovery-v1"], quota, [...consent, "publishing-recovery-v1"], consent, [...legacy, "media-preview-v1"]]) {
+    try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities }); }
+    catch (error) { if (!(error instanceof AppError) || error.status !== 400) throw error; }
   }
+  return transport.post<SessionResult>("/api/agent/session", { ...body, capabilities: legacy });
 }

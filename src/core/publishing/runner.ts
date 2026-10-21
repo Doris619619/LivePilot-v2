@@ -16,6 +16,7 @@ import { preparePackageUpload, validatePreparedUpload } from "./render";
 import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
 import type { YouTubeAuth } from "../youtube/auth";
+import { YouTubeProtectionError } from "../youtube/usage";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
 type Entry = { repairPending?: boolean; preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number; precisionRecoveryCandidate?: string } };
 type Reconciliation = { entry: Entry; revision: number; videoId?: string };
@@ -166,7 +167,7 @@ export class PublishingRunner {
     if (!token || token.channelId !== entry.spec.profile.channelId) throw new AppError("CHANNEL", "任务频道与当前授权不一致，请连接原频道。");
   }
   /** 每次 API admission 使用当前项目策略；不在 Cloud 保存 Google 凭据。 */
-  private api(entry: Entry) { if (this.options.api) return this.options.api(entry.spec); return new VideoApi(this.auth(entry), (units, upload) => { if (!this.options.charge) throw new AppError("VIDEO_QUOTA", "发布配额尚未连接 Cloud。", 503); return this.options.charge(entry.spec, units, upload); }); }
+  private api(entry: Entry) { if (this.options.api) return this.options.api(entry.spec); return new VideoApi(this.auth(entry), undefined, { instanceId: entry.spec.profile.instanceId, accountId: entry.spec.profile.accountId, jobId: entry.spec.id, purpose: "publishing", trigger: "publishing-tick", retryCount: Math.min(10000, entry.failures) }); }
   /** 新任务只使用明确账号的独立授权；旧任务继续原实例授权，不进行隐式回退。 */
   private auth(entry: Entry) { if (entry.spec.profile.accountId) { if (!this.options.accountAuth) throw new AppError("ACCOUNT", "发布账号授权模块尚未连接。", 409); return this.options.accountAuth(entry.spec.profile.accountId); } const app = this.services.get(entry.spec.profile.instanceId); if (!app) throw new AppError("INSTANCE", "发布实例不存在。"); return app.auth; }
   /** 本地清理锁标识授权上下文；同设备多个发布账号与旧直播实例互不占用。 */
@@ -190,6 +191,7 @@ export class PublishingRunner {
   /** 单步操作失败保留当前阶段；网络和配额错误回退重试，永久拒绝等待人工。 */
   private async failure(entry: Entry, error: unknown) {
     if (!entry.resumeState) entry.resumeState = entry.report.state;
+    if (error instanceof YouTubeProtectionError) { await this.update(entry, { state: entry.spec.desired === "pause" ? "paused" : "retry_wait", message: safeError(error), nextAttemptAt: entry.spec.desired === "pause" ? undefined : Math.max(this.now() + 1000, error.retryAt) }); return; }
     entry.failures++;
     if (entry.spec.desired === "pause") { await this.update(entry, { state: "paused", nextAttemptAt: undefined, message: undefined }); return; }
     if (entry.spec.desired === "cancel" && (error instanceof Error && error.name === "AbortError" || error instanceof AppError && error.code === "RENDER_ABORTED")) { await this.update(entry, { state: "retry_wait", nextAttemptAt: this.now() }); return; }
@@ -374,9 +376,9 @@ export class PublishingRunner {
     }
   }
   /** GET 失败使用独立的持久重试时间，不进入上传 failure 流程或改变暂停/异常状态。 */
-  private async deferReconciliation(request: Reconciliation, message: string) {
+  private async deferReconciliation(request: Reconciliation, message: string, retryAt?: number) {
     if (!this.currentReconciliation(request)) return;
-    request.entry.reconciliation!.nextAttemptAt = this.now() + request.entry.spec.policy.processingPollSeconds * 1000;
+    request.entry.reconciliation!.nextAttemptAt = Math.max(this.now() + request.entry.spec.policy.processingPollSeconds * 1000, retryAt || 0);
     await this.update(request.entry, { message });
   }
   /** 只核对远端事实；精确旧毫秒误报可确认排期，其他私密/缺失结果不恢复处理或覆盖 Studio。 */
@@ -392,8 +394,8 @@ export class PublishingRunner {
       await this.checkChannel(requests[0].entry);
       if (!requests.some(request => this.currentReconciliation(request))) return;
       results = await this.api(requests[0].entry).list([...new Set(requests.map(request => request.videoId!))]);
-    } catch {
-      for (const request of requests) await this.deferReconciliation(request, "状态核对暂未完成，稍后重试；原处理设置保留。");
+    } catch (error) {
+      for (const request of requests) await this.deferReconciliation(request, "状态核对暂未完成，稍后重试；原处理设置保留。", error instanceof YouTubeProtectionError ? error.retryAt : undefined);
       return;
     }
     for (const request of requests) {

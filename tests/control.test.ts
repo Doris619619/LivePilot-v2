@@ -9,6 +9,7 @@ import { AppError, waitFor } from "@/server/errors";
 import type { Broadcast, Stream, YouTubePort } from "@/server/youtube/api";
 import type { ObsRuntime } from "@/server/obs/runtime";
 import type { ControlState } from "@/shared/types";
+import { makeProblem } from "@/shared/problems";
 
 const dirs: string[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true }); });
@@ -52,7 +53,7 @@ async function fixture() {
   return { control, storage, obs, yt, events, media, fastWait, setStreaming: (v: boolean) => { streaming = v; }, setLifecycle: (v: string) => { broadcast!.status.lifeCycleStatus = v; }, deleteStream: () => { stream = null; } };
 }
 describe("one-button lifecycle", () => {
-  it("starts in order, confirms live, persists no stream key, completes before stopping OBS", async () => {
+  it("starts in order, confirms live, persists no stream key, stops OBS before platform cleanup", async () => {
     const f = await fixture();
     const live = await f.control.start(selection);
     expect(live.phase).toBe("live");
@@ -61,7 +62,7 @@ describe("one-button lifecycle", () => {
     expect(JSON.stringify(await f.storage.read("control.json"))).not.toContain("SECRET_STREAM_KEY");
     f.events.length = 0;
     expect((await f.control.stop()).phase).toBe("stopped");
-    expect(f.events).toEqual(["read-broadcast", "complete", "read-broadcast", "obs-stop"]);
+    expect(f.events).toEqual(["obs-stop", "read-broadcast", "complete", "read-broadcast"]);
   });
   it("does nothing to OBS when YouTube is disconnected", async () => {
     const f = await fixture(); vi.mocked(f.yt.channel).mockRejectedValue(new AppError("AUTH", "connect"));
@@ -124,26 +125,31 @@ describe("one-button lifecycle", () => {
     await expect(f.control.start(selection)).rejects.toThrow("结果不确定");
     expect(f.yt.createBroadcast).toHaveBeenCalledTimes(1);
   });
-  it("keeps OBS streaming when YouTube complete fails and supports retry", async () => {
+  it("stops OBS when YouTube complete fails and supports platform-only retry", async () => {
     const f = await fixture(); await f.control.start(selection);
     vi.mocked(f.yt.transition).mockRejectedValueOnce(new Error("raw upstream SECRET_STREAM_KEY"));
     await expect(f.control.stop()).rejects.toThrow("YouTube Studio");
-    expect(f.obs.stopStream).not.toHaveBeenCalled();
+    expect(f.obs.stopStream).toHaveBeenCalledOnce();
+    expect(await f.control.state()).toMatchObject({ platformClosePending: true, stopRequested: true, obsStartRequested: false });
+    const queries = vi.mocked(f.yt.channel).mock.calls.length;
+    await expect(f.control.start(selection)).rejects.toThrow("上一场仍待结束");
+    expect(f.yt.channel).toHaveBeenCalledTimes(queries);
     expect(JSON.stringify(await f.control.state())).not.toContain("SECRET_STREAM_KEY");
     expect((await f.control.stop()).phase).toBe("stopped");
   });
-  it("does not stop OBS before a complete read confirms the result", async () => {
+  it("keeps platform pending after stopping OBS if complete confirmation fails", async () => {
     const f = await fixture(); await f.control.start(selection); vi.mocked(f.yt.transition).mockResolvedValue();
-    await expect(f.control.stop()).rejects.toThrow("未确认 complete");
-    expect(f.obs.stopStream).not.toHaveBeenCalled();
+    await expect(f.control.stop()).rejects.toThrow("尚未确认结束");
+    expect(f.obs.stopStream).toHaveBeenCalledOnce();
+    expect((await f.control.state()).platformClosePending).toBe(true);
   });
-  it("retries OBS stop after YouTube is complete without another transition", async () => {
+  it("retries failed OBS stop before performing any platform cleanup", async () => {
     const f = await fixture(); await f.control.start(selection);
     vi.mocked(f.obs.stopStream).mockRejectedValueOnce(new AppError("OBS", "offline"));
     await expect(f.control.stop()).rejects.toThrow("offline");
     const count = vi.mocked(f.yt.transition).mock.calls.length;
     expect((await f.control.stop()).phase).toBe("stopped");
-    expect(f.yt.transition).toHaveBeenCalledTimes(count);
+    expect(f.yt.transition).toHaveBeenCalledTimes(count + 1);
   });
   it("recovers after a server restart using disk state and does not duplicate live resources", async () => {
     const f = await fixture(); await f.control.start(selection);
@@ -188,8 +194,8 @@ describe("one-button lifecycle", () => {
   it("blocks channel mismatch and does not mutate the old broadcast", async () => {
     const f = await fixture(); await f.control.start(selection);
     vi.mocked(f.yt.channel).mockResolvedValue({ id: "other", title: "other" });
-    await expect(f.control.stop()).rejects.toThrow("原 YouTube Channel");
-    expect(f.obs.stopStream).not.toHaveBeenCalled();
+    await expect(f.control.stop()).rejects.toThrow("YouTube 场次尚未确认结束");
+    expect(f.obs.stopStream).toHaveBeenCalledOnce();
   });
   it("reuses the stream for the next broadcast after a clean stop", async () => {
     const f = await fixture(); await f.control.start(selection); await f.control.stop();
@@ -267,7 +273,7 @@ describe("independent local instances", () => {
     vi.mocked(a.yt.transition).mockRejectedValueOnce(new Error("failure"));
     const results = await Promise.allSettled([a.control.stop(), b.control.stop()]);
     expect(results.map(result => result.status)).toEqual(["rejected", "fulfilled"]);
-    expect(a.obs.stopStream).not.toHaveBeenCalled();
+    expect(a.obs.stopStream).toHaveBeenCalledOnce();
     expect((await b.control.state()).phase).toBe("stopped");
   });
 });
@@ -300,4 +306,42 @@ it("applies the authoritative chat config before OBS and refuses to start on con
   const failed = new Control(other.obs, other.yt, other.storage, other.media, other.fastWait, async () => { throw new AppError("STORAGE", "synthetic config write failure"); });
   await expect(failed.start(selection)).rejects.toMatchObject({ code: "STORAGE" });
   expect(other.obs.ensureReady).not.toHaveBeenCalled(); expect(other.yt.createBroadcast).not.toHaveBeenCalled();
+});
+
+/** 配额或网络故障不能阻止用户先停止本机信号，仍须保留平台收尾保护。 */
+it.each(["YOUTUBE_DAILY_QUOTA", "YOUTUBE_NETWORK"])("stops local OBS first on %s and blocks the next start", async code => {
+  const f = await fixture(); await f.control.start(selection); f.events.length = 0;
+  vi.mocked(f.yt.channel).mockRejectedValue(new AppError(code, "synthetic failure"));
+  await expect(f.control.stop()).rejects.toMatchObject({ code });
+  expect(f.events).toEqual(["obs-stop"]); expect(await f.control.state()).toMatchObject({ platformClosePending: true, stopRequested: true, obsStartRequested: false });
+  await expect(f.control.start(selection)).rejects.toThrow("上一场仍待结束");
+});
+/** 应急停止通过同一控制器验证 OBS 归属，但不消耗任何 YouTube 调用。 */
+it("local-only stop cancels chat before OBS and leaves platform pending with zero API requests", async () => {
+  const f = await fixture(); await f.control.start(selection); vi.clearAllMocks(); f.events.length = 0;
+  const stopped = vi.fn(async () => { f.events.push("chat-stop"); });
+  const control = new Control(f.obs, f.yt, f.storage, f.media, f.fastWait, undefined, stopped);
+  expect(await control.stop({ localOnly: true })).toMatchObject({ phase: "stopping", platformClosePending: true, obsStartRequested: false });
+  expect(f.events).toEqual(["chat-stop", "obs-stop"]);
+  for (const method of Object.values(f.yt)) expect(method).not.toHaveBeenCalled();
+});
+/** 外来推流与未知 OBS 状态均不能被标为已停止，也不触发平台结束。 */
+it("keeps OBS_FOREIGN protection before platform or local stop", async () => {
+  const f = await fixture(); f.setStreaming(true);
+  await expect(f.control.stop({ localOnly: true })).rejects.toMatchObject({ code: "OBS_FOREIGN" });
+  expect(f.obs.stopStream).not.toHaveBeenCalled(); expect(f.yt.channel).not.toHaveBeenCalled();
+  expect((await f.control.state()).obsStoppedAt).toBeUndefined();
+});
+/** 聊天检查点故障不能让本机停止永久卡住。 */
+it("still stops OBS if cancelling the chat checkpoint fails", async () => {
+  const f = await fixture(); await f.control.start(selection);
+  const control = new Control(f.obs, f.yt, f.storage, f.media, f.fastWait, undefined, async () => { throw new Error("synthetic disk error"); });
+  await control.stop({ localOnly: true }); expect(f.obs.stopStream).toHaveBeenCalledOnce();
+});
+/** 平台准入尚未发出时也保留恢复时间，但整体操作已完成本机停止，属于部分完成。 */
+it("retains safe retry metadata after local stop while describing the full operation as partial", async () => {
+  const f = await fixture(); await f.control.start(selection); const retryAt = Date.now() + 60_000;
+  vi.mocked(f.yt.channel).mockRejectedValue(new AppError("YOUTUBE_PROTECTION_WAIT", "synthetic safe wait", 429, makeProblem("YOUTUBE_PROTECTION_WAIT", "synthetic safe wait", { outcome: "not-sent", context: { retryAt } })));
+  await expect(f.control.stop()).rejects.toMatchObject({ code: "YOUTUBE_PROTECTION_WAIT", problem: { outcome: "partial", context: { retryAt }, stage: "结束 YouTube 场次" } });
+  expect(f.obs.stopStream).toHaveBeenCalledOnce(); expect(await f.control.state()).toMatchObject({ platformClosePending: true, obsStartRequested: false });
 });

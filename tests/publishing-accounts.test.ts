@@ -13,6 +13,7 @@ import { fixtureApi, fixtureJob } from "./publishing-fixtures";
 import type { Service } from "@/core/service";
 
 let root: string;
+const executors: Executor[] = [], runners: PublishingRunner[] = [];
 /** 请求只返回按合成 code 区分的 Token 和频道，从不访问 Google。 */
 beforeEach(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "publishing-accounts-")); vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("LIVEPILOT_INSTANCES", "main"); vi.stubEnv("LIVEPILOT_ORIGIN", "https://cloud.example.invalid"); vi.stubEnv("GOOGLE_CLIENT_ID", "test-client"); vi.stubEnv("GOOGLE_CLIENT_SECRET", "test-secret");
@@ -22,8 +23,16 @@ beforeEach(async () => {
     const token = new Headers(input.headers).get("authorization") || ""; return Response.json({ items: [{ id: token.includes("two") ? "channel_two" : "channel_one", snippet: { title: token.includes("two") ? "Channel Two" : "Channel One" } }] });
   }));
 });
-/** 只删除本测试创建的临时目录，恢复网络函数和环境。 */
-afterEach(async () => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-accounts-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
+/** 即使用例断言失败也先排空后台与账号队列；旧循环不得进入下一例的fetch、时钟或目录。 */
+afterEach(async () => {
+  const stopped = await Promise.allSettled([...executors.splice(0).map(executor => executor.stopPublishing()), ...runners.splice(0).map(runner => runner.stop())]);
+  vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-accounts-")) throw new Error("Unsafe cleanup");
+  await rm(root, { recursive: true, force: true });
+  const failure = stopped.find(result => result.status === "rejected"); if (failure?.status === "rejected") throw failure.reason;
+});
+/** 创建时即登记退出责任，不能把后台停止依赖于最后一条断言执行成功。 */
+function createExecutor(transport: Transport) { const executor = new Executor(transport); executors.push(executor); return executor; }
 /** 在隔离账号发起和完成一次合成授权，state 由真实 PKCE 实现生成。 */
 async function connect(accounts: PublishingAccounts, id: string, code = "one", expected?: string) { const begin = await accounts.begin(id, "main", "alice"); await accounts.finish(id, "main", begin.cookie, new URL(begin.url).searchParams.get("state")!, code, "alice", expected); }
 
@@ -70,27 +79,34 @@ it("persists account cleanup through a failed revoke and preserves other publish
 it("uses the publishing account to check upload identity without falling back to host live credentials", async () => {
   const accounts = new PublishingAccounts(async () => {}); const id = randomUUID(); await connect(accounts, id); const { api } = fixtureApi(); const spec = fixtureJob(); spec.profile.accountId = id;
   const liveTokens = vi.fn(async () => ({ channelId: "live_channel" })); const service = { auth: { tokens: liveTokens } } as unknown as Service;
-  const runner = new PublishingRunner(new Map([["main", service]]), { api: () => api, accountAuth: accountId => accounts.auth(accountId) }); await runner.apply(spec); await runner.tick(); await runner.stop(); expect(liveTokens).not.toHaveBeenCalled(); expect(await runner.expectedChannel("main")).toBeUndefined(); expect(await runner.expectedChannel("main", id)).toBe("channel_one");
+  const runner = new PublishingRunner(new Map([["main", service]]), { api: () => api, accountAuth: accountId => accounts.auth(accountId) }); runners.push(runner); await runner.apply(spec); await runner.tick(); await runner.stop(); expect(liveTokens).not.toHaveBeenCalled(); expect(await runner.expectedChannel("main")).toBeUndefined(); expect(await runner.expectedChannel("main", id)).toBe("channel_one");
   await expect(runner.apply({ ...spec, revision: 2, profile: { ...spec.profile, accountId: randomUUID() } })).rejects.toMatchObject({ code: "REQUEST" });
 });
 
 it("allows independent account OAuth while the host legacy authorization is being cleaned", async () => {
-  const transport = new Transport("https://cloud.example.invalid", "pc", "b".repeat(64)); vi.spyOn(transport, "post").mockResolvedValue({ ok: true }); const executor = new Executor(transport); await new Store(root).write("publishing-purge.json", { pending: true, createdAt: Date.now() });
+  const transport = new Transport("https://cloud.example.invalid", "pc", "b".repeat(64)); vi.spyOn(transport, "post").mockResolvedValue({ ok: true }); const executor = createExecutor(transport); await new Store(root).write("publishing-purge.json", { pending: true, createdAt: Date.now() });
   const result = await executor.execute({ protocol: 1, id: randomUUID(), agentId: "pc", instanceId: "main", actor: "alice", expiresAt: Date.now() + 60_000, payload: { kind: "publishing-account-oauth-begin", accountId: randomUUID() } }); expect(result).toMatchObject({ url: expect.stringContaining("state=publishing-") });
 });
 
 it("recovers a lost cleanup acknowledgement from Cloud's permanent deleted account response", async () => {
   const id = randomUUID(); const request = randomUUID(); const date = Date.now(); let syncs = 0; const transport = new Transport("https://cloud.example.invalid", "pc", "b".repeat(64));
   vi.spyOn(transport, "post").mockImplementation(async route => { if (route.endsWith("accounts-binding")) return { ok: true } as never; if (route.endsWith("/cleanup")) throw new Error("synthetic lost response"); if (route.endsWith("/sync")) return { acknowledged: [], cleanups: ++syncs === 1 ? [{ id: request, accountId: id, instanceId: "main", createdAt: date }] : [], accounts: syncs > 1 ? [{ id, agentId: "pc", instanceId: "main", status: "deleted", updatedAt: date, deletedAt: date }] : [] } as never; throw new Error("Unexpected route"); });
-  const executor = new Executor(transport); await connect(executor.publishingAccounts, id); executor.connectPublishing(true, true);
-  await vi.waitFor(async () => expect(await executor.publishingAccounts.store(id).read("account.json")).toMatchObject({ deleted: true, purge: { pending: false } }), { timeout: 4000 });
-  expect(await executor.publishingAccounts.auth(id).tokens()).toBeNull(); await expect(executor.publishingAccounts.begin(id, "main", "alice")).rejects.toMatchObject({ code: "ACCOUNT_DELETED" }); await executor.stopPublishing();
-});
+  const executor = createExecutor(transport); await connect(executor.publishingAccounts, id);
+  let completed!: () => void, failed!: (error: unknown) => void;
+  const completion = new Promise<void>((resolve, reject) => { completed = resolve; failed = reject; });
+  const completeCleanup = executor.publishingAccounts.completeCleanup.bind(executor.publishingAccounts);
+  // 握手只在真实本机终态写入完成后发出；Cloud的deleted回执本身不能替代本机完成。
+  vi.spyOn(executor.publishingAccounts, "completeCleanup").mockImplementation(async accountId => { try { await completeCleanup(accountId); completed(); } catch (error) { failed(error); throw error; } });
+  executor.connectPublishing(true, true); await completion;
+  expect(syncs).toBeGreaterThanOrEqual(2); expect(await executor.publishingAccounts.store(id).read("account.json")).toMatchObject({ deleted: true, purge: { pending: false } });
+  expect(await executor.publishingAccounts.auth(id).tokens()).toBeNull(); await expect(executor.publishingAccounts.begin(id, "main", "alice")).rejects.toMatchObject({ code: "ACCOUNT_DELETED" });
+  expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url).includes("/revoke"))).toHaveLength(1);
+}, 20_000);
 
 it("continues other publishing work while one account's revoke remains pending", async () => {
   const id = randomUUID(); const other = randomUUID(); const transport = new Transport("https://cloud.example.invalid", "pc", "b".repeat(64));
   vi.spyOn(transport, "post").mockImplementation(async route => route.endsWith("/sync") ? { acknowledged: [], cleanups: [{ id: randomUUID(), accountId: id, instanceId: "main", createdAt: Date.now() }], accounts: [] } as never : { ok: true } as never);
-  const executor = new Executor(transport); await connect(executor.publishingAccounts, id); await connect(executor.publishingAccounts, other, "two"); const tick = vi.spyOn(executor.publishing, "tick").mockResolvedValue(undefined);
+  const executor = createExecutor(transport); await connect(executor.publishingAccounts, id); await connect(executor.publishingAccounts, other, "two"); const tick = vi.spyOn(executor.publishing, "tick").mockResolvedValue(undefined);
   vi.mocked(fetch).mockResolvedValue(Response.json({}, { status: 503 })); executor.connectPublishing(true, true);
   await vi.waitFor(() => expect(tick).toHaveBeenCalled()); expect((await executor.publishingAccounts.auth(other).tokens())?.channelId).toBe("channel_two"); await expect(executor.publishingAccounts.begin(id, "main", "alice")).rejects.toMatchObject({ code: "CLEANUP" }); await executor.stopPublishing();
 });

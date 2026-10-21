@@ -6,6 +6,7 @@ import { readFile, unlink, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { problemSchema, makeProblem, type Problem } from "../src/shared/problems";
 import type { AgentSnapshot } from "../src/shared/remote";
+import type { ControlState } from "../src/shared/types";
 import { environment, type Settings } from "./settings";
 import { agentEnvironment, type ProxyResolver } from "./agent-network";
 export class AgentHost {
@@ -94,6 +95,17 @@ export class AgentHost {
       const timer = setTimeout(() => { this.replies.delete(id); reject(new AppError("AGENT_CONNECTION", "维护响应超时，请重连后恢复；没有开始强制重启。")); }, 40_000);
       this.replies.set(id, { resolve: value => resolve(value as T), reject, timer });
       void this.send(child, { type: "rpc", id, route, data }).catch(error => { clearTimeout(timer); this.replies.delete(id); reject(error); });
+    });
+  }
+  /** 本机停止仅发固定 IPC，不经过 Cloud；通道失败或超时仍保留 Agent 与 OBS。 */
+  localStop(instanceId: string): Promise<ControlState> {
+    const child = this.child;
+    if (!child?.connected) return Promise.reject(new AppError("AGENT_CONNECTION", "本机 Agent 未运行，请恢复客户端后重试，必要时在 OBS 手动停止。"));
+    const id = randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { this.replies.delete(id); reject(new AppError("AGENT_CONNECTION", "本机停止结果尚未确认，请检查 OBS；不要重复开播。")); }, 40_000);
+      this.replies.set(id, { resolve: value => resolve(value as ControlState), reject, timer });
+      void this.send(child, { type: "local-stop", id, instanceId }).catch(error => { clearTimeout(timer); this.replies.delete(id); reject(error); });
     });
   }
   /** 等待首次心跳；已有明确错误立即交还重试入口，后台 Agent 保持自动重连。 */

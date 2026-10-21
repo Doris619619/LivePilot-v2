@@ -29,6 +29,14 @@ it("coalesces concurrent starts and sends init only after spawn", async () => {
   expect(spawn).toHaveBeenCalledTimes(1); expect(child.send).toHaveBeenCalledTimes(1);
   await host.start(settings, "fixture", async () => {}); expect(spawn).toHaveBeenCalledTimes(1);
 });
+it("sends a local-only stop through the existing child IPC even during cloud outage", async () => {
+  const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
+  child.emit("message", { type: "error", code: "CLOUD_NETWORK", message: "synthetic outage" });
+  const request = host.localStop("main"); const message = child.send.mock.calls.at(-1)![0] as { type: string; id: string; instanceId: string };
+  expect(message).toMatchObject({ type: "local-stop", instanceId: "main" });
+  child.emit("message", { type: "reply", id: message.id, result: { phase: "stopping", platformClosePending: true } });
+  expect(await request).toMatchObject({ platformClosePending: true });
+});
 it("rejects pending RPC on close and removes the dead reference", async () => {
   const host = new AgentHost(); await host.start(settings, "fixture", async () => {});
   const result = expect(host.rpc("maintenance-begin", {})).rejects.toThrow("关闭");

@@ -1,4 +1,5 @@
 /** 独立发布账号的 Cloud 权限、频道占位、清理隔离与 OAuth 路由；所有 Google 和 Agent RPC 都为合成数据。 */
+import { seedTestYouTubeBaseline } from "./youtube-usage-baseline";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { mkdtemp, rm } from "node:fs/promises";
 import path from "node:path";
@@ -36,6 +37,8 @@ beforeEach(async () => {
   });
 });
 /** 只删除经路径检查的本次临时目录，不访问客户数据或 Token。 */
+/** 新配额保护要求显式合成基线，不能依赖生产默认放行。 */
+beforeEach(async () => { await seedTestYouTubeBaseline(); });
 afterEach(async () => { vi.useRealTimers(); vi.unstubAllEnvs(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("publishing-account-cloud-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });
 /** 模拟真实 Agent 的占位先于 Token、确认随后到达，不交换 OAuth code。 */
 async function connected(channelId: string): Promise<PublishingAccount> {

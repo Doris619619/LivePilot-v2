@@ -7,6 +7,8 @@ import { AppError, sleep } from "../errors";
 import type { JobSpec } from "@/shared/publishing";
 import type { z } from "zod";
 import type { videoCopySchema } from "@/shared/video-metadata";
+import { youtubeMethodSchema, type YouTubeMethod } from "@/shared/youtube-usage";
+import { withYouTubeContext, youtubeFetch, YouTubePageGuard, type YouTubeContext } from "./usage";
 export type VideoResource = { id: string; etag?: string; snippet?: Record<string, unknown> & { title?: string; channelId?: string }; status?: Record<string, unknown> & { privacyStatus?: "private" | "public" | "unlisted"; uploadStatus?: string; publishAt?: string }; processingDetails?: { processingStatus?: string } };
 export type UploadProbe = { offset: number; videoId?: string; expired?: boolean };
 export type Charge = (units: number, upload: boolean) => Promise<void>;
@@ -32,49 +34,53 @@ export function validateSession(uri: string) {
   return url.href;
 }
 export class VideoApi implements VideoPort {
-  /** 注入项目配额 admission；授权仍由现有实例 Auth 持有。 */
-  constructor(private auth: YouTubeAuth, private charge: Charge) {}
+  /** 旧 charge 参数保留调用兼容但不再扣账；所有成本由统一 Cloud 白名单准入计算。 */
+  constructor(private auth: YouTubeAuth, _charge?: Charge, private usageContext?: Partial<YouTubeContext>) {}
   /** 固定 API 地址并重新取得短期 access token；不重放写请求。 */
-  private async request(url: string, init: RequestInit = {}, units = 1, upload = false) {
-    await this.charge(units, upload); return this.fetchAuthorized(url, init, () => this.charge(units, upload));
+  private async request(url: string, init: RequestInit = {}) {
+    const resource = new URL(url).pathname.split("/").filter(Boolean);
+    const name = resource.includes("thumbnails") ? "thumbnails.set" : resource.at(-1) + "." + ((init.method || "GET") === "GET" ? "list" : init.method === "POST" ? "insert" : "update");
+    return this.fetchAuthorized(url, init, youtubeMethodSchema.parse(name));
   }
-  /** 首次401只刷新一次；GET可重读，写入和流式请求交回Runner核对检查点，不在HTTP层重放。 */
-  private async fetchAuthorized(url: string, init: RequestInit, chargeRead?: () => Promise<void>, recovered = false): Promise<Response> {
-    const token = await this.auth.access(); let response: Response;
-    try { response = await fetch(url, { ...init, headers: { ...init.headers, Authorization: "Bearer " + token.accessToken }, cache: "no-store", redirect: "manual", signal: init.signal || AbortSignal.timeout(30_000) }); }
-    catch { throw new VideoApiError("VIDEO_NETWORK", "YouTube 网络中断，结果等待核对。", true); }
+  /** 首次401只刷新一次；GET重读重新准入计量，写入和流式请求交回Runner核对检查点。 */
+  private async fetchAuthorized(url: string, init: RequestInit, method: YouTubeMethod, recovered = false): Promise<Response> {
+    const defaults: YouTubeContext = { ...(this.auth.requestContext || { instanceId: "main" }), purpose: "publishing", trigger: "publishing-tick", ...this.usageContext };
+    const token = await withYouTubeContext(defaults, () => this.auth.access()); let response: Response;
+    try { response = await youtubeFetch(method, defaults, () => fetch(url, { ...init, headers: { ...init.headers, Authorization: "Bearer " + token.accessToken }, cache: "no-store", redirect: "manual", signal: init.signal || AbortSignal.timeout(30_000) })); }
+    catch (error) { if (error instanceof AppError && ["YOUTUBE_PROTECTION_OFFLINE", "YOUTUBE_PROTECTION_WAIT", "YOUTUBE_DAILY_QUOTA"].includes(error.code)) throw error; throw new VideoApiError("VIDEO_NETWORK", "YouTube 网络中断，结果等待核对。", true); }
     if (response.status === 401 && !recovered) {
       await response.body?.cancel();
-      await this.auth.access(token.accessToken);
-      if (!init.method || init.method === "GET") { await chargeRead?.(); return this.fetchAuthorized(url, init, chargeRead, true); }
+      await withYouTubeContext(defaults, () => this.auth.access(token.accessToken));
+      if (!init.method || init.method === "GET") return this.fetchAuthorized(url, init, method, true);
       throw new VideoApiError("VIDEO_AUTH_REFRESHED", "授权已刷新，原操作等待核对后继续。", true);
     }
     if (response.status === 308 || response.status === 404) return response;
     if (!response.ok) {
       if (response.status === 412) { await response.body?.cancel(); throw new VideoApiError("VIDEO_CHANGED", "视频状态已改变，请重新核对后再操作。"); }
       const body = await response.json().catch(() => null) as { error?: { errors?: { reason?: string }[] } } | null;
-      const reason = body?.error?.errors?.[0]?.reason;
+      const reasons = body?.error?.errors?.map(item => item.reason) || [];
+      const reason = reasons.find(item => item === "quotaExceeded" || item === "dailyLimitExceeded") || reasons[0];
       const retry = response.headers.get("retry-after"); const retryAfterMs = retry ? Math.max(0, /^\d+$/.test(retry) ? Number(retry) * 1000 : Date.parse(retry) - Date.now()) : 0;
       throw new VideoApiError(response.status === 401 ? "YOUTUBE_AUTH" : reason === "quotaExceeded" || reason === "dailyLimitExceeded" ? "VIDEO_QUOTA" : response.status === 429 || response.status >= 500 ? "VIDEO_RETRY" : "VIDEO_REJECTED", response.status === 401 ? "YouTube 授权无效，请重新连接原频道。" : "YouTube 未接受请求（HTTP " + response.status + "），请核对频道权限、配额和视频设置。", response.status === 429 || response.status >= 500 || reason === "quotaExceeded" || reason === "dailyLimitExceeded", retryAfterMs);
     }
     return response;
   }
   /** 有界 JSON 请求，part 指定的可写字段由业务合并。 */
-  private async json<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown, units = 1, etag?: string): Promise<T> {
-    const response = await this.request("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), { method, headers: { "Content-Type": "application/json", ...(etag ? { "If-Match": etag } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, units);
+  private async json<T>(resource: string, params: Record<string, string>, method = "GET", body?: unknown, etag?: string, signal?: AbortSignal): Promise<T> {
+    const response = await this.request("https://www.googleapis.com/youtube/v3/" + resource + "?" + new URLSearchParams(params), { method, headers: { "Content-Type": "application/json", ...(etag ? { "If-Match": etag } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...(signal ? { signal } : {}) });
     if (!response.ok) { await response.body?.cancel(); throw new VideoApiError("VIDEO_MISSING", "YouTube 对象不存在或不可访问。"); }
     try { return await response.json() as T; } catch { throw new VideoApiError("VIDEO_RESPONSE", "YouTube 响应不完整，结果等待核对。", true); }
   }
   /** 仅开始私密上传；唯一临时标题用于未知末块结果的精确核对。 */
   async begin(job: JobSpec, marker: string) {
-    const response = await this.request("https://www.googleapis.com/upload/youtube/v3/videos?" + new URLSearchParams({ uploadType: "resumable", part: "snippet,status", notifySubscribers: String(job.profile.notifySubscribers) }), { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": String(job.asset.size), "X-Upload-Content-Type": "application/octet-stream" }, body: JSON.stringify({ snippet: { title: marker, categoryId: job.profile.categoryId }, status: { privacyStatus: "private", selfDeclaredMadeForKids: job.profile.madeForKids } }) }, 0, true);
+    const response = await this.request("https://www.googleapis.com/upload/youtube/v3/videos?" + new URLSearchParams({ uploadType: "resumable", part: "snippet,status", notifySubscribers: String(job.profile.notifySubscribers) }), { method: "POST", headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Length": String(job.asset.size), "X-Upload-Content-Type": "application/octet-stream" }, body: JSON.stringify({ snippet: { title: marker, categoryId: job.profile.categoryId }, status: { privacyStatus: "private", selfDeclaredMadeForKids: job.profile.madeForKids } }) });
     const uri = response.headers.get("location"); await response.body?.cancel();
     if (!response.ok || !uri) throw new VideoApiError("UPLOAD_SESSION", "上传会话未确认；没有发送视频数据。", true);
     return validateSession(uri);
   }
   /** 探测也可能返回最终 video resource；404 交由 Runner 判断能否安全重新上传。 */
   async probe(uri: string, total: number) {
-    const response = await this.fetchAuthorized(validateSession(uri), { method: "PUT", headers: { "Content-Length": "0", "Content-Range": "bytes */" + total } });
+    const response = await this.fetchAuthorized(validateSession(uri), { method: "PUT", headers: { "Content-Length": "0", "Content-Range": "bytes */" + total } }, "videos.upload.probe");
     return this.uploadResult(response, total);
   }
   /** 流式限速：每个小片发送前等待，限制整块内的瞬时速率而非上传后睡眠。 */
@@ -85,7 +91,7 @@ export class VideoApi implements VideoPort {
     /** 等待期间响应 Agent 的安全停止信号，不将旧 offset 当作确认。 */
     async function* limited() { try { for await (const chunk of stream) { if (signal?.aborted) throw new Error("stopped"); sent += chunk.length; const wait = start + sent * 8 / (mbps * 1000) - Date.now(); if (wait > 0) await sleep(wait); yield chunk; } } finally { stream.destroy(); } }
     try {
-      const response = await this.fetchAuthorized(validateSession(uri), { method: "PUT", headers: { "Content-Type": "application/octet-stream", "Content-Length": String(size), "Content-Range": `bytes ${offset}-${offset + size - 1}/${total}` }, body: Readable.toWeb(Readable.from(limited())) as ReadableStream, duplex: "half", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) } as RequestInit);
+      const response = await this.fetchAuthorized(validateSession(uri), { method: "PUT", headers: { "Content-Type": "application/octet-stream", "Content-Length": String(size), "Content-Range": `bytes ${offset}-${offset + size - 1}/${total}` }, body: Readable.toWeb(Readable.from(limited())) as ReadableStream, duplex: "half", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout) } as RequestInit, "videos.upload.chunk");
       return await this.uploadResult(response, total);
     } finally { stream.destroy(); }
   }
@@ -109,11 +115,15 @@ export class VideoApi implements VideoPort {
   async list(ids: string[]) { const data = await this.json<{ items?: VideoResource[] }>("videos", { part: "snippet,status,processingDetails", id: [...new Set(ids)].join(",") }); return data.items || []; }
   /** 通过所属频道 uploads playlist 精确匹配临时标题，禁止相似度猜测。 */
   async recover(marker: string, channelId: string) {
-    const channel = await this.json<{ items?: { id: string; contentDetails: { relatedPlaylists: { uploads: string } } }[] }>("channels", { part: "contentDetails", mine: "true" });
+    const pages = new YouTubePageGuard();
+    const channel = await this.json<{ items?: { id: string; contentDetails: { relatedPlaylists: { uploads: string } } }[] }>("channels", { part: "contentDetails", mine: "true" }, "GET", undefined, undefined, pages.signal);
+    pages.check();
     if (channel.items?.length !== 1 || channel.items[0].id !== channelId) throw new VideoApiError("CHANNEL", "授权频道与任务不一致。");
     let pageToken = ""; const found: string[] = [];
     do {
-      const result = await this.json<{ items?: { snippet: { title: string; resourceId: { videoId: string } } }[]; nextPageToken?: string }>("playlistItems", { part: "snippet", playlistId: channel.items[0].contentDetails.relatedPlaylists.uploads, maxResults: "50", ...(pageToken ? { pageToken } : {}) });
+      pages.next(pageToken);
+      const result = await this.json<{ items?: { snippet: { title: string; resourceId: { videoId: string } } }[]; nextPageToken?: string }>("playlistItems", { part: "snippet", playlistId: channel.items[0].contentDetails.relatedPlaylists.uploads, maxResults: "50", ...(pageToken ? { pageToken } : {}) }, "GET", undefined, undefined, pages.signal);
+      pages.check();
       found.push(...(result.items || []).filter(v => v.snippet.title === marker).map(v => v.snippet.resourceId.videoId)); pageToken = result.nextPageToken || "";
     } while (pageToken);
     return found;
@@ -121,14 +131,14 @@ export class VideoApi implements VideoPort {
   /** 图片由 Agent 本地读取，独立失败不重新上传视频。 */
   async thumbnail(videoId: string, file: string) {
     const info = await stat(file); const stream = createReadStream(file);
-    try { const response = await this.request("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?" + new URLSearchParams({ videoId, uploadType: "media" }), { method: "POST", headers: { "Content-Type": /\.png$/i.test(file) ? "image/png" : "image/jpeg", "Content-Length": String(info.size) }, body: Readable.toWeb(stream) as ReadableStream, duplex: "half", signal: AbortSignal.timeout(120_000) } as RequestInit, 50); if (!response.ok) throw new VideoApiError("THUMBNAIL", "缩略图上传未确认。"); await response.body?.cancel(); } finally { stream.destroy(); }
+    try { const response = await this.request("https://www.googleapis.com/upload/youtube/v3/thumbnails/set?" + new URLSearchParams({ videoId, uploadType: "media" }), { method: "POST", headers: { "Content-Type": /\.png$/i.test(file) ? "image/png" : "image/jpeg", "Content-Length": String(info.size) }, body: Readable.toWeb(stream) as ReadableStream, duplex: "half", signal: AbortSignal.timeout(120_000) } as RequestInit); if (!response.ok) throw new VideoApiError("THUMBNAIL", "缩略图上传未确认。"); await response.body?.cancel(); } finally { stream.destroy(); }
   }
   /** 对重试先查成员关系；只允许当前频道拥有的 Playlist。 */
   async playlist(videoId: string, playlistId: string) {
     const owned = await this.json<{ items?: { snippet: { channelId: string } }[] }>("playlists", { part: "snippet", id: playlistId }); const token = await this.auth.tokens();
     if (!owned.items?.length || owned.items[0].snippet.channelId !== token?.channelId) throw new VideoApiError("PLAYLIST", "所选 Playlist 不属于当前频道。");
     const existing = await this.json<{ items?: unknown[] }>("playlistItems", { part: "id", playlistId, videoId, maxResults: "1" });
-    if (!existing.items?.length) await this.json("playlistItems", { part: "snippet" }, "POST", { snippet: { playlistId, resourceId: { kind: "youtube#video", videoId } } }, 50);
+    if (!existing.items?.length) await this.json("playlistItems", { part: "snippet" }, "POST", { snippet: { playlistId, resourceId: { kind: "youtube#video", videoId } } });
   }
   /** 更新时保留可写字段，并只修改刚读取的版本；已经公开的视频不重新私密排期。 */
   async finalize(id: string, job: JobSpec, copy: z.infer<typeof videoCopySchema>, publishAt?: string) {
@@ -140,7 +150,7 @@ export class VideoApi implements VideoPort {
     const p = job.profile;
     const snippet = { ...pick(current.snippet, ["title", "description", "tags", "categoryId", "defaultLanguage", "defaultAudioLanguage"]), ...copy, tags: p.tags, categoryId: p.categoryId };
     const status = { ...pick(current.status, ["privacyStatus", "license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: publishAt ? "private" : p.privacy, license: p.license, embeddable: p.embeddable, selfDeclaredMadeForKids: p.madeForKids, containsSyntheticMedia: p.containsSyntheticMedia, ...(publishAt ? { publishAt } : {}) };
-    await this.json("videos", { part: "snippet,status" }, "PUT", { id, snippet, status }, 50, current.etag);
+    await this.json("videos", { part: "snippet,status" }, "PUT", { id, snippet, status }, current.etag);
   }
   /** 按回读版本取消排期；公开或并发变更时不覆盖远端可见性。 */
   async unschedule(id: string) {
@@ -148,7 +158,7 @@ export class VideoApi implements VideoPort {
     if (current.status?.privacyStatus === "public") throw new VideoApiError("ALREADY_PUBLIC", "视频已经公开，未自动下架，请在 YouTube Studio 处理。");
     if (!current.etag || !current.status?.privacyStatus) throw new VideoApiError("CANCEL_UNCONFIRMED", "取消前未能确认视频版本和可见性，请重新核对。");
     if (!current.status.publishAt) return;
-    await this.json("videos", { part: "status" }, "PUT", { id, status: { ...pick(current.status, ["license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: current.status.privacyStatus } }, 50, current.etag);
+    await this.json("videos", { part: "status" }, "PUT", { id, status: { ...pick(current.status, ["license", "embeddable", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"]), privacyStatus: current.status.privacyStatus } }, current.etag);
     const after = (await this.list([id]))[0];
     if (after?.status?.privacyStatus === "public") throw new VideoApiError("ALREADY_PUBLIC", "视频已经公开，取消未应用，请在 YouTube Studio 核对。");
     if (!after || !after.status?.privacyStatus || after.status.publishAt) throw new VideoApiError("CANCEL_UNCONFIRMED", "YouTube 取消排期尚未确认。", true);

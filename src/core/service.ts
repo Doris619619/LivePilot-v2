@@ -1,5 +1,6 @@
 /** 按实例缓存独立控制服务；一个实例的长操作不阻塞其他实例。 */
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { claimHost } from "./ownership";
 import { Commands } from "./commands";
 import type { Dashboard } from "@/shared/types";
@@ -20,6 +21,7 @@ import { YouTubeLiveChat } from "./youtube/live-chat";
 import { generateLiveChatReply, liveChatAiConfigured } from "./live-chat-ai";
 import type { Broadcast } from "./youtube/api";
 import type { LiveChatConfig, LiveChatTarget } from "@/shared/live-chat";
+import { recordYouTubeCache, withYouTubeContext, youtubeBackgroundInterval, YouTubeProtectionError } from "./youtube/usage";
 export class Service {
   readonly auth: YouTubeAuth;
   readonly youtube: YouTubeApi;
@@ -40,7 +42,7 @@ export class Service {
     this.control = new Control(this.obs, this.youtube, storage, async selection => ({
       video: await resolveMedia(readConfig().mediaRoot, "videos", selection.video),
       music: await resolveMedia(readConfig().mediaRoot, "music", selection.music),
-    }), undefined, async selection => { if (selection.broadcast?.liveChat) await this.chat.configure(selection.broadcast.liveChat); });
+    }), undefined, async selection => { if (selection.broadcast?.liveChat) await this.chat.configure(selection.broadcast.liveChat); }, () => this.chat.broadcastStopping());
     this.commands = new Commands(new Store(path.join(storage.dir, "commands")), this.control, id, () => this.invalidate());
     const chatApi = new YouTubeLiveChat(this.auth);
     this.chat = new LiveChatRunner(storage, {
@@ -67,31 +69,49 @@ export class Service {
   private broadcastReading?: { key: string; generation: number; value: Promise<Broadcast | null> };
   private broadcastGeneration = 0;
   private ytCache?: { key: string; at: number; value: Dashboard["youtube"] };
+  private channelCache?: { key: string; at: number; title: string };
+  private channelReading?: { key: string; value: Promise<string> };
+  private credentialsFingerprint?: string;
   private reading?: Promise<Dashboard>;
   /** 控制操作完成后丢弃所属实例的 YouTube 状态缓存。 */
   invalidate() { this.ytCache = undefined; this.broadcastCache = undefined; this.broadcastGeneration++; }
   /** 频道授权成功后通知聊天；聊天检查点异常不能把成功授权误报成失败。 */
   async refreshChatCredentials() {
-    this.invalidate();
-    await this.chat.keyChanged().catch(() => { /* 聊天故障由独立状态上报，凭据保存事实保留。 */ });
+    const tokens = await this.auth.tokens();
+    const fingerprint = createHash("sha256").update(JSON.stringify([config(this.id).clientId, tokens?.channelId, tokens?.refreshToken])).digest("hex");
+    if (fingerprint === this.credentialsFingerprint) return;
+    this.credentialsFingerprint = fingerprint; this.channelCache = undefined; this.invalidate();
+    await this.refreshChatEnvironment();
   }
-  /** 聊天和仪表盘共用场次查询及30秒缓存，避免空聊天额外持续消耗 REST 配额。 */
+  /** AI 环境更新取消旧生成和聊天连接，但不使已核对的平台缓存失效。 */
+  async refreshChatEnvironment() { await this.chat.keyChanged().catch(() => { /* 聊天故障独立上报，不覆盖授权保存事实。 */ }); }
+  /** 频道名称最多每日刷新一次；并发 dashboard 共用一次查询。 */
+  private async readChannel(channelId: string): Promise<string> {
+    const defaults = { instanceId: this.id, purpose: "background", trigger: "metadata" } as const;
+    if (this.channelCache?.key === channelId && Date.now() - this.channelCache.at < 86400_000) { recordYouTubeCache("channels.list", defaults); return this.channelCache.title; }
+    if (this.channelReading?.key === channelId) return this.channelReading.value;
+    const reading = withYouTubeContext(defaults, () => this.youtube.channel()).then(channel => { this.channelCache = { key: channelId, at: Date.now(), title: channel.title }; return channel.title; });
+    this.channelReading = { key: channelId, value: reading };
+    try { return await reading; } finally { if (this.channelReading?.value === reading) this.channelReading = undefined; }
+  }
+  /** 聊天与仪表盘共用预算驱动的平台巡检；终态不再发起周期查询。 */
   private async readBroadcast(id: string, channelId: string): Promise<Broadcast | null> {
     const key = channelId + ":" + id;
-    if (this.broadcastCache?.key === key && Date.now() - this.broadcastCache.at < 30_000) return this.broadcastCache.value;
+    const defaults = { instanceId: this.id, purpose: "background", trigger: "chat-observe" } as const;
+    if (this.broadcastCache?.key === key && (this.broadcastCache.value?.status.lifeCycleStatus === "complete" || Date.now() - this.broadcastCache.at < youtubeBackgroundInterval())) { recordYouTubeCache("liveBroadcasts.list", defaults); return this.broadcastCache.value; }
     if (this.broadcastReading?.key === key && this.broadcastReading.generation === this.broadcastGeneration) return this.broadcastReading.value;
     const generation = this.broadcastGeneration;
-    const reading = this.youtube.broadcast(id).then(value => { if (generation === this.broadcastGeneration) this.broadcastCache = { key, at: Date.now(), value }; return value; });
+    const reading = withYouTubeContext(defaults, () => this.youtube.broadcast(id)).then(value => { if (generation === this.broadcastGeneration) this.broadcastCache = { key, at: Date.now(), value }; return value; });
     this.broadcastReading = { key, generation, value: reading };
     try { return await reading; } finally { if (this.broadcastReading?.value === reading) this.broadcastReading = undefined; }
   }
   /** 每次发送前重新读取本机场次与停止意图；实际直播和聊天可用性来自 YouTube。 */
   private async observeChat(): Promise<LiveChatTarget> {
     const [state, tokens] = await Promise.all([this.control.state(), this.auth.tokens()]);
-    if (!tokens || !state.broadcastId || ["idle", "stopping", "stopped"].includes(state.phase)) return { channelId: tokens?.channelId, broadcastId: state.broadcastId, live: false };
+    if (!tokens || !state.broadcastId || state.stopRequested || ["idle", "stopping", "stopped"].includes(state.phase)) return { channelId: tokens?.channelId, broadcastId: state.broadcastId, live: false };
     const broadcast = await this.readBroadcast(state.broadcastId, tokens.channelId);
     const current = await this.control.state();
-    if (current.broadcastId !== state.broadcastId || ["idle", "stopping", "stopped"].includes(current.phase)) return { channelId: tokens.channelId, broadcastId: current.broadcastId, live: false };
+    if (current.broadcastId !== state.broadcastId || current.stopRequested || ["idle", "stopping", "stopped"].includes(current.phase)) return { channelId: tokens.channelId, broadcastId: current.broadcastId, live: false };
     return { channelId: tokens.channelId, broadcastId: state.broadcastId, live: broadcast?.status.lifeCycleStatus === "live", liveChatId: broadcast?.snippet.liveChatId, available: !!broadcast?.snippet.liveChatId };
   }
   /** 合并同一实例的并发读取，不与其他实例共享读取锁。 */
@@ -113,16 +133,19 @@ export class Service {
       const tokens = await this.auth.tokens();
       if (tokens) {
         const cacheKey = [tokens.channelId, state.broadcastId, state.streamId].join(":");
-        if (this.ytCache?.key === cacheKey && Date.now() - this.ytCache.at < 30_000) youtube = this.ytCache.value;
+        const previous = this.ytCache?.key === cacheKey ? this.ytCache.value : undefined;
+        const settled = state.phase === "idle" || state.phase === "stopped" || state.stopRequested || state.platformClosePending || previous?.lifecycle === "complete";
+        const protectionRetry = previous?.problem?.context?.retryAt;
+        if (settled) youtube = { ...previous, connected: true, authorization: "present", query: previous?.query || "ready", channel: this.channelCache?.key === tokens.channelId ? this.channelCache.title : tokens.channel, channelId: tokens.channelId, ...(state.phase === "stopped" && !state.platformClosePending ? { lifecycle: "complete" } : {}) };
+        else if (this.ytCache?.key === cacheKey && (protectionRetry ? Date.now() < protectionRetry : Date.now() - this.ytCache.at < youtubeBackgroundInterval())) youtube = this.ytCache.value;
         else {
           youtube = { connected: true, authorization: "present", query: "ready", channel: tokens.channel, channelId: tokens.channelId };
           try {
-            const channel = await this.youtube.channel();
-            youtube.channel = channel.title;
+            youtube.channel = await this.readChannel(tokens.channelId);
             if (state.broadcastId) youtube.lifecycle = (await this.readBroadcast(state.broadcastId, tokens.channelId))?.status.lifeCycleStatus || "missing";
-            if (state.streamId) youtube.ingest = (await this.youtube.stream(state.streamId))?.status.streamStatus || "missing";
+            if (state.streamId && youtube.lifecycle !== "complete") youtube.ingest = (await withYouTubeContext({ instanceId: this.id, purpose: "background", trigger: "dashboard" }, () => this.youtube.stream(state.streamId!)))?.status.streamStatus || "missing";
             youtube.checkedAt = new Date().toISOString();
-          } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome:"rejected"}); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
+          } catch (e) { const problem = problemFor(e, {target:{instanceId:this.id}, stage:"查询 YouTube", outcome: e instanceof YouTubeProtectionError ? "not-sent" : "rejected", ...(e instanceof YouTubeProtectionError ? { context: { retryAt: e.retryAt } } : {}) }); const invalid = ["GOOGLE_AUTH","YOUTUBE_AUTH"].includes(problem.code); youtube = { connected: !invalid, authorization: invalid ? "invalid" : "present", query: "failed", channel: tokens.channel, channelId: tokens.channelId, error: safeError(e), problem }; }
           this.ytCache = { key: cacheKey, at: Date.now(), value: youtube };
         }
       }

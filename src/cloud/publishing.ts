@@ -21,25 +21,28 @@ import { authorizePublishingAccount, completePublishingAccountCleanup, createPub
 import { PRIVACY_VERSION, defaultPolicy, policySchema, profileSchema, assetsResultSchema, packagesResultSchema, planRuleSchema, jobSpecSchema, publishingTerminal, canRepublishPublishingJob, type JobSpec, type ItemOverride, type PublishingProfile, type PublishingPolicy, type PublishingPlan, type PublishingPlanItem, type MediaAsset, type VideoJob, type PublishingReport, publishingRepairSchema, type PublishingRepair } from "@/shared/publishing";
 import { readPublishingTemplates } from "@/server/publishing-templates";
 import { publishingCopyForUse, type PublishingCopyOptions } from "@/shared/publishing-copy-options";
+import { chargeLegacyYouTubePublishing, reserveYouTubePublishing, releaseYouTubePublishing, seedLegacyYouTubePublishing } from "./youtube-usage";
 import { bindPublishingTemplate, type PublishingUse } from "@/shared/publishing-template";
 type Profile = { owner: string; value: PublishingProfile };
 type Batch = { id: string; owner: string; actor: string; profile: PublishingProfile; assets: MediaAsset[]; thumbnails: string[]; copies: { title: string; description: string }[]; slots: { publishAt: string; local: string; overlapping: boolean }[]; skipped: string[]; confirmedAt?: number; createdAt: number };
 type Cleanup = { id: string; owner: string; actor: string; agentId: string; instanceId: string; createdAt: number; deadline: number; state: "pending" | "complete"; completedAt?: number };
 type Budget = { day: string; uploads: number; units: number; receipts: string[]; reservations?: Record<string, { uploads: number; units: number }> };
 type PlanRecord = PublishingPlan & { archiveDestination?: string };
-type State = { policy: PublishingPolicy; profiles: Profile[]; batches: Batch[]; plans: PlanRecord[]; schedulePreviews: SchedulePreview[]; removals: BatchRemovalRecord[]; jobs: VideoJob[]; consents: Record<string, { version: string; acceptedAt: number }>; cleanups: Cleanup[]; quota: Record<string, Budget> };
+type State = { youtubeQuotaMigratedDay?: string; policy: PublishingPolicy; profiles: Profile[]; batches: Batch[]; plans: PlanRecord[]; schedulePreviews: SchedulePreview[]; removals: BatchRemovalRecord[]; jobs: VideoJob[]; consents: Record<string, { version: string; acceptedAt: number }>; cleanups: Cleanup[]; quota: Record<string, Budget> };
 /** 当日项目账本在 admission 前初始化，预留不计作已发生的请求。 */
 function quotaBudget(s: State, key: string) { if (s.quota[key]?.day !== quotaDay()) s.quota[key] = { day: quotaDay(), uploads: 0, units: 0, receipts: [], reservations: {} }; s.quota[key].reservations ??= {}; return s.quota[key]; }
 /** 计算尚未消费的预留；可排除本任务以避免将自己的预算重复计算。 */
 function reserved(budget: Budget, excluding?: string) { return Object.entries(budget.reservations || {}).filter(([id]) => id !== excluding).reduce((sum, [, v]) => ({ uploads: sum.uploads + v.uploads, units: sum.units + v.units }), { uploads: 0, units: 0 }); }
 /** 派发前预留完整整理步骤与初始查询的估算，不够时 Cloud 保留计划等待重置。 */
-function reserveJob(s: State, job: VideoJob) {
+async function reserveJob(s: State, job: VideoJob) {
   if (job.spec.reconcileRevision === job.spec.revision) return true;
   const budget = quotaBudget(s, job.spec.policy.projectKey);
-  if (budget.reservations![job.spec.id] || publishingTerminal(job.observed?.state) || ["scheduled", "paused"].includes(job.observed?.state || "") || job.spec.desired !== "run") return true;
+  if (publishingTerminal(job.observed?.state) || ["scheduled", "paused"].includes(job.observed?.state || "") || job.spec.desired !== "run") return true;
+  const existing = budget.reservations![job.spec.id]; if (existing) { if (await reserveYouTubePublishing(job.spec.id, existing.units, existing.uploads)) return true; job.blockReason = "等待全项目 YouTube 配额基线、可用预算及太平洋时间重置。"; job.budgetWaiting = true; return false; }
   const estimate = { uploads: job.observed?.videoId ? 0 : 1, units: 54 + (job.spec.profile.thumbnailMode === "none" ? 0 : 50) + 52 * job.spec.profile.playlistIds.length };
   const other = reserved(budget);
   if (budget.uploads + other.uploads + estimate.uploads > s.policy.uploadsPerDay || budget.units + other.units + estimate.units > s.policy.otherUnitsPerDay) { job.blockReason = "等待项目发布预算及太平洋时间配额日重置。"; job.budgetWaiting = true; return false; }
+  if (!await reserveYouTubePublishing(job.spec.id, estimate.units, estimate.uploads)) { job.blockReason = "等待全项目 YouTube 配额基线、可用预算及太平洋时间重置。"; job.budgetWaiting = true; return false; }
   budget.reservations![job.spec.id] = estimate; delete job.blockReason; delete job.budgetWaiting; return true;
 }
 /** 用户删除或已确认授权失效共用清理记录；本地源文件不在此范围内。 */
@@ -58,10 +61,16 @@ async function readState() { const saved = await publishingStore().read<State>("
 /** 自有上传执行事实不随 API 数据过期删除；进入上传阶段保守视为可能已建立远端会话。 */
 function uploadObserved(report?: PublishingReport) { return !!report && (!!report.videoId || report.offset > 0 || ["uploading", "processing", "finalizing", "scheduled", "published", "completed"].includes(report.state)); }
 /** 所有编辑使用同一短事务，网络 RPC 位于事务之外。 */
-async function edit<T>(fn: (state: State) => Promise<T> | T) { const store = publishingStore(); return transaction(store, async () => { const state = await readState(); const originalProfiles = [...state.profiles]; const result = await fn(state);
+async function edit<T>(fn: (state: State) => Promise<T> | T) { const store = publishingStore(); return transaction(store, async () => { const state = await readState();
+    if (state.youtubeQuotaMigratedDay !== quotaDay()) { const old = Object.values(state.quota).filter(value => value.day === quotaDay()); const reservations: Record<string, { units: number; uploads: number }> = {};
+      for (const budget of old) for (const [id, amount] of Object.entries(budget.reservations || {})) reservations[id] = { units: Math.max(reservations[id]?.units || 0, amount.units), uploads: Math.max(reservations[id]?.uploads || 0, amount.uploads) };
+      await seedLegacyYouTubePublishing({ day: quotaDay(), units: old.reduce((sum, value) => sum + value.units, 0), uploads: old.reduce((sum, value) => sum + value.uploads, 0), reservations }); state.youtubeQuotaMigratedDay = quotaDay(); }
+    const originalReservations = new Set(Object.values(state.quota).flatMap(budget => Object.keys(budget.reservations || {}))); const originalProfiles = [...state.profiles]; const result = await fn(state);
     // 清理频道前先保留其所属账号的通用规则，避免尚未打开设置的旧包丢失。
     for (const owner of new Set(originalProfiles.filter(profile => !state.profiles.some(current => current.value.id === profile.value.id)).map(profile => profile.owner))) await readPublishingTemplates({ username: owner, role: "customer" });
-    finishBatchRemovals(state.removals, state.jobs); for (const removal of state.removals.filter(record => record.completedAt)) for (const id of removal.jobIds) for (const budget of Object.values(state.quota)) delete budget.reservations?.[id]; await store.write("state.json", state); return result; }, "publishing.lock"); }
+    finishBatchRemovals(state.removals, state.jobs); for (const removal of state.removals.filter(record => record.completedAt)) for (const id of removal.jobIds) for (const budget of Object.values(state.quota)) delete budget.reservations?.[id];
+    const remaining = new Set(Object.values(state.quota).flatMap(budget => Object.keys(budget.reservations || {}))); const released = [...originalReservations].filter(id => !remaining.has(id)); if (released.length) await releaseYouTubePublishing(released);
+    await store.write("state.json", state); return result; }, "publishing.lock"); }
 /** 当前设备归属决定可见性，不依据创建任务时的旧所有者授予访问。 */
 async function visible(user: Member) { return new Set((await listAgents()).filter(a => user.role === "admin" || a.owner === user.username).map(a => a.id)); }
 /** 写事务内重新核对设备和授权；清理先停用账号再取得此锁，迟到扫描不能复活已删除的数据。 */
@@ -431,6 +440,7 @@ export async function chargePublishing(agentId: string, id: string, receipt: str
     if (budget.receipts.includes(receipt)) return { ok: true };
     const others = reserved(budget, job.spec.id); const own = budget.reservations![job.spec.id];
     if (budget.uploads + others.uploads + Math.max(Number(upload), own?.uploads || 0) > s.policy.uploadsPerDay || budget.units + others.units + Math.max(units, own?.units || 0) > s.policy.otherUnitsPerDay) throw new AppError("VIDEO_QUOTA", "普通发布的项目预算已用完，等待太平洋时间配额日重置。", 503);
+    await chargeLegacyYouTubePublishing(agentId, job.spec.id, receipt, units, upload);
     if (own) { own.uploads = Math.max(0, own.uploads - Number(upload)); own.units = Math.max(0, own.units - units); }
     if (upload) job.hadUpload = true;
     budget.uploads += Number(upload); budget.units += units; budget.receipts.push(receipt); return { ok: true };

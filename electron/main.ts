@@ -81,7 +81,11 @@ async function launch() {
   ipcMain.handle("desktop:copy-problem", (event, value) => { trusted(event); clipboard.writeText(problemSummary(problemSchema.parse(value))); return true; });
   const action = z.enum(["launch-obs", "restore-candidate", "replace-candidate", "retire", "restore-program", "scan", "scan-cancel", "import-obs", "firewall", "diagnose-obs", "check", "prepare", "pair", "start", "add", "rename", "attach", "repair", "repair-managed", "discard", "directory", "open-data", "open-publishing", "autostart", "web", "update-check", "update-download", "update-install", "update-apply"]);
   ipcMain.handle("desktop:act", async (event, name, input) => {
-    try { trusted(event); if (name === "unpair") {
+    try { trusted(event); if (name === "stop-local") {
+        const value = z.object({ id: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/) }).strict().parse(input);
+        await access.stopLocal(value.id); return { ok: true, state: manager.state() };
+      }
+      if (name === "unpair") {
         if (input?.confirmed !== true) throw new AppError("INPUT", "请确认删除这台设备绑定。");
         await access.remove(); return { ok: true, state: manager.state() };
       }
