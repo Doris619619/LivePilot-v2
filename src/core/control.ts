@@ -93,7 +93,13 @@ export class Control {
         } else {
           const title = "LivePilot " + new Date().toISOString().replace(/[:.]/g, "-") + " " + randomBytes(4).toString("hex");
           await this.save(state, { broadcastTitle: title, broadcastIntent: true });
-          const created = await this.youtube.createBroadcast(title, selection.broadcast);
+          let created;
+          try { created = await this.youtube.createBroadcast(title, selection.broadcast); }
+          catch (error) {
+            // 只有该次创建确定未发送才回收意图；真实请求的丢失响应仍必须按原标题查重。
+            if (isAppError(error) && error.problem?.outcome === "not-sent") await this.save(state, { broadcastIntent: false, broadcastTitle: undefined });
+            throw error;
+          }
           if (!created.id) throw new AppError("YOUTUBE_API", "YouTube 未返回场次标识，请重试以核对创建结果。");
           await this.save(state, { broadcastId: created.id, broadcastIntent: false });
         }
@@ -122,7 +128,13 @@ export class Control {
           await this.save(state, { streamId: found.id, streamIntent: false });
         } else {
           await this.save(state, { streamTitle: "LivePilot-v2 " + randomBytes(12).toString("hex"), streamIntent: true });
-          const created = await this.youtube.createStream(state.streamTitle!);
+          let created;
+          try { created = await this.youtube.createStream(state.streamTitle!); }
+          catch (error) {
+            // 广播身份已经落盘，只撤销尚未出站的推流对象意图，继续保留原场次和素材。
+            if (isAppError(error) && error.problem?.outcome === "not-sent") await this.save(state, { streamIntent: false, streamTitle: undefined });
+            throw error;
+          }
           if (!created.id) throw new AppError("YOUTUBE_API", "YouTube 未返回推流标识，请重试以核对结果。");
           await this.save(state, { streamId: created.id, streamIntent: false });
         }

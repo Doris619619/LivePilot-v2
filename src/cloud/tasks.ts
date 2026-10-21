@@ -9,7 +9,7 @@ import { playlistResultSchema, broadcastSchema } from "@/shared/broadcast";
 import { seal, unseal } from "@/core/storage";
 import { AppError, sleep } from "@/core/errors";
 import { ACCEPT_MS, PROTOCOL, publishingTaskAccountId, taskPayloadSchema, type RemoteTask, type TaskPayload, type TaskReport, type Target, type DeliveryState } from "@/shared/remote";
-import { operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
+import { snapshotSchema, operationSchema, uploadStatusSchema } from "@/shared/remote-validation";
 import type { CommandStatus } from "@/shared/types";
 import { requireTarget, agentStore, assertAgentActive } from "./agents";
 import { transaction } from "./store";
@@ -72,6 +72,11 @@ export async function pollTasks(agentId: string): Promise<RemoteTask[]> {
 }
 /** 只接受任务类型对应的公开输出；授权 Cookie 仅在加密结果中短暂保存。 */
 function resultFor(record: TaskRecord, value: unknown) {
+  if (record.kind === "broadcast-read") {
+    const snapshot = snapshotSchema.parse(value);
+    if (snapshot.instance.id !== record.instanceId) throw new AppError("INSTANCE", "设备上报了其他实例的平台核对结果。", 403);
+    return snapshot;
+  }
   if (record.kind === "live-chat-preview") return chatDecisionSchema.parse(value);
   if (record.kind === "live-chat-read" || record.kind === "live-chat-configure") return liveChatStatusSchema.parse(value);
   if (record.kind === "publishing-assets") return assetsResultSchema.parse(value);

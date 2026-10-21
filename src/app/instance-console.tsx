@@ -11,6 +11,7 @@ import ProblemCard from "./components/problem-card";
 import { makeProblem, configurationLabel, type Problem } from "../shared/problems";
 import { useInstance } from "./use-instance";
 import { targetKey } from "@/shared/remote";
+import { freshYouTubeEvidence } from "@/shared/youtube-evidence";
 import type { InstanceDescriptor } from "@/shared/types";
 import { StatusBadge } from "./components/status-indicator";
 import BroadcastRuntime from "./components/broadcast-runtime";
@@ -54,6 +55,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
     confirmed,
     setConfirmed,
     refresh,
+    checkPlatform,
     act,
     busy,
     live,
@@ -105,7 +107,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
 
   const stoppable = canStopBroadcast(data);
-  const ended = !stale && data?.youtube.query !== "failed" && data?.youtube.lifecycle === "complete" && data.obs.streaming === false && pending;
+  const ended = !stale && !!data && freshYouTubeEvidence(data.youtube) && data.youtube.lifecycle === "complete" && data.obs.streaming === false && pending;
   const actionMode = runtimeActionMode(runtimeInput);
   /** 摘要入口只定位到当前实例的开播区，不在摘要栏发送开停播命令。 */
   function showBroadcast() {
@@ -119,7 +121,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
   }
   const broadcastControls = <>
           {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
-          {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy} onClick={() => void refresh()}><RefreshIcon />重新检查状态</button>}
+          {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy} onClick={() => void checkPlatform()}><RefreshIcon />重新检查状态</button>}
           {actionMode === "confirm-obs" && <button type="button" className="btn-primary" disabled={busy} onClick={() => void act("launch")}>确认 OBS 已启动</button>}
           {(actionMode === "start" || actionMode === "retry" || actionMode === "resume") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{actionMode === "resume" ? "继续本场开播" : actionMode === "retry" ? "重试开播" : "开始直播"}</span>

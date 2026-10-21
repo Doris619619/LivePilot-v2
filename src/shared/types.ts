@@ -21,9 +21,9 @@ export type Dashboard = { problems?: Problem[];
   device?: { agentId: string; name: string; online: boolean; lastSeen: number; observedAt?: number };
   operation?: CommandStatus;
   state: ControlState; busy: boolean; obs: ObsStatus;
-  youtube: { problem?: Problem; authorization?: "missing" | "present" | "invalid"; query?: "ready" | "failed"; connected: boolean; channel?: string; channelId?: string; ingest?: string; lifecycle?: string; checkedAt?: string; error?: string };
+  youtube: { problem?: Problem; authorization?: "missing" | "present" | "invalid"; query?: "ready" | "failed"; connected: boolean; channel?: string; channelId?: string; ingest?: string; lifecycle?: string; checkedAt?: string; nextCheckAt?: string; error?: string };
   media: { problems?: Problem[]; videos: string[]; music: string[]; error?: string };
-  configuration: { broadcastDetails?: boolean; liveChat?: boolean; liveChatSelection?: boolean; chatConversation?: boolean; accountAi?: boolean; missing: string[]; privacy: string; madeForKids: boolean };
+  configuration: { youtubeRefresh?: boolean; broadcastDetails?: boolean; liveChat?: boolean; liveChatSelection?: boolean; chatConversation?: boolean; accountAi?: boolean; missing: string[]; privacy: string; madeForKids: boolean };
 };
 
 /** 浏览器可见的实例清单，不包含路径或凭据。 */

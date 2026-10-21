@@ -31,6 +31,7 @@ export class Executor {
   private observed = new Map<string, AgentSnapshot>();
   private publishingConnected = false; private publishingStopped = false; private publishingLoop?: Promise<void>;
   private accountsConnected = false;
+  private authorizationEvents = false;
   /** 每实例独立控制器；频道先在云端永久占用，再保存本机加密令牌。 */
   constructor(private transport: Transport) {
     validateInstances();
@@ -42,6 +43,7 @@ export class Executor {
     this.publishingAccounts = new PublishingAccounts(async (accountId, instanceId, channel, confirm) => { await transport.post("/api/agent/publishing/accounts-binding", { accountId, instanceId, ...channel, confirm }); });
     this.publishing = new PublishingRunner(this.services, {
       accountAuth: accountId => this.publishingAccounts.auth(accountId),
+      accountAuthorizationGeneration: accountId => this.publishingAccounts.authorizationGeneration(accountId),
       live: () => [...this.observed.values()].some(s => s.observedAt > Date.now() - 20_000 && (s.dashboard.obs.streaming === true || s.dashboard.youtube.lifecycle === "live" || s.dashboard.obs.reconnecting === true)),
       charge: async (job, units, upload) => { await this.transport.post("/api/agent/publishing/quota", { id: job.id, receipt: randomUUID(), units, upload }); },
     });
@@ -53,13 +55,17 @@ export class Executor {
     }));
   }
   /** 独立于心跳和旧 Worker 启动后台循环；旧 Cloud 不声明能力时不调用新路由。 */
-  connectPublishing(enabled: boolean, accountsEnabled = false) {
+  connectPublishing(enabled: boolean, accountsEnabled = false, authorizationEvents = false) {
     this.publishingConnected = enabled;
     this.accountsConnected = accountsEnabled;
+    this.authorizationEvents = authorizationEvents;
     if (this.publishingLoop || !enabled) return;
     this.publishingLoop = (async () => { while (!this.publishingStopped) { if (this.publishingConnected) try {
       const accounts = this.accountsConnected ? await this.publishingAccounts.statuses() : undefined;
-      const result = await this.transport.post<{ acknowledged: { id: string; sequence: number }[]; cleanups: { id: string; instanceId: string; accountId?: string; createdAt: number }[]; accounts?: PublishingAccount[] }>("/api/agent/publishing/sync", { reports: await this.publishing.reports(), busy: this.publishing.busy || this.publishingAccounts.busy, ...(accounts ? { accounts } : {}) });
+      const reports = await this.publishing.reports();
+      // 老Cloud的严格schema不认识新事件字段；仅在本会话双方协商后发送，旧boolean行为继续兼容。
+      if (!this.authorizationEvents) for (const report of reports) { delete report.authorizationGeneration; delete report.authorizationFailureId; }
+      const result = await this.transport.post<{ acknowledged: { id: string; sequence: number }[]; cleanups: { id: string; instanceId: string; accountId?: string; createdAt: number }[]; accounts?: PublishingAccount[] }>("/api/agent/publishing/sync", { reports, busy: this.publishing.busy || this.publishingAccounts.busy, ...(accounts ? { accounts } : {}) });
       await this.publishing.acknowledge(result.acknowledged);
       // Cloud 已确认删除而本机完成落盘/HTTP 响应丢失时，以永久 deleted 记录恢复清理确认。
       for (const account of result.accounts || []) if (account.status === "deleted" && accounts?.some(local => local.id === account.id && (local.cleanupPending || local.channelId))) { try { await this.cleanPublishingAccount(account.id, account.instanceId, account.deletedAt || account.updatedAt); } catch { /* 本机清理仍持久保留，下轮重试。 */ } }
@@ -127,8 +133,9 @@ export class Executor {
     const accountScoped = p.kind === "publishing-apply" ? !!p.job.profile.accountId : "accountId" in p && !!p.accountId;
     const clearing = await new Store(config(task.instanceId).dataDir).read<{ pending?: boolean }>("publishing-purge.json");
     if (clearing?.pending && !accountScoped && (p.kind.startsWith("publishing-") || p.kind.startsWith("oauth-") || ["broadcast-read", "broadcast-playlists"].includes(p.kind) || p.kind === "control" && p.input.action === "start")) throw new AppError("CLEANUP", "设备正在清理授权，请完成后重新连接频道。"); const actor = task.actor; const id = task.instanceId;
+    if (p.kind === "broadcast-read") { const dashboard = await app.checkYouTube(); this.observed.delete(id); return { instance: instanceDescriptors().find(instance => instance.id === id)!, dashboard, observedAt: Date.now() } satisfies AgentSnapshot; }
     if (p.kind === "publishing-account-oauth-begin") return this.publishingAccounts.begin(p.accountId, id, actor);
-    if (p.kind === "publishing-account-oauth-finish") return this.publishingAccounts.finish(p.accountId, id, p.cookie, p.state, p.code, actor, p.expectedChannel || await this.publishing.expectedChannel(id, p.accountId), p.cancelled);
+    if (p.kind === "publishing-account-oauth-finish") return this.publishingAccounts.finish(p.accountId, id, p.cookie, p.state, p.code, actor, p.expectedChannel || await this.publishing.expectedChannel(id, p.accountId), p.cancelled, p.authorizationGeneration);
     if (p.kind === "publishing-account-playlists") return this.publishingAccounts.playlists(p.accountId, id);
     if (p.kind === "publishing-packages") { if (p.accountId) await this.publishingAccounts.assertAvailable(p.accountId, id); const token = await (p.accountId ? this.publishingAccounts.auth(p.accountId) : app.auth).tokens(); return { ...await scanPublishingPackages(publishingRoot()), thumbnails: await scanPublishingThumbnails(config(id).mediaRoot), ...(token ? { channelId: token.channelId, channel: token.channel } : {}) }; }
     if (p.kind === "publishing-archive") return this.publishing.archiveBatch(p.batch, p.archiveId);

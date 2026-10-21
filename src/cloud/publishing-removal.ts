@@ -19,6 +19,7 @@ export function cancelRemovalJobs(jobs: VideoJob[], actor: string) {
     const retry = job.observed?.revision === job.spec.revision && ["failed", "needs_attention"].includes(job.observed.state);
     if (safeRemovalJob(job) || job.spec.desired === "cancel" && !retry) continue;
     job.spec.desired = "cancel"; job.spec.actor = actor; job.spec.revision++;
+    if (job.spec.repairRevision) job.spec.repairRevision = job.spec.revision;
     delete job.spec.reconcileRevision; delete job.spec.reconcileTotal;
     delete job.blockReason; delete job.budgetWaiting;
   }

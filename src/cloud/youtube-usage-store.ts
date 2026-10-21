@@ -13,7 +13,7 @@ import { defaultYouTubePolicy, youtubePolicySchema, youtubeAdmitSchema, youtubeR
 import { cloudStore, transaction } from "./store";
 export type Receipt = { agentId: string; input: YouTubeAdmit; admission: YouTubeAdmission; result?: YouTubeResult };
 export type YouTubeDay = { day: string; baseline: { known: boolean; units: number; uploads: number; source?: string; reportedUnits?: number; reportedUploads?: number }; units: number; uploads: number; searches: number; purposes: Record<string, number>; breakerUntil?: number; tokens: number; tokenAt: number; receipts: Record<string, Receipt>; legacy: Record<string, { units: number; uploads: number }>; reservations: Record<string, { units: number; uploads: number }>; legacySeed?: { units: number; uploads: number }; legacyReservationIds?: string[] };
-export type YouTubeState = { createdAt: number; initialDay: string; policy: YouTubePolicy; days: Record<string, YouTubeDay> };
+export type YouTubeState = { createdAt: number; initialDay: string; policy: YouTubePolicy; policyRevision: number; days: Record<string, YouTubeDay> };
 export const YOUTUBE_HOT_LIMIT = 32 * 1024 ** 2;
 export type YouTubeReceiptLocation = { receipt: Receipt; archiveDay?: string };
 type ReceiptArchive = { day: string; receipts: Record<string, Receipt>; legacy: Record<string, { units: number; uploads: number }> };
@@ -27,7 +27,7 @@ const reservationSchema = z.object({ units: amount, uploads: amount }).strict();
 const admissionSchema = z.object({ allowed: z.boolean(), attemptId: z.string().uuid(), project: z.literal("current-project"), quotaDay: dateSchema, units: amount, bucket: z.enum(["general", "upload", "search", "none"]), remaining: amount, backgroundRemaining: amount, activeInstances: z.number().int().min(1), resetAt: amount, blockedUntil: amount.optional(), code: z.string().regex(/^[A-Z0-9_]{1,80}$/).optional() }).strict();
 const receiptSchema = z.object({ agentId: z.string().regex(/^[a-z][a-z0-9_]{0,31}$/), input: youtubeAdmitSchema, admission: admissionSchema, result: youtubeResultSchema.optional() }).strict();
 const daySchema = z.object({ day: dateSchema, baseline: z.object({ known: z.boolean(), units: amount, uploads: amount, source: z.enum(["google-console", "conservative-estimate", "observed-reset"]).optional(), reportedUnits: amount.optional(), reportedUploads: amount.optional(), day: dateSchema.optional() }).strict(), units: amount, uploads: amount, searches: amount.default(0), purposes: z.record(z.string(), amount), breakerUntil: amount.optional(), tokens: z.number().nonnegative().max(10000), tokenAt: amount, receipts: z.record(z.string().uuid(), receiptSchema), legacy: z.record(z.string(), reservationSchema), reservations: z.record(z.string().uuid(), reservationSchema), legacySeed: reservationSchema.optional(), legacyReservationIds: z.array(z.string().uuid()).optional() }).strict();
-const stateSchema = z.object({ createdAt: amount, initialDay: dateSchema, policy: youtubePolicySchema, days: z.record(dateSchema, daySchema) }).strict();
+const stateSchema = z.object({ createdAt: amount, initialDay: dateSchema, policy: youtubePolicySchema, policyRevision: amount.default(0), days: z.record(dateSchema, daySchema) }).strict();
 const archiveSchema = z.object({ day: dateSchema, receipts: z.record(z.string().uuid(), receiptSchema), legacy: z.record(z.string(), reservationSchema) }).strict();
 /** 有效JSON也须验证数值及归属；NaN式比较或错误字段绝不能使预算意外放行。 */
 function validateYouTubeState(value: unknown): YouTubeState {
@@ -90,7 +90,7 @@ export function youtubeDay(state: YouTubeState, now = Date.now()): YouTubeDay {
 export async function editYouTubeUsage<T>(fn: (state: YouTubeState) => Promise<T> | T): Promise<T> {
   const store = youtubeUsageStore();
   return transaction(store, async () => {
-    const now = Date.now(); const saved = await store.read<unknown>("budget.json"); const state = saved === null ? { createdAt: now, initialDay: quotaDay(now), policy: { ...defaultYouTubePolicy }, days: {} } : validateYouTubeState(saved);
+    const now = Date.now(); const saved = await store.read<unknown>("budget.json"); const state = saved === null ? { createdAt: now, initialDay: quotaDay(now), policy: { ...defaultYouTubePolicy }, policyRevision: 0, days: {} } : validateYouTubeState(saved);
     await archiveOldDays(state, now); const result = await fn(state);
     const cutoff = quotaDay(now - 90 * 86400_000); const receiptCutoff = quotaDay(now - 14 * 86400_000); for (const day of Object.keys(state.days)) { if (day < cutoff) delete state.days[day]; else if (day < receiptCutoff) { state.days[day].receipts = {}; state.days[day].legacy = {}; state.days[day].reservations = {}; } }
     await store.write("budget.json", state); return result;

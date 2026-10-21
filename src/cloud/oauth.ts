@@ -9,22 +9,29 @@ import { AppError, problemFor } from "@/core/errors";
 import { cloudStore, transaction } from "./store";
 import { rpc } from "./tasks";
 import type { Target } from "@/shared/remote";
-import { authorizePublishingAccount, requirePublishingAccount, requirePublishingAccountsCapability, publishingReauthorizationEpoch, completePublishingReauthorization } from "./publishing-accounts";
+import { authorizePublishingAccount, requirePublishingAccount, requirePublishingAccountsCapability, publishingReauthorizationEpoch, completePublishingReauthorization, assertPublishingAuthorizationEpoch, requirePublishingAuthorizationCapability } from "./publishing-accounts";
 import { releaseOAuthActivity } from "./oauth-activities";
-type OAuth = { target: Target; accountId?: string; publishingReauthorizationEpoch?: string; activityId?: string; actor: string; browserHash: string; state: string; cookie: string; expires: number; used: boolean };
+import { agentStore } from "./agents";
+type OAuth = { target: Target; accountId?: string; publishingReauthorizationEpoch?: string; authorizationGeneration?: string; activityId?: string; actor: string; browserHash: string; state: string; cookie: string; expires: number; used: boolean };
 /** cookie 名包含随机事务标识，允许多台电脑同时发起独立授权。 */
 export function oauthCookie(state: string) { if (!/^[a-f0-9]{64}$/.test(state)) throw new AppError("OAUTH", "授权回调无效。"); return "livepilot_cloud_oauth_" + state.slice(0, 16); }
 /** IP 网站明确引导到本地授权，不跳转到注定失败的 Google 回调。 */
 export async function beginRemoteOAuth(target: Target, actor: string, accountId?: string) {
   if (isIP(new URL(config().origin).hostname)) throw new AppError("OAUTH_DOMAIN", accountId ? "Google 不支持公网 IP 回调。请联系管理员为控制端配置域名，以连接独立发布账号。" : "Google 不支持公网 IP 回调。请先在直播电脑本地连接频道，再启动 Agent；以后配置域名可在此授权。");
-  if (accountId) { await requirePublishingAccountsCapability(target.agentId); await requirePublishingAccount(target.agentId, target.instanceId, accountId, undefined, false); }
-  const epoch = accountId ? await publishingReauthorizationEpoch(target.agentId, accountId) : undefined;
+  let authorizationGeneration: string | undefined;
+  if (accountId) {
+    await requirePublishingAccountsCapability(target.agentId); const account = await requirePublishingAccount(target.agentId, target.instanceId, accountId, undefined, false);
+    await requirePublishingAuthorizationCapability(target.agentId, accountId);
+    if ((await agentStore(target.agentId).read<string[]>("capabilities.json"))?.includes("publishing-auth-generation-v1")) authorizationGeneration = randomUUID();
+    else if (account.status === "needs_reauthorization") throw new AppError("AGENT_VERSION", "请升级直播电脑的 Agent 后重新授权原发布频道。", 409);
+  }
+  const epoch = accountId ? await publishingReauthorizationEpoch(target.agentId, accountId, !!authorizationGeneration, true) : undefined;
   const activityId = randomUUID();
   const result = await rpc<{ url: string; cookie: string }>(target, actor, accountId ? { kind: "publishing-account-oauth-begin", accountId } : { kind: "oauth-begin" }, activityId);
   const url = new URL(result.url); const agentState = url.searchParams.get("state") || "";
   if (url.searchParams.get("redirect_uri") !== config().redirectUri) throw new AppError("OAUTH_CONFIG", "Agent 的控制端地址与云端不一致，请检查配置。");
   const state = randomBytes(32).toString("hex"); const cookie = randomBytes(32).toString("hex");
-  await cloudStore().write("oauth-" + state + ".json", seal({ target, ...(accountId ? { accountId, publishingReauthorizationEpoch: epoch } : { activityId }), actor, browserHash: createHash("sha256").update(cookie).digest("hex"), state: agentState, cookie: result.cookie, expires: Date.now() + 600_000, used: false } satisfies OAuth));
+  await cloudStore().write("oauth-" + state + ".json", seal({ target, ...(accountId ? { accountId, publishingReauthorizationEpoch: epoch, authorizationGeneration } : { activityId }), actor, browserHash: createHash("sha256").update(cookie).digest("hex"), state: agentState, cookie: result.cookie, expires: Date.now() + 600_000, used: false } satisfies OAuth));
   url.searchParams.set("state", state); return { url: url.toString(), state, cookie };
 }
 /** 回调只读取已经过浏览器凭据校验的安全路由，失败提示也回到原发布模块。 */
@@ -45,7 +52,12 @@ export async function finishRemoteOAuth(state: string, cookie: string, actor: st
     value.used = true; await store.write(name, seal(value)); return value;
   }, "oauth.lock");
   try {
-    if (transactionData.accountId) { const account = await requirePublishingAccount(transactionData.target.agentId, transactionData.target.instanceId, transactionData.accountId, undefined, false); await rpc(transactionData.target, actor, { kind: "publishing-account-oauth-finish", accountId: account.id, cookie: transactionData.cookie, state: transactionData.state, code, cancelled, ...(account.channelId ? { expectedChannel: account.channelId } : {}) }); if (!cancelled) await completePublishingReauthorization(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch); }
+    if (transactionData.accountId) {
+      const account = await requirePublishingAccount(transactionData.target.agentId, transactionData.target.instanceId, transactionData.accountId, undefined, false);
+      if (!cancelled && transactionData.publishingReauthorizationEpoch) await assertPublishingAuthorizationEpoch(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch);
+      await rpc(transactionData.target, actor, { kind: "publishing-account-oauth-finish", accountId: account.id, cookie: transactionData.cookie, state: transactionData.state, code, cancelled, ...(transactionData.authorizationGeneration ? { authorizationGeneration: transactionData.authorizationGeneration, authorizationEpoch: transactionData.publishingReauthorizationEpoch } : {}), ...(account.channelId ? { expectedChannel: account.channelId } : {}) });
+      if (!cancelled && !await completePublishingReauthorization(transactionData.target.agentId, account.id, transactionData.publishingReauthorizationEpoch, transactionData.authorizationGeneration)) throw new AppError("OAUTH_SUPERSEDED", "此授权已被更新的连接或授权错误替代，请重新连接原频道。", 409);
+    }
     else {
       if (!cancelled) await rpc(transactionData.target, actor, { kind: "oauth-finish", cookie: transactionData.cookie, state: transactionData.state, code });
       await releaseOAuthActivity(transactionData.target.agentId, transactionData.target.instanceId, transactionData.activityId, transactionData.cookie);

@@ -54,7 +54,13 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
         if (seenAgent.current && !result.state.paired) { setError(""); setProblem(undefined); setFailedActivity(undefined);  }
         seenAgent.current = result.state.agentId; setState(result.state); setLastRead(Date.now()); setReadError(undefined);
       }
-      else { setReadError(result.problem); if (["AUTH", "FORBIDDEN", "PAIR_IDENTITY"].includes(result.problem.code)) setState(undefined); }
+      else {
+        setReadError(result.problem);
+        // 宿主仅在原登录和设备已获授权时附带本机快照；网络故障仍保留，其他操作仍由宿主强制联网核验。
+        if (result.localState) { seenAgent.current = result.localState.agentId; setState(result.localState); }
+        else if (["AUTH", "FORBIDDEN", "PAIR_IDENTITY"].includes(result.problem.code)) setState(undefined);
+        else setState(previous => previous && ({ ...previous, snapshots: [] }));
+      }
     } catch { if (mounted.current && started === revision.current) setReadError(makeProblem("DESKTOP_IPC", "客户端暂时无法读取本机状态，请重新读取；当前无法确认设备连接状态。", { source: "desktop", stage: "读取本机状态", outcome: "rejected" })); }
     finally { clearTimeout(timeout); reading.current = false; }
   }, []);
@@ -87,7 +93,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
   const feedback = !activity || activity.action === "launch-obs" || (activity.action === "diagnose-obs" && activity.status === "running") ? null : activity.status === "failed" ? <ProblemCard problem={activity.problem || problem || makeProblem("DESKTOP",activity.message || "此步骤未完成",{target:{instanceId:activity.instanceId},stage:activity.stage,attemptId:activity.attemptId})} objectName={instances.concat(candidates).find(i=>i.id===activity.instanceId)?.name} disabled={!!busy} onRefresh={()=>void act(activity.instanceId ? "diagnose-obs" : "check",activity.instanceId ? {id:activity.instanceId} : undefined)} onHelp={()=>{setHelpTopic(activity.step===2?"obs":"recovery");setPage("帮助");}} /> : <SetupFeedback activity={activity} now={now} disabled={!!busy} help={()=>setPage("帮助")} />;
   /** 两处页面共享指定实例的启动与诊断状态；切换页面不会清掉仍在进行的检查。 */
   function controls(instance: DesktopState["instances"][number]) {
-    return <ObsInstanceControls localStopAvailable={!!state?.paired && !!state.agentRunning && state.snapshots.some(snapshot => snapshot.instance.id === instance.id && snapshot.dashboard.state.obsStartRequested === true && snapshot.dashboard.obs.streaming === true)} instance={instance} check={state?.checks.find(c=>c.id==="network-"+instance.id)} snapshot={fresh.find(s=>s.instance.id===instance.id)} activity={obsLaunchFor(instance.id, activity, state?.obsLaunches)} diagnosis={activity?.action === "diagnose-obs" && activity.instanceId === instance.id ? activity : undefined} now={now} readFresh={!readError && now-lastRead<20_000} refresh={()=>void load()} disabled={!!busy} act={act} help={()=>{setHelpTopic("obs");setPage("帮助");}} />;
+    return <ObsInstanceControls localStopAvailable={!readError && !!state?.paired && !!state.agentRunning && state.snapshots.some(snapshot => snapshot.instance.id === instance.id && snapshot.dashboard.state.obsStartRequested === true && snapshot.dashboard.obs.streaming === true)} instance={instance} check={state?.checks.find(c=>c.id==="network-"+instance.id)} snapshot={fresh.find(s=>s.instance.id===instance.id)} activity={obsLaunchFor(instance.id, activity, state?.obsLaunches)} diagnosis={activity?.action === "diagnose-obs" && activity.instanceId === instance.id ? activity : undefined} now={now} readFresh={!readError && now-lastRead<20_000} refresh={()=>void load()} disabled={!!busy} act={act} help={()=>{setHelpTopic("obs");setPage("帮助");}} />;
   }
   /** 跨页返回原实例配置，键盘焦点和滚动位置保持明确。 */
   function openConfiguration(id?: string) {
@@ -112,6 +118,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
     {state?.maintenance && <div className="banner" role="status">设备维护尚未确认结束，原配置已保留。<button disabled={busy} onClick={() => void act("start")}>重新连接并恢复</button></div>}
     {state && !state.dataRoot && <section className="desktop-form"><h2>选择 LiveNest 数据位置</h2><p>选择保存直播数据的父文件夹，程序自动创建 LiveNest 文件夹。</p><button className="btn-primary" disabled={busy} onClick={()=>void act("directory")}>选择保存位置</button></section>}
     {readError && <ProblemCard problem={readError} onRefresh={()=>void load()} onLogin={()=>void logout()} />}
+    {readError && state?.paired && state.agentRunning && <div className="desktop-actions">{instances.filter(instance => state.snapshots.some(snapshot => snapshot.instance.id === instance.id && snapshot.dashboard.state.obsStartRequested === true && snapshot.dashboard.obs.streaming === true)).map(instance => <button key={instance.id} disabled={!!busy} onClick={() => { if (window.confirm("停止此实例的本机 OBS 推流？YouTube 场次可能仍需在网页或 Studio 结束。")) void act("stop-local", { id: instance.id }); }}>本机停止推流 · {instance.name}</button>)}</div>}
     {!inline && visibleError && <ProblemCard problem={problem || makeProblem("DESKTOP",visibleError)} onRefresh={()=>void act("check")} onHelp={()=>{setHelpTopic("recovery");setPage("帮助");}} />}
     {state?.problems?.map((p,index)=><ProblemCard key={p.code+index} problem={p} objectName={instances.find(i=>i.id===p.target.instanceId)?.name || "本机"} onRefresh={()=>void act("check")} />)}
     {!state && !readError && <p role="status">正在读取本机配置…</p>}
@@ -120,7 +127,7 @@ function Desktop({ logout, username }: { logout: () => Promise<void>; username: 
         <ObsPicker state={state} busy={!!busy} act={act}/>
         {!!candidates.length && <section className="desktop-form"><h3>待配置 OBS</h3>{candidates.map(i => <div className="obs-config-row" key={i.id}><strong>{i.name}</strong><button disabled={busy} onClick={()=>void act("prepare", {id:i.id})}>继续配置</button><button disabled={busy} onClick={()=>void act("discard", {id:i.id})}>撤销新增</button></div>)}{!!candidates.filter(i=>!i.managed).length && <ManualConnection instances={candidates.filter(i=>!i.managed)} disabled={!!busy} act={act}/>}</section>}
         {!!state.archivedCandidates?.length && <details><summary>已撤销的 OBS</summary>{state.archivedCandidates.map(i=><div key={i.id}><strong>{i.name}</strong><button disabled={busy || instances.some(item=>item.id===i.id) || candidates.some(item=>item.id===i.id)} onClick={()=>void act("restore-candidate",{id:i.id})}>恢复编辑</button>{i.id==="main" && !i.managed && !state.paired && !instances.length && !candidates.length && <button disabled={busy} onClick={()=>void act("replace-candidate",{id:i.id})}>改用内置 OBS</button>}</div>)}</details>}
-        {!!state.retiredInstances?.length && <details><summary>已退役的 OBS</summary>{state.retiredInstances.map(i=><p key={i.id}>{i.name} · 文件与授权保留<span className="desktop-path">{i.exe}</span></p>)}</details>}
+        {!!state.retiredInstances?.length && <details><summary>{state.retirementPending ? "待确认与已退役的 OBS" : "已退役的 OBS"}</summary>{state.retiredInstances.map(i=><p key={i.id}>{i.name} · {state.retirementPending === i.id ? "退役结果待确认 · " : ""}文件与授权保留<span className="desktop-path">{i.exe}</span></p>)}</details>}
       </>}/>
       {state.checks.filter(c=>!c.instanceId && ["directory","node","system"].includes(c.id) && ["missing","error"].includes(c.status)).map(c=><ProblemCard key={c.id} problem={makeProblem("CONFIG",c.message || "本机配置需要检查",{source:"desktop",stage:c.label})} onRefresh={()=>void act("check")} onHelp={()=>setPage("帮助")} />)}
       <details className="technical-report"><summary>电脑技术报告</summary><p className="desktop-path">数据位置：{state.dataRoot}</p>{state.checks.filter(c=>!c.instanceId).map(c=><p key={c.id}>{c.label} · {c.status === "ready" ? "正常" : "待核对"} {c.message}</p>)}<button disabled={busy} onClick={()=>void act("check")}>重新检查电脑</button><button disabled={busy} onClick={()=>void act("firewall")}>自动配置 OBS 本机保护</button>{activity?.step === 1 && feedback}</details>

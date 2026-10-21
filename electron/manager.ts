@@ -58,6 +58,7 @@ export class Manager {
       await confirm?.();
       await this.agent.stop();
       const next = { ...this.settings, paired: false, dataNotice: "设备绑定已删除。请在网页添加直播电脑，然后粘贴新配对码；本机 OBS 和素材已保留。" };
+      this.abandonRetirement(next, agentId);
       delete next.identity; delete next.maintenance; delete next.inventoryPending;
       await this.store.write(next); this.settings = next;
       this.agent.snapshots = []; this.agent.problems = []; this.agent.lastHeartbeat = 0; this.agent.errorCode = undefined; this.agent.message = "";
@@ -66,15 +67,16 @@ export class Manager {
   }
   /** 逐字段复制公开实例，不向 Renderer 发送任何密码或令牌。 */
   state(): DesktopState {
-    return { problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, obsLaunches: [...this.activity.obsLaunches.values()].filter(a => this.settings.instances.some(i => i.id === a.instanceId)), version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), retiredInstances: (this.settings.retiredInstances || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: [...this.checks, ...firewallChecks(this.settings.instances)], update: this.updates.state };
+    return { retirementPending: this.settings.retirementPending, problems: this.agent.problems, dataLocationReady: !!this.settings.dataRoot, archivedCandidates: (this.settings.archivedCandidates || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), scan: this.discovery.state, dataNotice: this.settings.dataNotice, activity: this.activity.value, obsLaunches: [...this.activity.obsLaunches.values()].filter(a => this.settings.instances.some(i => i.id === a.instanceId)), version: app.getVersion(), dataRoot: this.settings.dataRoot, paired: !!this.settings.paired, agentId: this.settings.identity?.agentId, agentRunning: !!this.agent.child, online: Date.now() - this.agent.lastHeartbeat < 20_000, connectionError: this.agent.errorCode, autoStart: app.getLoginItemSettings().openAtLogin, busy: this.busy, message: this.message || this.agent.message, instances: this.settings.instances.map(i => ({ id: i.id, name: i.name, managed: i.managed, exe: i.exe, port: i.port, initialized: i.initialized })), retiredInstances: (this.settings.retiredInstances || []).map(({id,name,managed,exe,port,initialized})=>({id,name,managed,exe,port,initialized})), candidates: (this.settings.candidates || []).map(({ id, name, managed, exe, port, initialized }) => ({ id, name, managed, exe, port, initialized })), maintenance: !!this.settings.maintenance, snapshots: this.agent.snapshots, checks: [...this.checks, ...firewallChecks(this.settings.instances)], update: this.updates.state };
   }
   /** 核心错误已过滤敏感字段，未知第三方异常使用固定提示。 */
   private error(e: unknown) { return isAppError(e) ? safeError(e) : e instanceof z.ZodError ? "输入无效，请检查填写内容。" : safeError(e); }
   /** 建立目录后启动；维护恢复只在新会话心跳确认之后释放。 */
   async start(refreshNetwork = false) {
     if (this.settings.retirementPending) {
-      if (this.agent.child) { await this.completeRetirement(); return; }
-      await this.recoverRetirement();
+      if (!this.settings.paired || !this.settings.identity || this.settings.retirementAgentId && this.settings.retirementAgentId !== this.settings.identity.agentId) {
+        const next = { ...this.settings }; this.abandonRetirement(next); await this.store.write(next); this.settings = next;
+      } else await this.recoverRetirement();
     }
     if (!this.settings.dataRoot) throw new AppError("DESKTOP", "请先选择 LiveNest 数据位置。");
     if (!this.settings.instances.length) throw new AppError("DESKTOP", "请先完成至少一个 OBS 的配置。");
@@ -126,6 +128,12 @@ export class Manager {
   }
   /** 新邀请可恢复原电脑；只有云端确认结果且本机保存成功后才等待 Agent 上线。 */
   private async pair(invitation: unknown) {
+    if (this.settings.retirementPending) {
+      const next = { ...this.settings };
+      if (next.identity && next.paired) next.retirementAgentId ||= next.identity.agentId;
+      else this.abandonRetirement(next);
+      await this.store.write(next); this.settings = next;
+    }
     await pairDesktop(this.settings, invitation, () => this.store.write(this.settings), (url, init) => net.fetch(url, { ...init, headers: { ...init.headers, ...this.customerHeaders() } }));
     if (this.settings.dataNotice?.startsWith("设备绑定已删除")) { delete this.settings.dataNotice; await this.store.write(this.settings); }
     await this.start();
@@ -308,16 +316,31 @@ export class Manager {
     if (!item || id === "main") throw new AppError("DESKTOP", "首个 OBS 保留为主实例，请修复或恢复其程序文件；只能退役其他实例。");
     if (input.confirmed !== true) throw new AppError("INPUT", "请确认退役此 OBS，文件、授权与历史将保留。");
     await this.maintenance();
-    const next = { ...this.settings, instances: this.settings.instances.filter(i => i.id !== id), retiredInstances: [...(this.settings.retiredInstances || []), item], retirementPending: id };
+    const next = { ...this.settings, instances: this.settings.instances.filter(i => i.id !== id), retiredInstances: [...(this.settings.retiredInstances || []), item], retirementPending: id, retirementAgentId: this.settings.identity?.agentId };
     // 先保存恢复意图；网络回复丢失后仍能沿同一目标重试，不删除任何目录。
     await this.store.write(next); this.settings = next;
-    await this.completeRetirement();
+    try { await this.completeRetirement(); }
+    catch (error) {
+      if (!this.settings.retirementPending) throw error;
+      // 不能仅凭 HTTP 状态猜测是否提交；原身份库存确认仍活跃才恢复原清单并安全释放维护。
+      try {
+        const active = await this.recoverRetirement();
+        if (active) { await this.releaseMaintenance(); throw error; }
+        await this.commitInstances();
+      } catch (recovery) { if (recovery === error) throw error; throw new AppError("MAINTENANCE", this.error(error) + " 退役结果仍待核对，请重新连接并恢复；原身份和文件已保留。"); }
+    }
+  }
+  /** 解绑或换身份只归档旧设备事务；不让新身份解释旧 pending，也不删除原 OBS、授权或历史。 */
+  private abandonRetirement(settings: Settings, originalAgentId = settings.retirementAgentId) {
+    if (!settings.retirementPending) return;
+    settings.orphanedRetirements = [...(settings.orphanedRetirements || []), { ...(originalAgentId && { agentId: originalAgentId }), instanceId: settings.retirementPending, abandonedAt: Date.now() }];
+    delete settings.retirementPending; delete settings.retirementAgentId; delete settings.maintenance; delete settings.inventoryPending;
   }
   /** 云端退休幂等确认后才切换 Agent 清单，失败保留维护凭据与明确恢复意图。 */
   private async completeRetirement() {
     const id = this.settings.retirementPending; if (!id) return;
     if (this.settings.paired) await this.agent.rpc("instance-retire", { id, token: this.settings.maintenance });
-    const next = { ...this.settings }; delete next.retirementPending;
+    const next = { ...this.settings }; delete next.retirementPending; delete next.retirementAgentId;
     await this.store.write(next); this.settings = next;
     await this.commitInstances();
   }
@@ -330,7 +353,11 @@ export class Manager {
     const identity = this.settings.identity;
     const response = await net.fetch(identity.origin + "/api/agent/instance-inventory", { method: "POST", headers: { "Content-Type": "application/json", "x-livepilot-agent": identity.agentId, Authorization: "Bearer " + identity.token }, body: "{}" });
     if (!response.ok) throw new AppError("MAINTENANCE", response.status === 404 ? "Cloud 尚不支持库存恢复，请升级 Cloud 后重新连接；退役记录与维护凭据已保留。" : "暂时无法确认云端库存，请恢复网络后重新连接；退役记录已保留。");
-    const parsed = z.object({ instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) })).min(1), retiredInstanceIds: z.array(idSchema) }).safeParse(await response.json());
+    const parsed = z.object({ instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) })), retiredInstanceIds: z.array(idSchema) }).safeParse(await response.json());
+    if (parsed.success && !parsed.data.instances.length && !parsed.data.retiredInstanceIds.length && !this.settings.retirementAgentId) {
+      // 旧版在解绑时漏清的无归属事务，不能阻止合法空库存设备首次登记；保留历史且不猜造实例。
+      const next = { ...this.settings }; this.abandonRetirement(next); await this.store.write(next); this.settings = next; return false;
+    }
     if (!parsed.success || !parsed.data.instances.some(i => i.id === "main") || parsed.data.instances.some(i => parsed.data.retiredInstanceIds.includes(i.id))) throw new AppError("MAINTENANCE", "Cloud 库存恢复协议不匹配，请升级 Cloud 并重试；没有修改本机身份。");
     const active = parsed.data.instances.some(i => i.id === id);
     if (!active && !parsed.data.retiredInstanceIds.includes(id)) throw new AppError("MAINTENANCE", "云端尚未确认此实例的退役结果，请保留配置并联系支持。");
@@ -339,8 +366,10 @@ export class Manager {
     const next = { ...this.settings, instances: active ? [...this.settings.instances, saved!] : this.settings.instances, retiredInstances: active ? this.settings.retiredInstances?.filter(i => i.id !== id) : this.settings.retiredInstances };
     const local = next.instances.map(i => i.id).sort(); const remote = parsed.data.instances.map(i => i.id).sort();
     if (JSON.stringify(local) !== JSON.stringify(remote)) throw new AppError("MAINTENANCE", "云端与原本机清单不一致，请保留配置并联系支持。");
-    delete next.retirementPending; await this.store.write(next); this.settings = next;
+    if (!active && this.agent.child) next.inventoryPending = true;
+    delete next.retirementPending; delete next.retirementAgentId; await this.store.write(next); this.settings = next;
     this.message = active ? "上次退役尚未提交，原实例已恢复；确认状态后可重新退役。" : "已核对上次退役完成，文件与授权保留。";
+    return active;
   }
   /** 仅在维护窗口改变实例；取消文件选择不留下维护锁。 */
   private async configure(action: string, input: Record<string, unknown>) {

@@ -65,7 +65,7 @@ export async function runAgent(identity: Identity, hooks: AgentHooks) {
         await chatEnvironment.refresh();
         executor.startChat();
         executor.mediaPreview.connect(!!session.capabilities?.includes("media-preview-v1"));
-        executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"));
+        executor.connectPublishing(!!session.capabilities?.includes("publishing-v1"), !!session.capabilities?.includes("publishing-accounts-v1"), !!session.capabilities?.includes("publishing-auth-generation-v1"));
       }
       const result = await (await transport.request("/api/agent/poll")).json() as { tasks: unknown[] };
       // 普通离线退出不依赖维护锁；逐条检查停止标志，已投递但未接收的任务留待云端核对。

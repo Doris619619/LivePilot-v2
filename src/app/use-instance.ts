@@ -11,6 +11,7 @@ import { defaultBroadcast } from "@/shared/broadcast";
 import { useStreamClock } from "./use-stream-clock";
 import { startBlocker } from "@/shared/readiness";
 import { hasPendingBroadcast } from "@/shared/broadcast-recovery";
+import { freshYouTubeEvidence, mergeDashboardEvidence } from "@/shared/youtube-evidence";
 import { useWorkbenchActive } from "./components/workbench-context";
 
 /** 保存实例媒体与公开直播详情，不保存路径、图片原始数据或授权信息。 */
@@ -65,10 +66,23 @@ export function useInstance(instance: InstanceDescriptor) {
         initialized.current = true;
         setSelection(active && result.state.broadcastTitle ? initial : { ...initial, broadcast: { ...(initial.broadcast || { ...defaultBroadcast(), ...(defaults ? { privacy: defaults.privacy, madeForKids: defaults.madeForKids } : {}) }), liveChat: initial.broadcast?.liveChat || result.liveChat?.config || { ...defaultLiveChatConfig } } });
       }
-      setData(result); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
+      setData(current => mergeDashboardEvidence(current, result)); setStale(!!result.device && !result.device.online); setReadError(result.device && !result.device.online ? result.obs.message || "设备状态不可用" : "");
     } catch (e) { clearClock(); setStale(true); setReadError(e instanceof Error ? e.message : "读取失败，请检查本机服务"); }
     finally { fetching.current = false; }
   }, [id, instanceId, agentId, synchronize, clearClock]);
+
+  /** 只有显式点击才请求新的平台证据；旧Agent明确提示升级，失败保留原状态和用户草稿。 */
+  async function checkPlatform() {
+    if (!data) { await refresh(); return; }
+    if (!data.configuration.youtubeRefresh) { setError("请升级直播电脑的 Agent 后重新核对平台，或到 YouTube Studio 手动核对。"); return; }
+    if (acting.current) return;
+    acting.current = true; setWorking("check"); setError(""); setProblem(undefined);
+    try {
+      const result = await api<Dashboard>("/api/status?instanceId=" + encodeURIComponent(instanceId) + (agentId ? "&agentId=" + encodeURIComponent(agentId) : ""), { method: "POST", headers: { "X-LivePilot": "1" }, signal: AbortSignal.timeout(60_000) });
+      setData(current => mergeDashboardEvidence(current, result)); setReadAt(Date.now()); synchronize(result); setStale(!!result.device && !result.device.online); setReadError("");
+    } catch (e) { setProblem({ ...requestProblem(e), target: { agentId, instanceId } }); setError(e instanceof Error ? e.message : "平台核对失败，请稍后重试。"); }
+    finally { acting.current = false; setWorking(""); }
+  }
 
   /** 挂载时读取状态；卸载时停止定期轮询。 */
   useEffect(() => {
@@ -116,10 +130,10 @@ export function useInstance(instance: InstanceDescriptor) {
     finally { acting.current = false; setWorking(""); await refresh(); }
   }
   const busy = !!working || !!data?.busy;
-  const live = !stale && data?.youtube.lifecycle === "live" && data.obs.streaming === true && data.youtube.ingest === "active";
+  const live = !stale && !!data && freshYouTubeEvidence(data.youtube) && data.youtube.lifecycle === "live" && data.obs.streaming === true && data.youtube.ingest === "active";
   const pending = !!data && hasPendingBroadcast(data.state);
   const locked = busy || live || pending;
   const uncertain = problem?.outcome === "unknown" && !!problem.attemptId;
   const blocker = uncertain ? "上次操作结果尚未确认，请先查询原任务。" : data?.operation && data.operation.status === "uncertain" ? "原任务状态尚未确认，请先查询。" : startBlocker(data, selection, busy, stale, live);
-  return { problem: stale ? makeProblem("CLOUD_UNAVAILABLE",readError || "实例状态已过期，实际推流状态未知。",{target:{agentId,instanceId},stage:"读取实例状态"}) : problem || (data?.operation && ["failed","interrupted","uncertain","expired"].includes(data.operation.status) ? data.operation.problem : undefined), data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, act, busy, live, pending, locked, blocker };
+  return { problem: stale ? makeProblem("CLOUD_UNAVAILABLE",readError || "实例状态已过期，实际推流状态未知。",{target:{agentId,instanceId},stage:"读取实例状态"}) : problem || (data?.operation && ["failed","interrupted","uncertain","expired"].includes(data.operation.status) ? data.operation.problem : undefined), data, durationMs, selection, select, working, error: stale ? readError : error || (data?.operation && ["failed", "interrupted", "expired", "uncertain"].includes(data.operation.status) ? data.operation.message || "操作需要核对" : ""), stale, confirmed, setConfirmed, refresh, checkPlatform, act, busy, live, pending, locked, blocker };
 }

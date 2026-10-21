@@ -13,6 +13,8 @@ import { Activity } from "../electron/activity";
 import { DESKTOP_ORIGIN } from "@/shared/desktop";
 import type { Settings } from "../electron/settings";
 import { pairDesktop } from "../electron/pairing";
+import { initialState } from "@/core/control";
+import type { AgentSnapshot } from "@/shared/remote";
 import { POST as pairRoute } from "@/app/api/agent/[...path]/route";
 vi.mock("electron", () => ({ app: { getVersion: () => "test", getLoginItemSettings: () => ({ openAtLogin: false }) }, net: {}, session: {}, dialog: {}, shell: {} }));
 vi.mock("../electron/updates", () => ({ Updates: class {} }));
@@ -87,6 +89,38 @@ it("revokes offline-stop permission after logout, expiry or an explicit binding 
 it("does not inherit offline-stop permission when the same username logs in again", async () => {
   const f = await fixture(); f.manager.stopLocal = vi.fn(); await f.access.require(); await f.auth.login("Liang", "fixture");
   await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+it.each(["idle", "missing", "live"])("returns the latest authorized local state during a Cloud outage after an earlier %s snapshot", async previous => {
+  const f = await fixture(); f.manager.agent.child = {} as never; const id = "main";
+  const snapshot = (streaming: boolean): AgentSnapshot => ({ instance: { id, name: "Fixture" }, observedAt: Date.now(), dashboard: { busy: false, state: { ...initialState(), obsStartRequested: streaming }, obs: { ready: true, running: true, streaming }, youtube: { connected: true }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "unlisted", madeForKids: false } } });
+  f.manager.agent.snapshots = previous === "missing" ? [] : [snapshot(previous === "live")]; await f.access.read();
+  f.manager.agent.snapshots = [snapshot(true)]; f.manager.stopLocal = vi.fn().mockResolvedValue(undefined);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 11000); f.request.mockRejectedValue(new Error("synthetic offline"));
+  const result = await f.access.read(); expect(result).toMatchObject({ ok: false, problem: { code: "CLOUD_NETWORK" }, localState: { agentId: "original", snapshots: [expect.objectContaining({ dashboard: expect.objectContaining({ obs: expect.objectContaining({ streaming: true }) }) })] } });
+  await f.access.stopLocal(id); expect(f.manager.stopLocal).toHaveBeenCalledWith(id); await expect(f.access.require()).rejects.toMatchObject({ code: "CLOUD_NETWORK" });
+  vi.restoreAllMocks();
+});
+it("never downgrades an explicit rejection, changed login or changed device to a local read", async () => {
+  const f = await fixture(); await f.access.require(); f.request.mockResolvedValue(new Response(null, { status: 403 }));
+  expect(await f.access.read()).not.toHaveProperty("localState"); f.request.mockRejectedValue(new Error("offline")); expect(await f.access.read()).not.toHaveProperty("localState");
+  await f.auth.logout(); expect(await f.access.read()).not.toHaveProperty("localState");
+});
+it("does not grant a replacement login the result of an earlier in-flight binding check", async () => {
+  const f = await fixture(); let release!: () => void, entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; }), blocked = new Promise<void>(resolve => { release = resolve; });
+  vi.spyOn(f.auth, "binding").mockImplementationOnce(async () => { entered(); await blocked; return "active"; });
+  const checked = f.access.require().then(() => undefined, error => error); await ready; await f.auth.login("Liang", "fixture"); release();
+  expect(await checked).toMatchObject({ code: "AUTH" }); await expect(f.access.stopLocal("main")).rejects.toMatchObject({ code: "FORBIDDEN" });
+});
+it.each(["local", "web"])("archives pending retirement when a %s deletion is confirmed and permits a fresh first session", async source => {
+  const f = await fixture(); const second = f.manager.settings.instances.pop()!; f.manager.settings.retiredInstances = [second]; f.manager.settings.retirementPending = second.id; f.manager.settings.retirementAgentId = "original";
+  if (source === "local") await f.access.remove(); else { await deleteAgent("original"); await f.access.read(); }
+  expect(f.manager.settings.retirementPending).toBeUndefined(); expect(f.manager.settings.orphanedRetirements).toEqual([expect.objectContaining({ agentId: "original", instanceId: second.id })]); expect(f.manager.settings.retiredInstances).toEqual([second]);
+  const next = await createPairing("fresh", "Fresh", "Liang"); const invitation = "LN1." + Buffer.from(JSON.stringify({ origin: DESKTOP_ORIGIN, agentId: next.agentId, code: next.code })).toString("base64url");
+  await pairDesktop(f.manager.settings, invitation, async () => {}, (url, init) => pairRoute(new Request(url, { ...init, headers: { ...init.headers, host: new URL(DESKTOP_ORIGIN).host } }), { params: Promise.resolve({ path: ["pair"] }) }));
+  const start = vi.fn().mockResolvedValue(undefined); Object.assign(f.manager.agent, { start, ready: vi.fn().mockResolvedValue(undefined) });
+  await f.manager.start(); expect(start).toHaveBeenCalledOnce(); expect(f.manager.settings.identity?.agentId).toBe("fresh"); expect(f.manager.settings.encryptionKey).toBe("d".repeat(64));
+  await expect(openSession("fresh", "11111111-1111-4111-8111-111111111111", [{ id: "main", name: "OBS" }])).resolves.toHaveProperty("session");
 });
 it("locks local stop when the previously verified login expires while offline", async () => {
   const f = await fixture(); f.manager.stopLocal = vi.fn(); await f.access.require();

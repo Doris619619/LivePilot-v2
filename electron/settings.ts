@@ -1,14 +1,17 @@
 /** Windows 用户级加密配置；凭据只留在 Main，公开快照剔除密码。 */
 import { AppError } from "../src/core/errors";
 import { safeStorage, app } from "electron";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { Store } from "../src/core/storage";
 import type { DesktopInstance } from "../src/shared/desktop";
 import { claimRoot, claimLegacyRoot, readRoot, checkRootPath, ordinaryPath, within } from "./data-root";
 import { access, readFile } from "node:fs/promises";
 import { protectWindows } from "./windows-credentials";
-export type Settings = { abandonedCandidates?: DesktopInstance[]; retirementPending?: string; retiredInstances?: DesktopInstance[]; firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
+export type Settings = { abandonedCandidates?: DesktopInstance[]; retirementPending?: string; retirementAgentId?: string; orphanedRetirements?: { agentId?: string; instanceId: string; abandonedAt: number }[]; retiredInstances?: DesktopInstance[]; firewallAttempt?: string; dataNotice?: string; rootId?: string; dataRoot: string; instances: DesktopInstance[]; candidates?: DesktopInstance[]; archivedCandidates?: DesktopInstance[]; encryptionKey: string; identity?: { agentId: string; origin: string; token: string }; google?: { clientId: string; clientSecret: string }; maintenance?: string; inventoryPending?: boolean; paired?: boolean };
+type Relocation = { version: 1; rootId: string; from: string; to: string; identityDigest: string };
+/** 提交记录仅保存不可逆身份摘要，不能把密钥或设备凭据写入 AppData 明文。 */
+function relocationIdentity(settings: Settings) { return createHash("sha256").update(JSON.stringify([settings.rootId, settings.encryptionKey, settings.identity])).digest("hex"); }
 /** AppData 只保存位置；身份与业务配置由目标目录中的 DPAPI 密文持有。 */
 export class SettingsStore {
   private locator = new Store(app.getPath("userData"));
@@ -94,13 +97,20 @@ export class SettingsStore {
     const location = await this.record<{ version: number; dataRoot: string; rootId?: string; pending?: boolean }>(this.locator, "data-location.json");
     if (!location || location.version !== 1 || !location.rootId || location.pending || !path.isAbsolute(location.dataRoot)) throw new AppError("DATA", "原定位记录无法核验，请恢复原数据位置；没有创建新身份。");
     const root = await checkRootPath(target, this.installation());
-    if (root.toLowerCase() !== path.resolve(location.dataRoot).toLowerCase() && await access(location.dataRoot).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; })) throw new AppError("DATA", "原数据位置仍存在，请先恢复原位置，不能切换到可能过期的副本。");
+    const originalExists = await access(location.dataRoot).then(() => true, error => { if (error.code === "ENOENT") return false; throw error; });
+    const originalRoot = originalExists ? await ordinaryPath(location.dataRoot) : path.resolve(location.dataRoot);
+    if (root.toLowerCase() !== originalRoot.toLowerCase() && originalExists) throw new AppError("DATA", "原数据位置仍存在，请先恢复原位置，不能切换到可能过期的副本。");
     const marker = await readRoot(root);
     if (marker.id !== location.rootId) throw new AppError("DATA", "此目录不是原 LiveNest 数据，未修改定位。");
     const encrypted = await this.record<string>(await this.rootStore(root), "settings.json");
     if (!encrypted) throw new AppError("DATA", "此目录缺少原配置，未创建新身份。");
     const settings = await this.decode(encrypted);
-    if (settings.rootId !== marker.id || path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
+    if (settings.rootId !== marker.id) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
+    if (path.resolve(settings.dataRoot).toLowerCase() !== path.resolve(location.dataRoot).toLowerCase()) {
+      const pending = await this.record<Relocation>(this.locator, "data-recovery.json");
+      const same = (left: string, right: string) => path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
+      if (!pending || pending.version !== 1 || pending.rootId !== marker.id || !path.isAbsolute(pending.from || "") || !path.isAbsolute(pending.to || "") || !same(pending.from, location.dataRoot) || !same(pending.to, settings.dataRoot) || ![originalRoot, pending.to].some(candidate => same(candidate, root)) || pending.identityDigest !== relocationIdentity(settings)) throw new AppError("DATA", "密文配置与原定位不一致，未更改数据位置。");
+    }
     const lock = await readFile(path.join(root, "state", "host.lock"), "utf8").catch(error => { if (error.code === "ENOENT") return ""; throw error; });
     if (lock) {
       const pid = Number(lock); if (!Number.isInteger(pid) || pid <= 0) throw new AppError("DATA", "原 Agent 锁损坏，请保留目录。");
@@ -118,7 +128,12 @@ export class SettingsStore {
   /** 只有原数据核验成功才提交位置；失败仍保留原定位供重试。 */
   async restoreLocation(target: string): Promise<void> {
     const verified = await this.inspectRecovery(target);
+    const location = await this.record<{ dataRoot: string; rootId: string }>(this.locator, "data-location.json");
+    if (!location || location.rootId !== verified.rootId) throw new AppError("DATA", "原数据定位已改变，请重新核验。");
+    // 用户已确认的同一事务先落盘；第二阶段失败或重启后，可核验新密文身份并重做 locator 提交。
+    await this.locator.write("data-recovery.json", { version: 1, rootId: verified.rootId, from: location.dataRoot, to: verified.dataRoot, identityDigest: relocationIdentity(verified) } satisfies Relocation);
     await this.write(verified);
+    await this.locator.remove("data-recovery.json");
   }
   /** 校验 state 和 desktop 路径后使用现有原子存储。 */
   private async rootStore(root: string) { const dir = path.join(root, "state", "desktop"); await ordinaryPath(dir); return new Store(dir); }

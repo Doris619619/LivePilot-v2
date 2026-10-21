@@ -84,3 +84,21 @@ it("reveals inventory before session only to the device's valid Bearer and never
   expect((await post("instance-rename", { id: "second", name: "No session" }, true, false)).status).toBe(409);
   expect((await post("instance-inventory", {}, true, false)).status).toBe(200);
 });
+it.each(["bindings.json", "channel-claims.json"])("completes only a committed retirement after a %s write fails, including pre-session recovery", async failedFile => {
+  await beginMaintenance("pc", token); const write = Store.prototype.write; let failing = true;
+  const spy = vi.spyOn(Store.prototype, "write").mockImplementation(async function(this: Store, name, value) { if (name === failedFile && failing) { failing = false; throw new Error("synthetic retirement cleanup write"); } return write.call(this, name, value); });
+  await expect(retireInstance("pc", "second", token)).rejects.toThrow("synthetic retirement cleanup write"); expect((await listAgents())[0].instances).toEqual([instances[0]]);
+  const calls = spy.mock.calls.length; expect((await post("instance-inventory", {}, false, false)).status).toBe(401); expect(spy.mock.calls.length).toBe(calls);
+  const fresh = await createPairing("fresh", "Fresh"); await pairAgent("fresh", fresh.code, "c".repeat(64)); expect(await instanceInventory("fresh")).toEqual({ instances: [], retiredInstanceIds: [] });
+  expect(await cloudStore().read("channel-claims.json")).toEqual(expect.arrayContaining([expect.objectContaining({ instanceId: "second" })]));
+  const response = await post("instance-inventory", {}, true, false); expect(response.status).toBe(200); expect(await response.json()).toEqual({ instances: [instances[0]], retiredInstanceIds: ["second"] });
+  expect(await cloudStore().read("bindings.json")).toEqual([expect.objectContaining({ agentId: "pc", instanceId: "main", channelId: "channel_main" })]);
+  expect(await cloudStore().read("channel-claims.json")).toEqual([expect.objectContaining({ agentId: "pc", instanceId: "main" })]);
+  await openSession("fresh", randomUUID(), [{ id: "main", name: "Fresh" }]); await claimChannel({ agentId: "fresh", instanceId: "main" }, "channel_second", true);
+  expect((await cloudStore().read<{ channelId: string; agentId: string }[]>("bindings.json"))?.find(binding => binding.channelId === "channel_second")?.agentId).toBe("fresh");
+});
+it("never clears active bindings from a contradictory retirement marker", async () => {
+  const store = cloudStore(), before = await store.read("bindings.json"); const registry = await store.read<{ agents: { retiredInstanceIds?: string[] }[] }>("agents.json");
+  registry!.agents[0].retiredInstanceIds = ["second"]; await store.write("agents.json", registry);
+  await expect(instanceInventory("pc")).rejects.toMatchObject({ code: "STORAGE" }); expect(await store.read("bindings.json")).toEqual(before);
+});

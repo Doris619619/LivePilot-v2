@@ -1,5 +1,6 @@
 /** 单台 Agent 的持久发布运行器；短指令与长上传分离，重启先探测旧 session。 */
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { Temporal } from "@js-temporal/polyfill";
 import { config, dataRoot } from "../config";
@@ -17,10 +18,13 @@ import { archivePublishingBatch } from "./archive";
 import { effectivePublishAt } from "./schedule";
 import type { YouTubeAuth } from "../youtube/auth";
 import { YouTubeProtectionError } from "../youtube/usage";
+import { authorizationFailureCredential } from "../youtube/authorization-failure";
 type FinalUpload = { asset: MediaAsset; relativePath: string; sha256: string };
 type Entry = { repairPending?: boolean; preparedSequence?: number; finalUpload?: FinalUpload; spec: JobSpec; report: PublishingReport; acknowledged?: number; session?: string; sha256?: string; finalChunkPossible?: boolean; thumbnailDone?: boolean; playlistsDone: string[]; finalized?: boolean; scheduleRevisionPending?: boolean; reschedulePreviousAt?: string; expiredData?: boolean; failures: number; resumeState?: PublishingReport["state"]; reconciliation?: { revision: number; nextAttemptAt: number; precisionRecoveryCandidate?: string } };
 type Reconciliation = { entry: Entry; revision: number; videoId?: string };
-type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
+type Options = { requirePreparedAcknowledgement?: boolean; store?: PublishingStore; now?: () => number; api?: (spec: JobSpec) => VideoPort; accountAuth?: (accountId: string) => YouTubeAuth; accountAuthorizationGeneration?: (accountId: string) => Promise<string | undefined>; live?: () => boolean; charge?: (job: JobSpec, units: number, upload: boolean) => Promise<void>; metadata?: typeof publishingMetadata };
+/** 普通控制不是新的授权失败；事件身份只由本次真正的API错误重新建立。 */
+function clearAuthorizationFailure(report: PublishingReport) { report.authorizationInvalid = undefined; report.authorizationFailureId = undefined; report.authorizationGeneration = undefined; }
 /** YouTube 按秒回读排期；兼容旧毫秒候选和等价 RFC3339 格式，但不接受跨秒或无效时间。 */
 function sameMoment(a?: unknown, b?: string) {
   if (typeof a !== "string" || !b) return false;
@@ -86,7 +90,7 @@ export class PublishingRunner {
   private async applyOnce(value: JobSpec) {
     await this.load(); const spec = jobSpecSchema.parse(value); if (this.purging.has(this.authorizationKey(spec))) throw new AppError("CLEANUP", "发布账号正在清理授权。"); if (spec.contentPackage && this.archives.has(spec.contentPackage.batchName)) throw new AppError("ARCHIVE_BUSY", "批次正在归档，请稍后重试。"); const old = this.entries.get(spec.id);
     if (old && spec.revision <= old.spec.revision) { if (spec.revision === old.spec.revision && JSON.stringify(spec) !== JSON.stringify(old.spec)) throw new AppError("REQUEST", "相同任务版本包含不同输入。"); return { ok: true }; }
-    const repairing = !!old && spec.repairRevision === spec.revision && old.report.state === "needs_attention" && !!old.report.videoId && spec.desired === "run" && samePublishingSourceProfile(old.spec.profile, spec.profile);
+    const repairing = !!old && spec.repairRevision === spec.revision && old.report.state === "needs_attention" && !!old.report.videoId && samePublishingSourceProfile(old.spec.profile, spec.profile);
     if (old && (old.spec.batchId !== spec.batchId || old.spec.asset.version !== spec.asset.version || old.spec.contentPackage?.version !== spec.contentPackage?.version || old.spec.owner !== spec.owner || !repairing && JSON.stringify(old.spec.profile) !== JSON.stringify(spec.profile))) throw new AppError("REQUEST", "任务修订不能替换素材、频道或配置快照。");
     // 查询修订只保存最新意图和持久查询请求，不能以 run 标记恢复暂停、异常或重做发布设置。
     if (spec.reconcileRevision === spec.revision) {
@@ -94,6 +98,7 @@ export class PublishingRunner {
       // 核对修订会更新公开报告版本；先固定原候选归属，不能把旧修订的结果当作当前排期。
       const precisionRecoveryCandidate = old && old.report.revision === old.spec.revision ? old.report.effectivePublishAt : undefined;
       entry.spec = spec; entry.reconciliation = { revision: spec.revision, nextAttemptAt: this.now(), precisionRecoveryCandidate };
+      clearAuthorizationFailure(entry.report);
       if (old && spec.desired !== "run") this.aborters.get(spec.id)?.abort();
       this.entries.set(spec.id, entry); await this.update(entry, {}); return { ok: true };
     }
@@ -106,7 +111,7 @@ export class PublishingRunner {
         if (old.spec.profile.thumbnailMode !== spec.profile.thumbnailMode || old.spec.profile.thumbnailFilename !== spec.profile.thumbnailFilename) old.thumbnailDone = false;
         old.playlistsDone = old.playlistsDone.filter(id => spec.profile.playlistIds.includes(id)); old.finalized = false; old.resumeState = "finalizing"; old.repairPending = true;
       }
-      old.spec = spec; if (spec.desired === "run") old.report.authorizationInvalid = undefined; if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
+      old.spec = spec; clearAuthorizationFailure(old.report); if (spec.desired !== "run") this.aborters.get(spec.id)?.abort(); old.report.revision = spec.revision;
       if (rescheduleRejected) { old.report.message = old.report.state === "published" ? "视频已公开，改期未应用。" : "任务已结束或需要人工处理，改期未应用。"; if (["published", "completed"].includes(old.report.state)) old.report.nextAttemptAt = this.now() + 25 * 86400_000; }
       else {
         if (spec.desired !== "run" && old.report.state === "needs_attention") old.report.state = old.report.videoId ? "processing" : "ready";
@@ -182,21 +187,28 @@ export class PublishingRunner {
       if (this.purging.has(this.authorizationKey(entry.spec)) || this.active.has(entry.spec.id) || this.reconciling.has(entry.spec.id) || entry.reconciliation?.revision === entry.spec.revision || entry.report.state === "needs_attention" || entry.spec.desired === "pause" && (entry.report.state === "paused" || publishingTerminal(entry.report.state)) || entry.spec.desired === "cancel" && ["cancelled", "published"].includes(entry.report.state) || entry.spec.desired === "run" && (publishingTerminal(entry.report.state) || ["scheduled", "processing", "paused"].includes(entry.report.state))) continue;
       if (entry.report.nextAttemptAt && entry.report.nextAttemptAt > this.now()) continue;
       if (this.active.size >= entry.spec.policy.concurrency) break;
-      const promise = this.execute(entry).catch(e => this.failure(entry, e)).finally(() => { this.active.delete(entry.spec.id); this.aborters.delete(entry.spec.id); });
+      const promise = this.executeCurrent(entry).finally(() => { this.active.delete(entry.spec.id); this.aborters.delete(entry.spec.id); });
       this.active.set(entry.spec.id, promise); void promise.catch(() => {});
     }
     await this.poll(entries);
     await this.reconcileRequested(entries);
   }
-  /** 单步操作失败保留当前阶段；网络和配额错误回退重试，永久拒绝等待人工。 */
-  private async failure(entry: Entry, error: unknown) {
+  /** 捕获真实请求使用的凭据代次；OAuth切换后的迟到错误不能改写成新凭据失败。 */
+  private async executeCurrent(entry: Entry) {
+    let generation: string | undefined;
+    try { generation = entry.spec.profile.accountId ? await this.options.accountAuthorizationGeneration?.(entry.spec.profile.accountId) : undefined; await this.execute(entry); } catch (error) { await this.failure(entry, error, generation); }
+  }
+  /** 单步操作失败保留当前阶段；每个真实授权错误有独立身份，普通进度不会重发新失效。 */
+  private async failure(entry: Entry, error: unknown, generation?: string) {
+    const credential = authorizationFailureCredential(error); if (credential) generation = credential.generation;
     if (!entry.resumeState) entry.resumeState = entry.report.state;
     if (error instanceof YouTubeProtectionError) { await this.update(entry, { state: entry.spec.desired === "pause" ? "paused" : "retry_wait", message: safeError(error), nextAttemptAt: entry.spec.desired === "pause" ? undefined : Math.max(this.now() + 1000, error.retryAt) }); return; }
     entry.failures++;
     if (entry.spec.desired === "pause") { await this.update(entry, { state: "paused", nextAttemptAt: undefined, message: undefined }); return; }
     if (entry.spec.desired === "cancel" && (error instanceof Error && error.name === "AbortError" || error instanceof AppError && error.code === "RENDER_ABORTED")) { await this.update(entry, { state: "retry_wait", nextAttemptAt: this.now() }); return; }
     const retry = error instanceof VideoApiError ? error.retryable : error instanceof AppError && (["RENDER_WAIT", "VIDEO_QUOTA", "AGENT_NETWORK", "AGENT_TIMEOUT", "CLOUD_NETWORK", "GOOGLE_NETWORK", "GOOGLE_UNAVAILABLE", "YOUTUBE_QUOTA"].includes(error.code) || error.code === "CLOUD_REQUEST" && error.status >= 500);
-    await this.update(entry, { state: retry || this.stopped ? "retry_wait" : "needs_attention", authorizationInvalid: error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code) || undefined, message: safeError(error).slice(0, 500), nextAttemptAt: retry ? this.now() + Math.max(error instanceof VideoApiError ? error.retryAfterMs : 0, Math.min(1_800_000, 30_000 * 2 ** Math.min(entry.failures - 1, 6))) : undefined });
+    const authorizationInvalid = error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code) || undefined;
+    await this.update(entry, { state: retry || this.stopped ? "retry_wait" : "needs_attention", authorizationInvalid, authorizationFailureId: authorizationInvalid && generation ? randomUUID() : undefined, authorizationGeneration: authorizationInvalid ? generation : undefined, message: safeError(error).slice(0, 500), nextAttemptAt: retry ? this.now() + Math.max(error instanceof VideoApiError ? error.retryAfterMs : 0, Math.min(1_800_000, 30_000 * 2 ** Math.min(entry.failures - 1, 6))) : undefined });
   }
   /** 续传前先核对远端 session；末块结果不明时从不盲目重新开始。 */
   private async execute(entry: Entry) {
@@ -344,14 +356,17 @@ export class PublishingRunner {
     }
     await this.update(entry, { offset: probe.offset, ...(probe.videoId ? { videoId: probe.videoId } : {}) });
   }
-  /** 同一实例/频道合并查询，不为每个任务建立独立轮询定时器。 */
+  /** 同一实例/频道合并查询；旧修订的成功或错误都不能覆盖已接收的新取消、暂停或改期。 */
   private async poll(entries: Entry[]) {
     const groups = new Map<string, Entry[]>();
     for (const e of entries) if (!this.purging.has(this.authorizationKey(e.spec)) && !this.active.has(e.spec.id) && !this.reconciling.has(e.spec.id) && e.reconciliation?.revision !== e.spec.revision && e.spec.desired === "run" && e.report.videoId && ["processing", "scheduled", "published", "completed"].includes(e.report.state) && (e.report.nextAttemptAt || 0) <= this.now()) { const key = e.spec.profile.agentId + ":" + e.spec.profile.instanceId + ":" + (e.spec.profile.accountId || "legacy") + ":" + e.spec.profile.channelId; groups.set(key, [...(groups.get(key) || []), e]); }
     for (const group of groups.values()) for (let start = 0; start < group.length; start += group[0].spec.policy.pollBatchSize) {
-      const batch = group.slice(start, start + group[0].spec.policy.pollBatchSize);
-      try { await this.checkChannel(batch[0]); const results = await this.api(batch[0]).list(batch.map(e => e.report.videoId!)); for (const e of batch) await this.observe(e, results.find(v => v.id === e.report.videoId)); }
-      catch (error) { for (const e of batch) await this.failure(e, error); }
+      const batch = group.slice(start, start + group[0].spec.policy.pollBatchSize).map(entry => ({ entry, revision: entry.spec.revision, desired: entry.spec.desired, videoId: entry.report.videoId }));
+      /** 批量读取只对发起时的相同执行快照落盘；purge和新执行同样会使观察失效。 */
+      const current = (request: typeof batch[number]) => !this.stopped && this.entries.get(request.entry.spec.id) === request.entry && request.entry.spec.revision === request.revision && request.entry.spec.desired === request.desired && request.entry.report.videoId === request.videoId && !this.purging.has(this.authorizationKey(request.entry.spec)) && !this.active.has(request.entry.spec.id);
+      const generation = batch[0].entry.spec.profile.accountId ? await this.options.accountAuthorizationGeneration?.(batch[0].entry.spec.profile.accountId) : undefined;
+      try { await this.checkChannel(batch[0].entry); const results = await this.api(batch[0].entry).list(batch.map(request => request.videoId!)); for (const request of batch) if (current(request)) await this.observe(request.entry, results.find(video => video.id === request.videoId)); }
+      catch (error) { for (const request of batch) if (current(request)) await this.failure(request.entry, error, generation); }
     }
   }
   /** 查询结果只属于发起时的任务修订和 videoId；上传、清理或新控制开始后丢弃迟到结果。 */
@@ -390,12 +405,17 @@ export class PublishingRunner {
     const requests = batch.filter(request => request.videoId && this.currentReconciliation(request));
     if (!requests.length) return;
     let results: VideoResource[];
+    const generation = requests[0].entry.spec.profile.accountId ? await this.options.accountAuthorizationGeneration?.(requests[0].entry.spec.profile.accountId) : undefined;
     try {
       await this.checkChannel(requests[0].entry);
       if (!requests.some(request => this.currentReconciliation(request))) return;
       results = await this.api(requests[0].entry).list([...new Set(requests.map(request => request.videoId!))]);
     } catch (error) {
-      for (const request of requests) await this.deferReconciliation(request, "状态核对暂未完成，稍后重试；原处理设置保留。", error instanceof YouTubeProtectionError ? error.retryAt : undefined);
+      for (const request of requests) {
+        const credential = authorizationFailureCredential(error); const failedGeneration = credential ? credential.generation : generation;
+        if (failedGeneration && this.currentReconciliation(request) && error instanceof AppError && ["GOOGLE_AUTH", "YOUTUBE_AUTH"].includes(error.code)) await this.update(request.entry, { authorizationInvalid: true, authorizationGeneration: failedGeneration, authorizationFailureId: randomUUID() });
+        await this.deferReconciliation(request, "状态核对暂未完成，稍后重试；原处理设置保留。", error instanceof YouTubeProtectionError ? error.retryAt : undefined);
+      }
       return;
     }
     for (const request of requests) {

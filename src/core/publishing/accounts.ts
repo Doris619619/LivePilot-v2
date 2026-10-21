@@ -9,7 +9,7 @@ import { YouTubeApi } from "../youtube/api";
 import { PublishingStore } from "./storage";
 import { withYouTubeContext } from "../youtube/usage";
 
-type Record = { id: string; instanceId: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; channelAttemptAt?: number; deleted?: boolean; purge?: { createdAt: number; pending: boolean } };
+type Record = { id: string; instanceId: string; authorizationGeneration?: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; channelAttemptAt?: number; deleted?: boolean; purge?: { createdAt: number; pending: boolean } };
 export type PublishingAccountStatus = { id: string; instanceId: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; cleanupPending?: boolean };
 type Binding = (id: string, instanceId: string, channel: { channelId: string; channel: string; channelCheckedAt?: number }, confirm: boolean) => Promise<void>;
 const accountId = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -20,6 +20,7 @@ export function requirePublishingAccount(id: string) { if (!accountId.test(id)) 
 export class PublishingAccounts {
   private auths = new Map<string, YouTubeAuth>(); private operations = new Map<string, Promise<unknown>>();
   private accountInstances = new Map<string, string>();
+  private pendingGenerations = new Map<string, string>();
   readonly root: string;
   /** 只保存公开频道身份到 Cloud；令牌在永久占位成功后于账号专属目录原子加密落盘。 */
   constructor(private bind: Binding, root = path.join(dataRoot(), "agent", "publishing", "accounts")) { this.root = path.resolve(root); }
@@ -45,8 +46,8 @@ export class PublishingAccounts {
       if (record.channelId && record.channelId !== tokens.channelId) throw new AppError("CHANNEL", "请重新授权这个发布账号原来的频道。", 409);
       const channelCheckedAt = Date.now();
       await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, channelCheckedAt }, false);
-      await store.write("youtube.enc", seal(tokens));
-      await store.write("account.json", { ...record, channelId: tokens.channelId, channel: tokens.channel, connectedAt: Date.now(), channelCheckedAt });
+      await store.write("youtube.enc", seal({ ...tokens, authorizationGeneration: this.pendingGenerations.get(id) }));
+      await store.write("account.json", { ...record, authorizationGeneration: this.pendingGenerations.get(id), channelId: tokens.channelId, channel: tokens.channel, connectedAt: Date.now(), channelCheckedAt });
       await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, channelCheckedAt }, true);
     }, () => ({ instanceId: this.accountInstances.get(id) || "main", accountId: id }));
     this.auths.set(id, auth); return auth;
@@ -54,9 +55,11 @@ export class PublishingAccounts {
   /** 开始独立发布 OAuth；actor 和账号身份保存在一次性加密 PKCE 事务中。 */
   begin(id: string, instanceId: string, actor: string) { return this.run(id, async () => { await this.assertAvailable(id, instanceId); return this.auth(id).begin(actor); }); }
   /** 重连固定原频道，已有会话的任务还提供期望频道；失败不会覆盖旧 Token。 */
-  finish(id: string, instanceId: string, cookie: string, state: string, code: string, actor: string, expectedChannel?: string, cancelled = false) {
-    return this.run(id, async () => { const record = await this.assertAvailable(id, instanceId); if (record.channelId && expectedChannel && record.channelId !== expectedChannel) throw new AppError("CHANNEL", "发布任务和账号原频道不一致。", 409); await this.auth(id).finish(cookie, state, code, record.channelId || expectedChannel, actor, cancelled); return { ok: true }; });
+  finish(id: string, instanceId: string, cookie: string, state: string, code: string, actor: string, expectedChannel?: string, cancelled = false, authorizationGeneration?: string) {
+    return this.run(id, async () => { const record = await this.assertAvailable(id, instanceId); if (record.channelId && expectedChannel && record.channelId !== expectedChannel) throw new AppError("CHANNEL", "发布任务和账号原频道不一致。", 409); if (authorizationGeneration) this.pendingGenerations.set(id, authorizationGeneration); try { await this.auth(id).finish(cookie, state, code, record.channelId || expectedChannel, actor, cancelled); return { ok: true }; } finally { this.pendingGenerations.delete(id); } });
   }
+  /** 请求开始前捕获已落盘凭据的Cloud随机代次；授权切换期间的迟到错误仍归属原代次。 */
+  async authorizationGeneration(id: string) { return (await this.record(id)).authorizationGeneration; }
   /** 播放列表请求复用短 API 客户端，但授权只来自该发布账号。 */
   playlists(id: string, instanceId: string) { return this.run(id, async () => { await this.assertAvailable(id, instanceId); return { playlists: await new YouTubeApi(this.auth(id), this.store(id)).playlists() }; }); }
   /** 频道标题只由真实查询续期；直接更新缓存而不调用 saveBinding，避免同账号队列重入；失败满30天清除标题。 */

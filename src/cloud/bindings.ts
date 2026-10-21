@@ -7,6 +7,21 @@ import type { Store } from "@/core/storage";
 import { randomUUID } from "node:crypto";
 type Binding = Target & { channelId: string; confirmed: boolean };
 type Claim = Target & { channelId: string; claimId: string; confirmed: boolean };
+/** 调用方持 metadata.lock；只对既有不可复活的退休墓碑补清理，不执行新的退役或改变活跃库存。 */
+export async function reconcileRetiredChannels(store: Store, agentId?: string) {
+  const registry = await store.read<{ agents: { id: string; instances: { id: string }[]; retiredInstanceIds?: string[] }[] }>("agents.json");
+  const retired = new Set<string>();
+  for (const agent of (registry?.agents || []).filter(agent => !agentId || agent.id === agentId)) for (const id of agent.retiredInstanceIds || []) {
+    if (id === "main" || agent.instances.some(instance => instance.id === id)) throw new AppError("STORAGE", "实例退休记录与活跃库存冲突，频道占用已保留，请核对原设备。");
+    retired.add(agent.id + ":" + id);
+  }
+  if (!retired.size) return;
+  for (const file of ["bindings.json", "channel-claims.json"]) {
+    const entries = await store.read<Target[]>(file); if (!entries) continue;
+    const retained = entries.filter(entry => !retired.has(entry.agentId + ":" + entry.instanceId));
+    if (retained.length !== entries.length) await store.write(file, retained);
+  }
+}
 /** 调用方持 metadata.lock；撤销目标时一并清除版本栅栏，旧设备凭据不能继续提交。 */
 export async function releaseTargetChannels(store: Store, target: Target) {
   const bindings = await store.read<Binding[]>("bindings.json") || [];
@@ -25,6 +40,7 @@ export async function releaseAgentChannels(store: Store, agentId: string) {
 }
 /** 持锁清理历史已移除设备的占用；未知设备记录保留，不将离线当作移除。 */
 async function reconcileRemoved(store: Store) {
+  await reconcileRetiredChannels(store);
   const registry = await store.read<{ agents: { id: string; revoked: boolean }[] }>("agents.json");
   const removed = new Set(registry?.agents.filter(a => a.revoked).map(a => a.id));
   const bindings = await store.read<Binding[]>("bindings.json") || [];

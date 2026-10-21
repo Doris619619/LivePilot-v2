@@ -27,7 +27,7 @@ beforeEach(async () => {
   vi.stubEnv("LIVEPILOT_DATA_ROOT", root); vi.stubEnv("LIVEPILOT_ENCRYPTION_KEY", "a".repeat(64)); vi.stubEnv("GOOGLE_CLIENT_ID", client);
   vi.stubGlobal("fetch", vi.fn(async (url: string) => { if (url !== "https://google.synthetic.invalid/channels") throw new Error("Unexpected external network"); return Response.json({ items: [] }); }));
   for (const agentId of ["pc_a", "pc_b"]) { const pair = await createPairing(agentId, agentId); await pairAgent(agentId, pair.code, "b".repeat(64)); const session = await openSession(agentId, randomUUID(), [{ id: "main", name: "Main" }, { id: "second", name: "Second" }]); await heartbeatAgent(agentId, session.session, []); await agentStore(agentId).write("capabilities.json", ["youtube-quota-v1", "youtube-usage-v1", "publishing-accounts-v1"]); }
-  await updateYouTubePolicy({ baseline: { day: quotaDay(), units: 0, uploads: 0, source: "conservative-estimate" }, policy: { ...defaultYouTubePolicy, burstUnits: 1000, unitsPerMinute: 1000 } }, "synthetic-admin");
+  await updateYouTubePolicy({ baseline: { day: quotaDay(), units: 0, uploads: 0, source: "conservative-estimate" }, policy: { ...defaultYouTubePolicy, burstUnits: 1000, unitsPerMinute: 1000 }, policyRevision: (await youtubeUsageSummary()).policyRevision }, "synthetic-admin");
 });
 /** 停止运行时后，只清理本轮经过核验的独立临时目录。 */
 afterEach(async () => { installYouTubeRuntime(undefined); for (const runtime of runtimes.splice(0)) await runtime.stop(); vi.useRealTimers(); vi.unstubAllEnvs(); vi.unstubAllGlobals(); vi.restoreAllMocks(); if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith("ln-youtube-history-")) throw new Error("Unsafe cleanup"); await rm(root, { recursive: true, force: true }); });

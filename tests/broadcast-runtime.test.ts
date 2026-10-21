@@ -2,9 +2,10 @@
 import { expect, it } from "vitest";
 import type { Dashboard } from "@/shared/types";
 import { broadcastWatchUrl, runtimeActionMode, runtimeDuration, runtimeSummary } from "@/app/components/broadcast-runtime-model";
+import { freshYouTubeEvidence, mergeDashboardEvidence } from "@/shared/youtube-evidence";
 
 const idle: Dashboard = { busy: false, state: { phase: "idle", stage: "等待", updatedAt: "" }, obs: { ready: true, running: true, streaming: false }, youtube: { connected: true }, media: { videos: [], music: [] }, configuration: { missing: [], privacy: "private", madeForKids: false } };
-const conflict: Dashboard = { ...idle, state: { ...idle.state, phase: "error", stage: "直播中", broadcastId: "example-id", broadcastTitle: "本场", error: "请求超时" }, youtube: { connected: true, lifecycle: "live", ingest: "active" } };
+const conflict: Dashboard = { ...idle, state: { ...idle.state, phase: "error", stage: "直播中", broadcastId: "example-id", broadcastTitle: "本场", error: "请求超时" }, youtube: { connected: true, lifecycle: "live", ingest: "active", checkedAt: new Date().toISOString() } };
 const input = { stale: false, busy: false, live: false };
 
 it("shows confirmed OBS stop independently of pending platform cleanup", () => {
@@ -28,7 +29,7 @@ it("does not trust the internal live stage without external confirmation", () =>
   expect(runtimeSummary({ ...input, data: { ...conflict, state: { ...conflict.state, phase: "live", error: undefined }, youtube: { connected: true } } }).label).toBe("直播状态待核对");
 });
 it.each(["ready", "complete", undefined])("does not offer retry while OBS streams and YouTube is %s", lifecycle => {
-  const data = { ...conflict, obs: { ...idle.obs, streaming: true }, youtube: { connected: true, lifecycle } };
+  const data = { ...conflict, obs: { ...idle.obs, streaming: true }, youtube: { connected: true, lifecycle, checkedAt: new Date().toISOString() } };
   expect(runtimeActionMode({ ...input, data })).toBe("check");
   expect(runtimeSummary({ ...input, data }).label).toBe("直播信号待确认");
 });
@@ -51,7 +52,7 @@ it("distinguishes verified live, reconnecting, idle and ended states", () => {
   expect(runtimeSummary({ ...input, data: { ...data, obs: { ...data.obs, reconnecting: true } }, live: true }).label).toBe("推流重连中");
   expect(runtimeSummary({ ...input, data: idle }).label).toBe("等待开播");
   expect(runtimeSummary({ ...input, data: { ...idle, state: { ...idle.state, phase: "stopped" } } }).label).toBe("本场已结束");
-  const ended = { ...conflict, youtube: { connected: true, query: "ready" as const, lifecycle: "complete" } };
+  const ended = { ...conflict, youtube: { connected: true, query: "ready" as const, lifecycle: "complete", checkedAt: new Date().toISOString() } };
   expect(runtimeSummary({ ...input, data: ended })).toMatchObject({ status: "standby", label: "本场已结束", message: "确认结束后可更换下一场素材。" });
   expect(runtimeSummary({ ...input, data: { ...ended, state: { ...ended.state, platformClosePending: true, stopRequested: true } } }).label).toBe("本场已结束");
   expect(runtimeSummary({ ...input, stale: true, data: ended }).label).toBe("状态待更新");
@@ -69,4 +70,20 @@ it("uses only the current broadcast ID for the watch URL, encoding it without a 
   expect(broadcastWatchUrl("a&b#c")).toBe("https://www.youtube.com/watch?v=a%26b%23c");
   expect(broadcastWatchUrl()).toBeUndefined();
   expect(broadcastWatchUrl(" ")).toBeUndefined();
+});
+
+/** 新鲜心跳和OBS推流不能刷新半小时前的平台证据，也不能把缺失时间当作当前确认。 */
+it.each([undefined, new Date(Date.now() - 30 * 60_000).toISOString()])("does not label cached YouTube evidence as live when checkedAt=%s", checkedAt => {
+  const data: Dashboard = { ...conflict, obs: { ...idle.obs, streaming: true }, youtube: { ...conflict.youtube, checkedAt } };
+  expect(runtimeSummary({ ...input, data, live: true })).toMatchObject({ status: "stale", label: "平台状态待核对" });
+});
+
+/** 人工核对与下一次心跳交错时保留较新的平台证据，仍接受真正的新错误和场次改变。 */
+it("does not replace manually checked evidence with a later heartbeat carrying an older platform cache", () => {
+  const checked: Dashboard = { ...conflict, youtube: { ...conflict.youtube, lifecycle: "complete", checkedAt: new Date().toISOString() } };
+  const older: Dashboard = { ...conflict, youtube: { ...conflict.youtube, lifecycle: "live", checkedAt: new Date(Date.now() - 30 * 60_000).toISOString() } };
+  expect(mergeDashboardEvidence(checked, older).youtube.lifecycle).toBe("complete");
+  expect(mergeDashboardEvidence(checked, { ...older, youtube: { ...older.youtube, query: "failed" } }).youtube.query).toBe("failed");
+  expect(mergeDashboardEvidence(checked, { ...older, state: { ...older.state, broadcastId: "another" } }).youtube.lifecycle).toBe("live");
+  expect(freshYouTubeEvidence({ connected: true, checkedAt: new Date(Date.now() + 60_000).toISOString() })).toBe(false);
 });

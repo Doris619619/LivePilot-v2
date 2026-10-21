@@ -2,9 +2,10 @@
 import { createHash } from "node:crypto";
 import { readdir, unlink } from "node:fs/promises";
 import path from "node:path";
+import { Temporal } from "@js-temporal/polyfill";
 import { quotaDay } from "@/core/publishing/schedule";
 import { nextQuotaMidnight } from "@/core/live-chat/policy";
-import { youtubeUsageBatchSchema, youtubeCost, type StoredYouTubeEvent, type YouTubeUsageEvent, type YouTubeUsageQuery, type YouTubeEventsPage } from "@/shared/youtube-usage";
+import { youtubeUsageBatchSchema, youtubeCost, type StoredYouTubeEvent, type YouTubeUsageEvent, type YouTubeUsageQuery, type YouTubeEventsPage, type YouTubeDetailCoverage } from "@/shared/youtube-usage";
 import { transaction } from "./store";
 import { youtubeUsageStore, editYouTubeUsage, youtubeDay, findYouTubeReceipts, saveArchivedYouTubeResults, type YouTubeReceiptLocation } from "./youtube-usage-store";
 import { matchesYouTubeReceipt, ownsYouTubeDecision, youtubeHistoryGap, youtubeHistoryInstances } from "./youtube-history-context";
@@ -93,9 +94,20 @@ export async function youtubeEventSummary(day: string) {
 function matches(event: StoredYouTubeEvent, query: YouTubeUsageQuery) {
   return (!query.day || query.day === event.quotaDay) && (!query.agentId || query.agentId === event.agentId) && (!query.instanceId || query.instanceId === event.instanceId) && (!query.method || query.method === event.method) && (!query.purpose || query.purpose === event.purpose) && (!query.outcome || query.outcome === event.outcome) && (query.from === undefined || event.at >= query.from) && (query.to === undefined || event.at <= query.to);
 }
+/** 保留期按真实经过14天计算；PT日期与显式时间范围取交集，跨DST不假定一天24小时。 */
+function detailCoverage(query: YouTubeUsageQuery): YouTubeDetailCoverage {
+  const detailsAvailableFrom = Math.max(0, Date.now() - 14 * 86400_000);
+  let from = query.from ?? 0, to = query.to ?? Infinity;
+  if (query.day) {
+    const day = Temporal.PlainDate.from(query.day);
+    from = Math.max(from, day.toZonedDateTime("America/Los_Angeles").epochMilliseconds);
+    to = Math.min(to, day.add({ days: 1 }).toZonedDateTime("America/Los_Angeles").epochMilliseconds - 1);
+  }
+  return { detailsAvailableFrom, expired: from <= to && from < detailsAvailableFrom };
+}
 /** 明细在14天内分页；分页游标只包含时间与UUID，不含磁盘路径。 */
 export async function youtubeEvents(query: YouTubeUsageQuery, exportAll = false): Promise<YouTubeEventsPage> {
-  const store = youtubeUsageStore(); const index = await readIndex(); const limit = exportAll ? 100000 : Math.min(500, Math.max(1, query.limit || 100)); let selected: StoredYouTubeEvent[] = []; let missing = 0;
+  const store = youtubeUsageStore(); const index = await readIndex(); const coverage = detailCoverage(query); const limit = exportAll ? 100000 : Math.min(500, Math.max(1, query.limit || 100)); let selected: StoredYouTubeEvent[] = []; let missing = 0;
   const [cursorAt, cursorId] = query.cursor?.split(":") || [];
   for (const segment of index.segments) {
     const events = await store.read<StoredYouTubeEvent[]>(segment.name); if (!events) missing += segment.count;
@@ -104,15 +116,15 @@ export async function youtubeEvents(query: YouTubeUsageQuery, exportAll = false)
     selected = selected.sort((a, b) => b.at - a.at || b.eventId.localeCompare(a.eventId)).slice(0, limit + 1);
   }
   const page = selected.slice(0, limit); const last = page.at(-1);
-  return { events: page, ...(last && selected.length > limit ? { nextCursor: last.at + ":" + last.eventId } : {}), incomplete: index.droppedEvents > 0 || missing > 0 || exportAll && selected.length > limit, droppedEvents: index.droppedEvents + missing };
+  return { events: page, ...coverage, ...(last && selected.length > limit ? { nextCursor: last.at + ":" + last.eventId } : {}), incomplete: coverage.expired || index.droppedEvents > 0 || missing > 0 || exportAll && selected.length > limit, droppedEvents: index.droppedEvents + missing };
 }
 /** 导出逐段读取，不把512MiB明细一次放入内存；轮转竞争导致的缺口在尾部元数据报告。 */
-export async function* streamYouTubeEvents(query: YouTubeUsageQuery): AsyncGenerator<{ event?: StoredYouTubeEvent; metadata?: { incomplete: boolean; droppedEvents: number } }> {
-  const store = youtubeUsageStore(); const index = await readIndex(); const seen = new Set<string>(); let missing = 0;
-  yield { metadata: { incomplete: index.droppedEvents > 0, droppedEvents: index.droppedEvents } };
+export async function* streamYouTubeEvents(query: YouTubeUsageQuery): AsyncGenerator<{ event?: StoredYouTubeEvent; metadata?: { incomplete: boolean; droppedEvents: number } & YouTubeDetailCoverage }> {
+  const store = youtubeUsageStore(); const index = await readIndex(); const coverage = detailCoverage(query); const seen = new Set<string>(); let missing = 0;
+  yield { metadata: { ...coverage, incomplete: coverage.expired || index.droppedEvents > 0, droppedEvents: index.droppedEvents } };
   for (const segment of index.segments) {
     const events = await store.read<StoredYouTubeEvent[]>(segment.name); if (!events) { missing += segment.count; continue; }
     for (const event of events) { const key = event.agentId + ":" + event.eventId; if (!seen.has(key) && matches(event, query)) { seen.add(key); yield { event }; } }
   }
-  yield { metadata: { incomplete: index.droppedEvents > 0 || missing > 0, droppedEvents: index.droppedEvents + missing } };
+  yield { metadata: { ...coverage, incomplete: coverage.expired || index.droppedEvents > 0 || missing > 0, droppedEvents: index.droppedEvents + missing } };
 }

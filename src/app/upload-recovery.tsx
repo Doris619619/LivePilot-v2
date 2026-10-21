@@ -5,8 +5,9 @@ import { api } from "./client-request";
 import { uploadUrl } from "./upload-client";
 import type { UploadStatus } from "@/shared/uploads";
 type Recovery = Pick<UploadStatus, "id" | "instanceId" | "agentId" | "filename"> & { message: string };
+export type UploadOperation = { current: () => boolean; release: () => void };
 /** 查询与取消严格等待服务器回报；失败不从界面抹去待确认记录。 */
-export default function UploadRecovery({ agentId, instanceId, restore, cancelled, currentId, disabled = false }: { agentId?: string; instanceId: string; restore: (status: UploadStatus) => void; cancelled: (id: string) => void; currentId?: string; disabled?: boolean }) {
+export default function UploadRecovery({ agentId, instanceId, restore, cancelled, acquire, currentId, disabled = false }: { agentId?: string; instanceId: string; restore: (status: UploadStatus) => void; cancelled: (id: string) => void; acquire: () => UploadOperation | undefined; currentId?: string; disabled?: boolean }) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [items, setItems] = useState<Recovery[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
@@ -14,18 +15,18 @@ export default function UploadRecovery({ agentId, instanceId, restore, cancelled
   useEffect(() => { let active = true; if (agentId) void api<Recovery[]>(url).then(value => { if (active) setItems(value); }, () => { if (active) setError("上传恢复列表暂不可用，请刷新重试。"); }); return () => { active = false; }; }, [agentId, url]);
   /** 只接纳当前目标的服务端结果，错误保留记录供后续对账。 */
   async function act(item?: Recovery, cancel = false) {
-    if (busy || disabled) return; setBusy(true); setError("");
+    if (busy || disabled) return; const operation = acquire(); if (!operation) return; setBusy(true); setError("");
     try {
       if (item) {
-        if (cancel) { await api(uploadUrl(item), { method: "DELETE", headers: { "x-livepilot": "1" } }); if (mounted.current) cancelled(item.id); }
+        if (cancel) { await api(uploadUrl(item), { method: "DELETE", headers: { "x-livepilot": "1" } }); if (mounted.current && operation.current()) cancelled(item.id); }
         else {
           const status = await api<UploadStatus>(uploadUrl(item));
           if (status.id !== item.id || status.instanceId !== instanceId || status.agentId !== agentId) throw new Error("上传记录与当前目标不一致，请重新查询原电脑。");
-          if (mounted.current) restore(status);
+          if (mounted.current && operation.current()) restore(status);
         }
       }
-    } catch (e) { if (mounted.current) setError((e as Error).message); }
-    finally { try { const items = await api<Recovery[]>(url); if (mounted.current) setItems(items); } catch { if (mounted.current) setError(previous => previous ? previous + " 另：恢复列表暂未刷新，请稍后重新查询。" : "操作已返回，但恢复列表暂未刷新，请重新查询。"); } if (mounted.current) setBusy(false); }
+    } catch (e) { if (mounted.current && operation.current()) setError((e as Error).message); }
+    finally { try { if (operation.current()) { const items = await api<Recovery[]>(url); if (mounted.current && operation.current()) setItems(items); } } catch { if (mounted.current && operation.current()) setError(previous => previous ? previous + " 另：恢复列表暂未刷新，请稍后重新查询。" : "操作已返回，但恢复列表暂未刷新，请重新查询。"); } if (mounted.current) setBusy(false); operation.release(); }
   }
   if (!agentId) return null;
   const remaining = items.filter(item => item.id !== currentId);

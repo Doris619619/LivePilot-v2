@@ -10,8 +10,9 @@ export async function connectSession(transport: Transport, input: SessionInput):
   const body = { protocol: PROTOCOL, ...input };
   const consent = [...legacy, "media-preview-v1", "publishing-consent-v2"];
   const quota = [...consent, "youtube-quota-v1", "youtube-usage-v1"];
-  // 两组能力代际均有独立回退；只有 Cloud 明确拒绝协议才移除能力。
-  for (const capabilities of [[...quota, "publishing-recovery-v1"], quota, [...consent, "publishing-recovery-v1"], consent, [...legacy, "media-preview-v1"]]) {
+  const recoveryQuota = [...quota, "publishing-recovery-v1"];
+  // 新授权代次单独回退到原full8，再分别保留quota/recovery；仅明确400才移除能力。
+  for (const capabilities of [[...recoveryQuota, "publishing-auth-generation-v1"], recoveryQuota, quota, [...consent, "publishing-recovery-v1"], consent, [...legacy, "media-preview-v1"]]) {
     try { return await transport.post<SessionResult>("/api/agent/session", { ...body, capabilities }); }
     catch (error) { if (!(error instanceof AppError) || error.status !== 400) throw error; }
   }

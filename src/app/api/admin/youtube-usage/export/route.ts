@@ -8,7 +8,7 @@ export const runtime = "nodejs";
 export async function GET(request: Request) { try {
   await youtubeAdmin(request); const query = youtubeQuery(request); const csv = query.format === "csv";
   const meta = { schema: 1, costVersion: YOUTUBE_COST_VERSION, estimated: true, filters: { day: query.day, from: query.from, to: query.to } };
-  const columns = ["at", "agentId", "instanceId", "accountId", "attemptId", "operationId", "jobId", "method", "purpose", "trigger", "kind", "decision", "blockReason", "outcome", "httpStatus", "grpcStatus", "estimatedUnits", "durationMs", "retryCount", "retryDelayMs", "streamBatches", "streamMessages"] as const;
+  const columns = ["at", "agentId", "instanceId", "accountId", "attemptId", "operationId", "jobId", "method", "purpose", "trigger", "kind", "decision", "count", "droppedEvents", "blockReason", "outcome", "httpStatus", "grpcStatus", "estimatedUnits", "durationMs", "retryCount", "retryDelayMs", "streamBatches", "streamMessages"] as const;
   /** 元数据值只来自固定字段；CSV仍逐值引号包裹避免分隔符混淆。 */
   const quote = (value: unknown) => '"' + String(value ?? "").replaceAll('"', '""') + '"';
   const encoder = new TextEncoder(); const iterator = streamYouTubeEvents({ ...query, cursor: undefined }); let started = false;

@@ -8,6 +8,7 @@ import { CheckCircleIcon, ExternalLinkIcon, VideoIcon } from "./icons";
 import { broadcastWatchUrl, runtimeDuration, type RuntimeSummary } from "./broadcast-runtime-model";
 import panelStyles from "./broadcast-workflow-panel.module.css";
 import styles from "./broadcast-runtime.module.css";
+import { freshYouTubeEvidence, youtubeEvidenceTime } from "@/shared/youtube-evidence";
 
 /** 只展示父级已核实的状态；所有开停播操作仍由原实例控制器执行。 */
 export default function BroadcastRuntime({ id, data, stale, durationMs, summary, readiness, controls }: { id: string; data?: Dashboard; stale: boolean; durationMs: number | null; summary: RuntimeSummary; readiness?: string; controls: ReactNode }) {
@@ -27,8 +28,9 @@ export default function BroadcastRuntime({ id, data, stale, durationMs, summary,
       <div className={styles.summary} role="status"><StatusBadge status={summary.status} label={summary.label} />{summary.message && <p>{summary.message}</p>}</div>
       <dl className={styles.signals}>
         <div><dt>OBS 推流</dt><dd>{obs}</dd></div>
-        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : data?.state.platformClosePending ? "待确认结束" : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
+        <div><dt>YouTube 场次</dt><dd>{stale ? "未知" : data?.state.platformClosePending ? "待确认结束" : data?.youtube.lifecycle && !freshYouTubeEvidence(data.youtube) ? "上次：" + youtubeLifecycleLabel(data.youtube.lifecycle) : youtubeLifecycleLabel(data?.youtube.lifecycle)}</dd></div>
       </dl>
+      {data && (data.state.broadcastId || data.youtube.checkedAt) && <p className={styles.readiness}>{youtubeEvidenceTime(data.youtube)}{data.youtube.nextCheckAt && Number.isFinite(Date.parse(data.youtube.nextCheckAt)) ? `；下次后台核对预计：${new Date(data.youtube.nextCheckAt).toLocaleString("zh-CN")}` : ""}</p>}
       {readiness && <p className={styles.readiness}>{readiness}</p>}
     </div>
     </section>

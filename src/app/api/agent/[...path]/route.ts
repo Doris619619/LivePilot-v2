@@ -102,12 +102,12 @@ export async function POST(request: Request, context: Context) {
       return Response.json({ clientId: c.clientId, clientSecret: c.clientSecret, youtubeProject: "current-project" }, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "session") {
-      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2", "publishing-recovery-v1", "youtube-quota-v1", "youtube-usage-v1"])).max(8).optional() }).strict().parse(raw);
+      const value = z.object({ protocol: z.literal(PROTOCOL), bootId: uuidSchema, instances: z.array(z.object({ id: idSchema, name: z.string().min(1).max(80) }).strict()).min(1).max(64), maintenance: z.string().regex(/^[a-f0-9]{64}$/).optional(), capabilities: z.array(z.enum(["publishing-v1", "publishing-v2", "publishing-accounts-v1", "media-preview-v1", "publishing-consent-v2", "publishing-recovery-v1", "youtube-quota-v1", "youtube-usage-v1", "publishing-auth-generation-v1"])).max(9).optional() }).strict().parse(raw);
       if (new Set(value.instances.map(i => i.id)).size !== value.instances.length) throw new AppError("INSTANCE", "实例清单包含重复 ID。");
       // 仅在设备身份通过认证且持有已登记维护凭据时恢复中断的清单事务。
       if (value.maintenance) await changeMaintenance(agent.id, value.maintenance, value.instances, true);
       const session = await openSession(agent.id, value.bootId, value.instances); await agentStore(agent.id).write("capabilities.json", value.capabilities || []);
-      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1", "account-ai-v1", "youtube-quota-v1", "youtube-usage-v1"] });
+      return Response.json({ ...session, capabilities: ["problem-v1", "publishing-v1", "publishing-v2", "publishing-accounts-v1", "live-chat-v1", "media-preview-v1", "account-ai-v1", "youtube-quota-v1", "youtube-usage-v1", "publishing-auth-generation-v1"] });
     }
     if (route === "heartbeat") {
       const value = z.object({ protocol: z.literal(PROTOCOL), snapshots: z.array(snapshotSchema).max(64), problems: z.array(problemSchema).max(128).optional(), reports: z.array(reportSchema).max(32) }).strict().parse(raw);
