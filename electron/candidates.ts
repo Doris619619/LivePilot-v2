@@ -2,6 +2,10 @@
 import { AppError } from "../src/core/errors";
 import type { Settings } from "./settings";
 import type { DesktopInstance } from "../src/shared/desktop";
+/** 未结退役拥有唯一恢复记录；候选晋升和清单修改不能越过它创建第二笔库存事务。 */
+export function assertInventorySettled(settings: Settings) {
+  if (settings.retirementPending) throw new AppError("MAINTENANCE", "请先恢复上次退役：点击重新连接并恢复，核对原实例后再修改 OBS 配置。", 409);
+}
 /** 兼容旧版初始化失败留下的实例，成功实例及频道 ID 始终保留。 */
 export function separateCandidates(settings: Settings) {
   settings.candidates ||= [];
@@ -12,6 +16,7 @@ export function separateCandidates(settings: Settings) {
 }
 /** 候选仅在本地验证成功后晋升；云端提交失败仍保留这份可重试清单。 */
 export function acceptCandidate(settings: Settings, candidate: DesktopInstance) {
+  assertInventorySettled(settings);
   candidate.initialized = true;
   if (!settings.instances.some(i => i.id === candidate.id)) settings.instances.push(candidate);
   settings.candidates = settings.candidates?.filter(i => i.id !== candidate.id);
