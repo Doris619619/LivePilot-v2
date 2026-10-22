@@ -1,21 +1,35 @@
 <!-- 文件用途：介绍 LiveNest 的产品能力、使用入口、运行架构与开发方式，并导航到专题文档。 -->
-# LiveNest
+<p align="center">
+  <img src="docs/images/livenest-icon.png" width="80" height="80" alt="LiveNest 图标" />
+</p>
 
-**在一个网页里管理多台 Windows 电脑上的 YouTube 直播与视频发布。**
+<h1 align="center">LiveNest</h1>
 
-LiveNest 将远程工作台与本机执行分开：你在浏览器中选择素材、编排直播、安排视频发布；Windows 客户端负责独立 OBS 实例、素材处理和实际执行。适合需要集中管理多台直播电脑、多个频道的团队。
+<p align="center"><strong>多台电脑，多个频道，一个工作台。</strong></p>
 
-本仓库 `LivePilot-v2` 包含网页、Cloud 和 Windows 执行端；对外产品名为 **LiveNest**。
+<p align="center">在浏览器中编排 YouTube 直播与视频发布，让 Windows 客户端负责执行。</p>
 
-**[下载 Windows 客户端](https://livenest.duckdns.org/download)** · **[打开网页工作台](https://livenest.duckdns.org/workspace)** · [使用指南](docs/桌面配置与网页协作.md) · [文档中心](docs/README.md) · [发行记录](https://github.com/Doris619619/LiveNest-Releases/releases)
+<p align="center">
+  <a href="https://livenest.duckdns.org/download">下载 Windows 客户端</a> ·
+  <a href="https://livenest.duckdns.org/workspace">打开网页工作台</a> ·
+  <a href="#开始使用">开始使用</a> ·
+  <a href="docs/README.md">文档</a> ·
+  <a href="https://github.com/Doris619619/LiveNest-Releases/releases">发行记录</a>
+</p>
+
+<p align="center"><sub>网页工作台 · Windows x64 执行端 · YouTube</sub></p>
 
 ![LiveNest 直播工作台：设备导航、素材选择与直播编排](docs/screenshots/workbench/live-desktop.png)
 
-*工作台界面示例，使用合成设备与频道数据；不代表真实开播状态。更多界面与验证说明见[工作区切换验收](docs/工作区切换验收.md)。*
+<p align="center"><sub>工作台界面示例 · 合成设备与频道数据 · 非真实开播状态 · <a href="docs/工作区切换验收.md">查看验证说明</a></sub></p>
 
 [主要功能](#主要功能) · [开始使用](#开始使用) · [工作原理](#工作原理) · [本地开发](#本地开发) · [部署与升级](#部署与升级) · [遇到问题](#遇到问题)
 
 ## 主要功能
+
+你在浏览器中选择素材、编排直播、安排视频发布；Windows 客户端负责独立 OBS 实例、素材处理和实际执行。适合需要集中管理多台直播电脑、多个频道的团队。
+
+本仓库 `LivePilot-v2` 包含网页、Cloud 和 Windows 执行端；对外产品名为 **LiveNest**。
 
 | 能力 | 可以做什么 |
 | --- | --- |
