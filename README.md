@@ -5,6 +5,8 @@
 
 LiveNest 将远程工作台与本机执行分开：你在浏览器中选择素材、编排直播、安排视频发布；Windows 客户端负责独立 OBS 实例、素材处理和实际执行。适合需要集中管理多台直播电脑、多个频道的团队。
 
+本仓库 `LivePilot-v2` 包含网页、Cloud 和 Windows 执行端；对外产品名为 **LiveNest**。
+
 **[下载 Windows 客户端](https://livenest.duckdns.org/download)** · **[打开网页工作台](https://livenest.duckdns.org/workspace)** · [使用指南](docs/桌面配置与网页协作.md) · [文档中心](docs/README.md) · [发行记录](https://github.com/Doris619619/LiveNest-Releases/releases)
 
 ![LiveNest 直播工作台：设备导航、素材选择与直播编排](docs/screenshots/workbench/live-desktop.png)
@@ -18,13 +20,19 @@ LiveNest 将远程工作台与本机执行分开：你在浏览器中选择素�
 | 能力 | 可以做什么 |
 | --- | --- |
 | 多电脑、多 OBS | 在网页管理已分配的电脑；每台电脑可配置多个独立 Portable OBS，直播频道按实例隔离。 |
-| 直播编排 | 按“素材选择 → 直播编排 → 开播”操作，设置视频、音乐、封面、标题和说明，复用直播配置包。 |
-| 视频批量发布 | 检测本机素材包、选择发布账号、预览日历排期，跟踪准备、上传、处理与公开结果，支持恢复和改期。 |
-| 素材上传与预览 | 上传到选定电脑和 OBS；检查设备素材的画面、声音与时长，提前准备需要合成的成片。 |
-| AI 文案与观众互动 | 生成英文标题和说明，配置直播间文字回复、人设与接话规则；AI 服务需要可用的服务配置。 |
-| 团队管理与故障恢复 | 客户管理自己的设备，管理员协助操作并查看审计记录；提供配额数据台、状态核对和按原任务恢复的入口。 |
+| [直播编排](docs/开播详情配置.md) | 按“素材选择 → 直播编排 → 开播”操作，设置视频、音乐、封面、标题和说明，复用直播配置包。 |
+| [视频批量发布](docs/YouTube普通视频发布.md) | 检测本机素材包、选择发布账号、预览日历排期，跟踪准备、上传、处理与公开结果，支持恢复和改期。 |
+| [素材上传与预览](docs/发布前预览.md) | 上传到选定电脑和 OBS；检查设备素材的画面、声音与时长，提前准备需要合成的成片。 |
+| [AI 文案与观众互动](docs/直播AI观众互动.md) | 生成英文标题和说明，配置直播间文字回复、人设与接话规则；AI 服务需要可用的服务配置。 |
+| [团队管理与故障恢复](docs/故障恢复帮助.md) | 客户管理自己的设备，管理员协助操作并查看审计记录；提供配额数据台、状态核对和按原任务恢复的入口。 |
 
 ## 开始使用
+
+| 你的目标 | 从这里开始 |
+| --- | --- |
+| 使用已有 LiveNest 服务 | [安装 Windows 客户端](https://livenest.duckdns.org/download)，按下面的步骤连接电脑与频道。 |
+| 为自己的团队部署服务 | 阅读[从零部署](docs/从零部署.md)，准备 Cloud、域名和执行机。 |
+| 查看界面或参与开发 | 跳转到[本地开发](#本地开发)，使用独立示例数据运行预览。 |
 
 ### 准备条件
 
@@ -85,55 +93,20 @@ flowchart LR
 
 ## 本地开发
 
-本仓库名为 `LivePilot-v2`，产品名为 **LiveNest**，独立于旧 LivePilot 仓库。开发需要 Git、仓库读取权限，以及 **Node.js 22.23+（22 系列）或 24+**；版本约束以 [package.json](package.json) 为准。
+开发需要 Git、仓库读取权限，以及 **Node.js 22.23+（22 系列）或 24+**。以下命令启动独立的示例数据预览：
 
 ```powershell
 git clone https://github.com/Doris619619/LivePilot-v2.git
 cd LivePilot-v2
 npm ci
-npm run verify
-```
-
-PowerShell 若阻止执行 `npm.ps1`，可使用 `npm.cmd` 运行上述命令。
-
-### 使用示例数据预览
-
-`verify` 已完成网页构建，再构建桌面页面并启动预览：
-
-```powershell
+npm run build
 npm run desktop:renderer
 npm run preview:local
 ```
 
-打开 <http://127.0.0.1:3020>，可进入客户工作台、管理员界面和桌面配置示例。预览使用独立的 `.data/preview/session-*` 数据，OBS、频道与控制操作为模拟场景，不会实际开播。默认不调用真实 AI；只有显式设置 `LIVENEST_PREVIEW_REAL_AI=1` 并提供可用 Key 才会调用服务。按 `Ctrl+C` 结束预览。
+打开 <http://127.0.0.1:3020> 查看工作台和桌面配置示例，按 `Ctrl+C` 结束。此预览使用合成设备与频道，不会实际开播，默认不调用真实 AI。
 
-需要核对正式账号数据时，运行 `npm run preview:live` 并打开 <http://127.0.0.1:63027/workspace>，在页面自行登录。此入口使用本地构建和正式服务的已鉴权只读接口，允许登录与读取，拦截开停播、上传和保存等操作。配置及验收范围见[网页端问题记录](docs/网页端问题记录.md)。
-
-### 常用命令与目录
-
-| 命令 | 用途 |
-| --- | --- |
-| `npm run dev` | 启动 127.0.0.1:3010 开发服务；真实本地控制需先按[本地模式](docs/本地模式与多实例.md)配置环境。 |
-| `npm run verify` | 依次执行类型检查、lint、单元与原生文件锁测试、部署测试、网页及 Agent 构建。 |
-| `npm test` | 运行常规回归和单独调度的原生文件锁回归。 |
-| `npm run desktop:preview` | 构建 Windows 桌面目录预览包至 `release/preview` 并运行包检查；环境要求见[桌面安装与发布](docs/桌面安装与发布.md)。 |
-| `npm run agent:build` | 构建独立 Agent。 |
-
-```text
-src/app/       网页工作台与 HTTP 入口
-src/cloud/     设备身份、派发、状态与配额管理
-src/agent/     Windows 执行端
-src/core/      OBS、YouTube、媒体与业务状态
-src/shared/    跨端协议与共享规则
-desktop/      桌面界面
-electron/     桌面宿主、系统集成与安装更新
-scripts/      配置、构建、预览与发布工具
-tests/        自动化回归与集成检查
-deploy/       部署脚本
-docs/         使用指南、设计说明与验收记录
-```
-
-修改前请阅读 [AGENTS.md](AGENTS.md)、[工程协作规范](docs/工程协作规范.md)与 [PR 撰写规范](docs/PR撰写规范.md)。修改 Next.js 代码时，先查阅已安装版本的 `node_modules/next/dist/docs/`；交付前运行 `npm run verify`。自动测试与模拟预览不替代真实频道授权、开播和观看端验收。
+提交前运行 `npm run verify`。真实账号只读预览、环境配置、源码目录及常用命令见[开发指南](docs/开发指南.md)；贡献代码请遵循[工程协作规范](docs/工程协作规范.md)和 [PR 规范](docs/PR撰写规范.md)。
 
 ## 部署与升级
 
@@ -146,6 +119,16 @@ docs/         使用指南、设计说明与验收记录
 当前仓库版本为 **0.1.19**。已公开安装器见[发行页](https://github.com/Doris619619/LiveNest-Releases/releases/latest)，源码、安装包和部署证据见 [0.1.19 发布记录](docs/desktop/0.1.19发布.md)。历史版本与专项验证集中在[文档中心](docs/README.md#版本与交付)。源码更新、安装包发行和客户设备升级分别记录，不互相代表。
 
 ## 遇到问题
+
+### 常见问题
+
+**操作网页的电脑也需要装 OBS 吗？** 只在实际执行直播的 Windows 电脑安装客户端。远程操作使用浏览器；安装版包含 Portable OBS 和 Agent。
+
+**一台电脑能运行几路？** 可以添加多个独立 OBS，每个直播实例绑定不同频道；实际同时运行的路数取决于编码器、CPU、内存与上行带宽，需在目标电脑验证。
+
+**素材和视频在哪里处理？** 素材上传到所选执行机，配乐合成与视频上传也在该电脑完成；Cloud 负责操作与状态，并中转有界上传分片。
+
+### 故障排查
 
 | 现象 | 优先检查 |
 | --- | --- |
