@@ -113,7 +113,7 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
   return <section className={styles.root} aria-label="直播配置包">
     <div className={styles.toolbar}>
       <label className={styles.picker} htmlFor={prefix}><span className={management ? undefined : "visually-hidden"}>直播配置包</span>
-        <select id={prefix} aria-label="直播配置包" value={activeId && selected ? activeId : ""} disabled={locked || !profiles?.length} onChange={event => choose(event.target.value)}>
+        <select id={prefix} name="broadcastProfile" autoComplete="off" aria-label="直播配置包" value={activeId && selected ? activeId : ""} disabled={locked || !profiles?.length} onChange={event => choose(event.target.value)}>
           <option value="">{profiles ? profiles.length ? "选择配置包或保留本场设置" : "使用默认设置" : error ? "配置读取失败" : "正在读取配置…"}</option>
           {profiles?.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
         </select>
@@ -130,7 +130,7 @@ export default function BroadcastProfiles({ target, value, disabled, onApply, on
     {mode && <div className={styles.editor}>
       {(mode.kind === "new" || mode.kind === "rename") && <form onSubmit={event => { event.preventDefault(); void persist("save", mode.kind === "rename"); }}>
         <label htmlFor={`${prefix}-name`}>配置名称</label>
-        <div className={styles.nameRow}><input id={`${prefix}-name`} autoFocus maxLength={60} required value={name} disabled={locked} onChange={event => setName(event.target.value)} placeholder="例如：晚间 Lofi" /><button disabled={locked || !name.trim()}>{busy ? "保存中…" : "保存配置"}</button><button type="button" className="btn-ghost" disabled={locked} onClick={() => { setMode(undefined); setError(""); }}>取消</button></div>
+        <div className={styles.nameRow}><input id={`${prefix}-name`} name="profileName" autoComplete="off" autoFocus maxLength={60} required value={name} disabled={locked} onChange={event => setName(event.target.value)} placeholder="例如：晚间 Lofi" /><button disabled={locked || !name.trim()}>{busy ? "保存中…" : "保存配置"}</button><button type="button" className="btn-ghost" disabled={locked} onClick={() => { setMode(undefined); setError(""); }}>取消</button></div>
       </form>}
       {mode.kind === "apply" && <><p>使用「{mode.profile.name}」更新本场直播规则？将保留素材、标题、说明和封面。</p><div className={styles.actions}><button type="button" disabled={locked} onClick={() => apply(mode.profile)}>使用配置</button><button type="button" className="btn-secondary" disabled={locked} onClick={() => setMode(undefined)}>保留当前草稿</button></div></>}
       {mode.kind === "delete" && <><p>删除「{selected?.name}」？当前草稿不受影响。</p><div className={styles.actions}><button type="button" disabled={locked} onClick={() => void persist("delete")}>确认删除</button><button type="button" className="btn-secondary" disabled={locked} onClick={() => setMode(undefined)}>取消</button></div></>}

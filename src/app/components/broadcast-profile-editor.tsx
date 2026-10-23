@@ -19,7 +19,7 @@ export default function BroadcastProfileEditor({ initial, busy, save, back, onDi
   const details = value.broadcast;
   return <form className="profile-editor" onSubmit={event => { event.preventDefault(); if (!busy) void save(name, broadcastOptionsSnapshot(value)); }}>
     <h4 className="configuration-step-title"><ConfigurationStepTitle number={1}>配置名称</ConfigurationStepTitle></h4>
-    <label className="visually-hidden" htmlFor="live-profile-name">配置名称</label><input id="live-profile-name" required maxLength={60} value={name} disabled={busy} onChange={event => setName(event.target.value)} placeholder="例如：公开音乐直播" />
+    <label className="visually-hidden" htmlFor="live-profile-name">配置名称</label><input id="live-profile-name" name="profileName" autoComplete="off" required maxLength={60} value={name} disabled={busy} onChange={event => setName(event.target.value)} placeholder="例如：公开音乐直播" />
     <h4 className="configuration-step-title"><ConfigurationStepTitle number={2}>直播规则</ConfigurationStepTitle></h4>
     <BroadcastRuleFields id="profile-editor" value={{ privacy: details.privacy, madeForKids: details.madeForKids, videoAudio: value.videoAudio }} disabled={busy} onChange={rules => setValue({ ...value, videoAudio: rules.videoAudio, broadcast: { ...details, privacy: rules.privacy, madeForKids: rules.madeForKids } })} />
     <h4 className="configuration-step-title"><ConfigurationStepTitle number={3}>AI 观众互动</ConfigurationStepTitle></h4>

@@ -144,7 +144,7 @@ try {
   assert.equal(await page.getByText("视频已公开，取消未应用。", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("link", { name: "查看视频", exact: true }).getAttribute("href"), "https://www.youtube.com/watch?v=synthetic_video_001");
   for (const width of widths) { await page.setViewportSize({ width, height: 1000 }); await capture(page, "removed-public-history-" + width + ".png"); }
-  await page.setViewportSize({ width: 1440, height: 1000 }); await page.getByRole("button", { name: "发布视频", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 1000 }); await page.getByRole("link", { name: "发布视频", exact: true }).click();
   await page.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   assert.deepEqual(await savedDraft(page), beforeHistory, "Opening old publication preserves the draft");
   assert.equal(await repeat(2).isChecked(), true, "Viewing history alone does not alter the same confirmation snapshot");
@@ -192,7 +192,7 @@ try {
   assert.deepEqual([...retryRequests[0].republishJobIds].sort(), oldPublic.map(job => job.spec.id).sort());
   assert.equal(retry.view.jobs.length, 5, "Synthetic idempotent confirmation exposes one set of new jobs");
   assert.deepEqual(retry.view.jobs.slice(0, 2), oldPublic, "Original public jobs and video IDs are retained");
-  await retryPage.getByRole("button", { name: "我的发布", exact: true }).click();
+  await retryPage.getByRole("link", { name: "我的发布", exact: true }).click();
   await retryPage.getByRole("heading", { name: "我的第一批次 · 再次发布", exact: true }).waitFor();
   await retryPage.getByText("已公开 0", { exact: true }).waitFor(); await retryPage.getByText("待发布 3", { exact: true }).waitFor();
   await retryPage.getByRole("button", { name: "历史", exact: true }).click();
@@ -238,10 +238,10 @@ try {
   await raceConfirmation().getByRole("alert").filter({ hasText: backendMessage }).waitFor(); await noGlobalError(racePage, "failed confirmation");
   const failedDraft = await savedDraft(racePage);
   for (const width of widths) { await racePage.setViewportSize({ width, height: 1000 }); await capture(racePage, "local-confirm-error-" + width + ".png"); }
-  await racePage.getByRole("button", { name: "我的发布", exact: true }).click(); await racePage.getByRole("button", { name: "历史", exact: true }).click();
+  await racePage.getByRole("link", { name: "我的发布", exact: true }).click(); await racePage.getByRole("button", { name: "历史", exact: true }).click();
   await racePage.getByRole("table", { name: "发布历史记录" }).waitFor(); await noGlobalError(racePage, "history after failed confirmation");
   assert.equal(await racePage.getByRole("alert").filter({ hasText: backendMessage }).count(), 0);
-  await racePage.getByRole("button", { name: "发布视频", exact: true }).click(); await racePage.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
+  await racePage.getByRole("link", { name: "发布视频", exact: true }).click(); await racePage.getByRole("heading", { name: "确认计划", exact: true }).waitFor();
   await raceConfirmation().getByRole("alert").filter({ hasText: backendMessage }).waitFor();
   assert.deepEqual(await savedDraft(racePage), failedDraft);
   await racePage.getByRole("button", { name: "刷新发布状态" }).click(); await raceConfirmation().getByRole("alert").filter({ hasText: backendMessage }).waitFor();

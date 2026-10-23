@@ -1,13 +1,13 @@
 /** 四步发布向导：本地批次检查、独立时间设置、持久计划确认和自动执行。 */
 "use client";
 import WorkflowSteps from "../components/ui/workflow-steps";
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { planRuleSchema, publishingTerminal, type PackageBatch, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type VideoJob } from "@/shared/publishing";
 import type { BatchRemovalOperation } from "./batch-removal";
 import type { PublishingDevice } from "./publishing-removal-feedback";
 import type { PublishingTarget } from "./profile-editor";
 import PlanConfirm from "./plan-confirm";
-import { PackageReview, WeeklySchedule } from "./package-setup";
+import { PACKAGE_PAGE_SIZE, PackageReview, Pagination, WeeklySchedule } from "./package-setup";
 import BatchExecution, { type JobOperation } from "./batch-execution";
 import { visibilityLabel } from "./display";
 import { publishingInboxPath } from "./publishing-directory";
@@ -18,6 +18,8 @@ import UploadReview from "./upload-review";
 import PublishingChannelOptionsFields, { type PublishingChannelOptions } from "./publishing-channel-options";
 import { effectivePublishingCopyOptions, defaultPublishingCopyOptions, type PublishingCopyOptions } from "@/shared/publishing-copy-options";
 import PublishingCopyFields from "./publishing-copy-fields";
+import { useUrlState } from "../use-url-state";
+import { publishingPage, publishingStep } from "./form-inputs";
 const steps = ["准备素材", "配置与排期", "确认计划", "自动执行"];
 type Props = {
   username: string; target: PublishingTarget; root: string; batches: PackageBatch[]; profiles: PublishingProfile[]; profileId: string; selectProfile(id: string): void;
@@ -52,7 +54,10 @@ export default function PublishingWizard(props: Props) {
   const cachedBatch = batches.find(batch => batch.id === cached?.batchId);
   const cachedReady = !!cachedBatch && !cachedBatch.issues.length && cachedBatch.packages.some(pkg => !cached?.excluded.includes(pkg.id)) && cachedBatch.packages.every(pkg => pkg.validationState === "valid" || cached?.excluded.includes(pkg.id));
   const initialStep = restored?.confirmedAt ? cached?.step === 3 ? 2 : cached?.step || 4 : restored ? restored.profile.privacy === "public" && !restored.profile.scheduled ? 2 : 3 : cachedReady && (cached?.step || 0) >= 2 ? 2 : 1;
-  const [plan, setPlan] = useState<PublishingPlan | undefined>(restored); const [schedulePreview, setSchedulePreview] = useState<PublishingPlan>(); const [step, setStep] = useState(initialStep);
+  const [plan, setPlan] = useState<PublishingPlan | undefined>(restored); const [schedulePreview, setSchedulePreview] = useState<PublishingPlan>(); const [step, setStep] = useUrlState("publishing-step", initialStep, publishingStep, String);
+  const [batchPage, setBatchPage] = useUrlState("publishing-batches-page", 0, publishingPage, String);
+  const currentBatchPage = Math.min(batchPage, Math.max(0, Math.ceil(batches.length / PACKAGE_PAGE_SIZE) - 1));
+  const batchCounts = useMemo(() => new Map(batches.map(value => { const valid = value.packages.filter(item => item.validationState === "valid").length; return [value.id, { valid, invalid: value.packages.length - valid }]; })), [batches]);
   const [newDraft, setNewDraft] = useState(hasNewPublishingDraft(cached));
   const [unlockedStep, setUnlockedStep] = useState(restored?.confirmedAt ? 4 : restored ? restored.profile.privacy === "public" && !restored.profile.scheduled ? 2 : 3 : initialStep);
   const [batchId, setBatchId] = useState(restored?.batch.id || cached?.batchId || ""); const [excluded, setExcluded] = useState<string[]>(restored?.items.filter(item => item.excluded).map(item => item.packageId) || cached?.excluded || []);
@@ -60,7 +65,7 @@ export default function PublishingWizard(props: Props) {
   const [copied, setCopied] = useState(false); const [copyError, setCopyError] = useState("");
   const heading = useRef<HTMLHeadingElement>(null);
   const committedPlan = plan && (plans.find(value => value.id === plan.id && value.revision >= plan.revision) || plan);
-  const removal = props.removals?.find(value => value.batchId === committedPlan?.id); const viewStep = removal ? 4 : step;
+  const removal = props.removals?.find(value => value.batchId === committedPlan?.id); const viewStep = removal ? 4 : Math.min(step, unlockedStep);
   const confirmed = !!committedPlan?.confirmedAt;
   const currentPlan = schedulePreview || committedPlan;
   const batch = confirmed ? committedPlan.batch : batches.find(value => value.id === batchId) || (plan?.batch.id === batchId ? plan.batch : batchId ? undefined : batches[0]);
@@ -91,7 +96,7 @@ export default function PublishingWizard(props: Props) {
   useEffect(() => {
     try { localStorage.setItem(storageKey, JSON.stringify({ planId: plan?.id, newDraft: !plan?.id && newDraft, batchId: batch?.id || batchId, profileId: profile?.id || "", rule, excluded, step, channelOptions, copy })); } catch { /* 浏览器禁止存储时仍可使用Cloud计划。 */ }
   }, [copy, channelOptions, batch?.id, batchId, excluded, newDraft, plan?.id, profile?.id, rule, step, storageKey]);
-  useEffect(() => { heading.current?.focus(); }, [step]);
+  useEffect(() => { heading.current?.focus(); }, [viewStep]);
   /** 复制的是所选Agent报告的实际路径；远程浏览器不假装已打开资源管理器。 */
   async function copyPath() { try { await navigator.clipboard.writeText(inboxPath); setCopied(true); setCopyError(""); } catch { setCopyError("请选中上方路径复制。"); } }
   /** 返回结果只有在同一输入和最新请求仍有效时才可进入下一步；切换设备卸载后也不采用旧响应。 */
@@ -119,13 +124,13 @@ export default function PublishingWizard(props: Props) {
     <div className="publishing-step-heading"><h2 ref={heading} tabIndex={-1}>{steps[viewStep - 1]}</h2><span>{viewStep} / 4</span></div>
     {viewStep === 1 && <>
       {!confirmed && <><div className="publishing-inbox"><p>{target.name} · 把批次文件夹放入</p>{inboxPath ? <code>{inboxPath}</code> : <span className="publishing-hint" role="status">{props.directoryMessage || "正在读取这台电脑的目录…"}</span>}<div className="publishing-actions"><button className="btn-primary" disabled={busy || !props.accepted} onClick={() => void props.scan()}>{busy ? "检测中…" : "检测素材"}</button>{inboxPath && <button disabled={busy} onClick={() => void copyPath()}>{copied ? "已复制" : "复制路径"}</button>}{!inboxPath && props.retryDirectory && props.accepted && !props.directoryReading && <button disabled={busy} onClick={props.retryDirectory}>重试读取目录</button>}</div><p className="publishing-hint">这台电脑的客户端：设置 → 打开发布目录。</p><details className="publishing-details publishing-folder-guide"><summary>素材怎么放</summary><pre>{"Inbox/\n  我的批次/\n    001/\n      video.mp4\n      music.mp3（可选）\n    002/\n      video.mp4"}</pre><p>每包一个视频；音乐、封面和文案可选。</p></details>{copyError && <p className="publishing-validation" role="alert">{copyError}</p>}</div>
-      {batches.length > 0 && <div className="publishing-batch-picker" role="group" aria-label="选择批次">{batches.map(value => <label className={"publishing-batch-choice " + (batch?.id === value.id ? "is-selected" : "")} key={value.id}><input type="radio" name="publishing-batch" disabled={busy} checked={batch?.id === value.id} onChange={() => chooseBatch(value.id)} /><span><strong>{value.name}</strong><small>{value.packages.length} 个发布包 · {value.packages.filter(item => item.validationState === "valid").length} 正常 · {value.packages.filter(item => item.validationState === "invalid").length} 异常</small></span></label>)}</div>}</>}
+      {batches.length > 0 && <div className="publishing-batch-picker" role="group" aria-label="选择批次">{batches.slice(currentBatchPage * PACKAGE_PAGE_SIZE, (currentBatchPage + 1) * PACKAGE_PAGE_SIZE).map(value => <label className={"publishing-batch-choice " + (batch?.id === value.id ? "is-selected" : "")} key={value.id}><input autoComplete="off" type="radio" name="publishing-batch" disabled={busy} checked={batch?.id === value.id} onChange={() => chooseBatch(value.id)} /><span><strong>{value.name}</strong><small>{value.packages.length} 个发布包 · {batchCounts.get(value.id)?.valid} 正常 · {batchCounts.get(value.id)?.invalid} 异常</small></span></label>)}</div>}{batches.length > 0 && <Pagination page={currentBatchPage} total={batches.length} change={setBatchPage} />}</>}
       {batch ? <><PackageReview key={batch.id} batch={batch} target={target} channel={target.channel} excluded={excluded} change={setExcluded} readOnly={confirmed || busy} /><UploadReview blockers={uploadReview.blockers} repeats={uploadReview.repeats} busy={busy} history={props.viewHistory} />{!confirmed && invalid.length > 0 && <p className="publishing-validation" role="status">请修好 {invalid.length} 个异常包，或勾选“暂不发布”。</p>}<div className="publishing-actions"><button className="btn-primary" disabled={busy || !contentReady || !!uploadReview.blockers.length} onClick={() => { setBatchId(batch.id); setUnlockedStep(Math.max(unlockedStep, 2)); setStep(2); }}>下一步</button>{confirmed && <button disabled={busy} onClick={() => setStep(4)}>返回执行</button>}</div></> : props.scanned && props.root && <div className="publishing-empty"><h3>没有批次</h3><p>复制批次到 Inbox 后，再检测。</p></div>}
     </>}
     {viewStep === 2 && <form className="publishing-form" onSubmit={event => void generate(event)}><p className="publishing-plan-context">{batch?.name} · {included.length} 条</p>
       <UploadReview blockers={uploadReview.blockers} repeats={uploadReview.repeats} busy={busy} history={props.viewHistory} change={() => setStep(1)} />
-      <label>发布频道<input readOnly value={target.channel || profile?.channelId || "尚未连接频道"} /></label>
-      <div className="publishing-profile-picker"><label>视频发布配置{confirmed ? <input readOnly value={profile?.name || ""} /> : <select aria-label="视频发布配置" required disabled={busy} value={profile?.id || ""} onChange={e => props.selectProfile(e.target.value)}><option value="">请选择配置</option>{profiles.map(value => <option key={value.id} value={value.id}>{value.name} · {visibilityLabel(value.privacy === "public" ? { ...value, scheduled: true } : value)}</option>)}</select>}</label>{!confirmed && <button type="button" disabled={busy} onClick={props.newProfile}>管理配置包</button>}</div>
+      <label>发布频道<input name="publishing-channel" autoComplete="off" readOnly value={target.channel || profile?.channelId || "尚未连接频道"} /></label>
+      <div className="publishing-profile-picker"><label>视频发布配置{confirmed ? <input readOnly value={profile?.name || ""} /> : <select name="publishing-profile" autoComplete="off" aria-label="视频发布配置" required disabled={busy} value={profile?.id || ""} onChange={e => props.selectProfile(e.target.value)}><option value="">请选择配置</option>{profiles.map(value => <option key={value.id} value={value.id}>{value.name} · {visibilityLabel(value.privacy === "public" ? { ...value, scheduled: true } : value)}</option>)}</select>}</label>{!confirmed && <button type="button" disabled={busy} onClick={props.newProfile}>管理配置包</button>}</div>
       {!confirmed && profile && <PublishingChannelOptionsFields key={optionKey} profile={profile} busy={busy} change={value => setChannelOptions(current => ({ ...current, [optionKey]: value }))} />}
       {!confirmed && <PublishingCopyFields value={copy} change={setCopy} busy={busy} />}
       {profile?.scheduled ? <WeeklySchedule rule={rule} change={setRule} disabled={busy} /> : profile && <p className="publishing-hint">{visibilityLabel(profile)} · 上传完成后保存。</p>}

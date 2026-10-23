@@ -18,6 +18,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run verify
+      - name: Install Chromium for isolated interface regressions
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - name: Validate interface safeguards with synthetic data
+        run: npm run test:ui-guidelines
       - name: Validate Linux deployment scripts and Nginx templates
         if: runner.os == 'Linux'
         run: |

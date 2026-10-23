@@ -1,6 +1,6 @@
 /** 手动试聊预览；按设置保留八轮上下文及十六条结果，网页编排可选紧凑展示，不保存或发送直播。 */
 "use client";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import type { ChatDecision, LiveChatConfig } from "@/shared/live-chat";
 import { api } from "../client-request";
 import { chatPersonas } from "@/shared/chat-personas";
@@ -32,6 +32,12 @@ export default function LiveChatPreview({ config, instanceId, agentId, disabled,
     } catch (e) { if (!controller.signal.aborted) setError(e instanceof Error ? e.message : "试聊失败，请重试。"); }
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
+  /** 两种输入布局共用回车行为；输入法确认候选词时不发送付费试聊。 */
+  function previewOnEnter(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    event.preventDefault();
+    void preview();
+  }
   const resultsList = <ol ref={results} className="chat-preview-turns" aria-live="polite" tabIndex={0} aria-label="最近 16 条试聊结果">{turns.map((turn, index) => <li key={index}><small>{turn.persona} · {turn.snapshot === JSON.stringify(config) ? "当前草稿" : "先前设置"}</small><p><strong>观众：</strong>{turn.text}</p><p><strong>{turn.decision.action === "clarify" ? "澄清：" : turn.decision.action === "skip" ? "跳过：" : "回复："}</strong>{turn.decision.action === "skip" ? "这句无需接话。" : turn.decision.reply}</p><button type="button" disabled={busy || disabled} onClick={() => void preview(true, turn.text)}>用当前人设比较这句</button></li>)}</ol>;
 
   if (compact) return <section className="chat-preview chat-preview-compact" aria-label="试聊与比较">
@@ -43,7 +49,7 @@ export default function LiveChatPreview({ config, instanceId, agentId, disabled,
     <div className="chat-preview-composer">
       <div className="chat-preview-input">
         <label htmlFor={inputId}>观众留言</label>
-        <input id={inputId} maxLength={1000} value={text} aria-describedby={`${inputId}-hint`} disabled={busy || disabled} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); void preview(); } }} />
+        <input id={inputId} name="previewMessage" autoComplete="off" maxLength={1000} value={text} aria-describedby={`${inputId}-hint`} disabled={busy || disabled} onChange={event => setText(event.target.value)} onKeyDown={previewOnEnter} />
       </div>
       <div className="chat-preview-samples">{compactSamples.map(sample => <button type="button" key={sample} disabled={busy || disabled} onClick={() => setText(sample)}>{sample}</button>)}</div>
       <div className="chat-preview-actions"><button className="btn-primary" type="button" disabled={busy || disabled || !text.trim()} onClick={() => void preview()}>{busy ? "生成中…" : "生成回复"}</button></div>
@@ -57,7 +63,7 @@ export default function LiveChatPreview({ config, instanceId, agentId, disabled,
     <p className="chat-preview-note">比较按钮会用当前人设重新回答同一句话，不带之前的对话；每次点击调用一次 AI。</p>
     {!turns.length && <p className="chat-preview-empty">选一句常见留言试试。切换人设后，旧回复会留下来供你比较。</p>}
     {resultsList}
-    <label htmlFor={inputId}>模拟观众留言</label><input id={inputId} maxLength={1000} value={text} disabled={busy || disabled} onChange={event => setText(event.target.value)} onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void preview(); } }} />
+    <label htmlFor={inputId}>模拟观众留言</label><input id={inputId} name="previewMessage" autoComplete="off" maxLength={1000} value={text} disabled={busy || disabled} onChange={event => setText(event.target.value)} onKeyDown={previewOnEnter} />
     <div className="api-settings-actions"><button type="button" disabled={busy || disabled || !text.trim()} onClick={() => void preview()}>{busy ? "生成中…" : "生成试聊回复"}</button><button type="button" disabled={busy || !turns.length} onClick={clearConversation}>清空对话</button></div>
     {error && <p role="alert">{error}</p>}
   </section>;

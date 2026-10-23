@@ -1,11 +1,13 @@
 /** 草稿计划的月历与日期清单，共用已经保存的排期；视图切换不修改任务时间。 */
 "use client";
-import { useId, useState } from "react";
+import { useId } from "react";
 import { Temporal } from "@js-temporal/polyfill";
 import type { PublishingPlan, PublishingPlanItem } from "@/shared/publishing";
 import { localInputTime } from "./display";
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import "./plan-calendar.css";
+import { useUrlState } from "../use-url-state";
+import { publishingMonth, publishingPage } from "./form-inputs";
 
 type Entry = { item: PublishingPlanItem; name: string; title: string; day: string; time: string };
 type Props = { plan: PublishingPlan; editingId?: string; busy: boolean; lockedPackageIds?: string[]; edit(item: PublishingPlanItem): void };
@@ -63,17 +65,16 @@ function Agenda({ entries, editingId, busy, lockedPackageIds, edit, page, change
 export default function PlanCalendar({ plan, editingId, busy, lockedPackageIds, edit }: Props) {
   const entries = entriesFor(plan); const scheduled = entries.filter(entry => !entry.item.excluded).sort((a, b) => (a.item.publishAt || "~").localeCompare(b.item.publishAt || "~"));
   const firstMonth = scheduled.find(entry => entry.day)?.day.slice(0, 7) || plan.rule.startDate.slice(0, 7);
-  const ruleKey = JSON.stringify(plan.rule);
-  const [selection, setSelection] = useState({ ruleKey, month: firstMonth }); const [view, setView] = useState<"calendar" | "list">("calendar");
-  const month = selection.ruleKey === ruleKey ? selection.month : firstMonth;
-  const [page, setPage] = useState(0); const [excludedPage, setExcludedPage] = useState(0); const [expandedDay, setExpandedDay] = useState<string>();
+  const [month, setMonth] = useUrlState("publishing-plan-month", firstMonth, publishingMonth); const [view, setView] = useUrlState<"calendar" | "list">("publishing-plan-view", "calendar", value => value === "list" ? "list" : "calendar");
+  const [page, setPage] = useUrlState("publishing-plan-list-page", 0, publishingPage, String); const [excludedPage, setExcludedPage] = useUrlState("publishing-plan-excluded-page", 0, publishingPage, String); const [expandedDay, setExpandedDay] = useUrlState("publishing-plan-day", "");
+  const [dayPage, setDayPage] = useUrlState("publishing-plan-day-page", 0, publishingPage, String);
   const currentMonth = Temporal.PlainDate.from(month + "-01");
   const monthlyEntries = scheduled.filter(entry => entry.day.slice(0, 7) === month);
   const excluded = entries.filter(entry => entry.item.excluded);
   const groups = new Map<string, Entry[]>();
   for (const entry of monthlyEntries) { const group = groups.get(entry.day) || []; group.push(entry); groups.set(entry.day, group); }
   /** 导航月份只改变视图；未保存的编辑内容由确认页继续持有。 */
-  function navigate(delta: number) { setSelection({ ruleKey, month: currentMonth.add({ months: delta }).toString().slice(0, 7) }); setPage(0); setExpandedDay(undefined); }
+  function navigate(delta: number) { setMonth(currentMonth.add({ months: delta }).toString().slice(0, 7)); setPage(0); setExpandedDay(""); setDayPage(0); }
   /** 切换展示形式保留排期和当前编辑，只重置清单页码。 */
   function chooseView(next: "calendar" | "list") { setView(next); setPage(0); }
   return <div className="publishing-plan-calendar" data-view={view}>
@@ -82,7 +83,7 @@ export default function PlanCalendar({ plan, editingId, busy, lockedPackageIds, 
         <button type="button" aria-label="上个月" onClick={() => navigate(-1)}>‹</button>
         <h3 aria-live="polite">{currentMonth.year} 年 {currentMonth.month} 月</h3>
         <button type="button" aria-label="下个月" onClick={() => navigate(1)}>›</button>
-        <button type="button" className="btn-ghost" aria-label="首条视频" onClick={() => { setSelection({ ruleKey, month: firstMonth }); setPage(0); setExpandedDay(undefined); }}>首条</button>
+        <button type="button" className="btn-ghost" aria-label="首条视频" onClick={() => { setMonth(firstMonth); setPage(0); setExpandedDay(""); setDayPage(0); }}>首条</button>
       </div> : <h3>全部视频</h3>}
       <div className="publishing-plan-view-controls"><span className="publishing-plan-timezone">{plan.rule.timezone}</span><div role="group" aria-label="排期视图">
         <button type="button" aria-pressed={view === "calendar"} onClick={() => chooseView("calendar")}>日历</button><button type="button" aria-pressed={view === "list"} onClick={() => chooseView("list")}>列表</button>
@@ -95,11 +96,12 @@ export default function PlanCalendar({ plan, editingId, busy, lockedPackageIds, 
           const outside = day.slice(0, 7) !== month; const items = groups.get(day) || []; const expanded = expandedDay === day;
           return <div className={"publishing-plan-day " + (outside ? "is-outside" : "")} key={day} data-date={day} role="group" aria-label={day}>
             <time className="publishing-plan-date" dateTime={day}>{Number(day.slice(8))}</time>
-            {(expanded ? items : items.slice(0, 3)).map(entry => <CalendarEvent key={entry.item.packageId} entry={entry} compact editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} />)}
-            {items.length > 3 && <button type="button" className="publishing-plan-more btn-ghost" aria-expanded={expanded} aria-label={expanded ? "收起 " + day + " 的排期" : "查看 " + day + " 的全部排期"} onClick={() => setExpandedDay(expanded ? undefined : day)}>{expanded ? "收起" : "+ " + (items.length - 3) + " 条"}</button>}
+            {items.slice(0, 3).map(entry => <CalendarEvent key={entry.item.packageId} entry={entry} compact editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} />)}
+            {items.length > 3 && <button type="button" className="publishing-plan-more btn-ghost" aria-expanded={expanded} aria-controls={expanded ? "publishing-plan-expanded-day" : undefined} aria-label={expanded ? "收起 " + day + " 的排期" : "查看 " + day + " 的全部排期"} onClick={() => { setExpandedDay(expanded ? "" : day); setDayPage(0); }}>{expanded ? "收起" : "+ " + (items.length - 3) + " 条"}</button>}
           </div>;
         })}
       </div>
+      {expandedDay && groups.has(expandedDay) && <div id="publishing-plan-expanded-day" className="publishing-plan-expanded-day"><Agenda entries={groups.get(expandedDay)!} editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} page={dayPage} change={setDayPage} /></div>}
       <div className="publishing-plan-mobile-agenda"><Agenda entries={monthlyEntries} editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} page={page} change={setPage} /></div>
       {excluded.length > 0 && <details className="publishing-details publishing-plan-excluded"><summary>暂不发布 · {excluded.length} 条</summary><Agenda entries={excluded} editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} page={excludedPage} change={setExcludedPage} /></details>}
     </> : <Agenda entries={entries} editingId={editingId} busy={busy} lockedPackageIds={lockedPackageIds} edit={edit} page={page} change={setPage} showYear />}

@@ -7,7 +7,7 @@ export default function Assignment({ data, busy, notice, noticeTarget, noticeFai
     {!data.agents.some(agent => !agent.pairedTo) && <p className="field-hint">暂无可分配的电脑。</p>}
     {data.agents.filter(a => !a.pairedTo).map(a => <form className="admin-assignment-row" key={a.id + ":" + a.owner} onSubmit={e => { e.preventDefault(); void assign(a.id, String(new FormData(e.currentTarget).get("owner"))); }}>
       <span className="admin-assignment-device">{a.name}{a.revoked && <span>已移除</span>}</span>
-      <label><span className="visually-hidden">{a.name} 所属客户</span><select name="owner" defaultValue={a.owner || ""} required disabled={busy || a.revoked}><option value="" disabled>选择客户</option>{a.owner && !data.customers.some(c => c.username === a.owner) && <option value={a.owner} disabled>{a.owner}（已停用或不可分配）</option>}{data.customers.map(c => <option key={c.username}>{c.username}</option>)}</select></label>
+      <label><span className="visually-hidden">{a.name} 所属客户</span><select name="owner" autoComplete="off" defaultValue={a.owner || ""} required disabled={busy || a.revoked}><option value="" disabled>选择客户</option>{a.owner && !data.customers.some(c => c.username === a.owner) && <option value={a.owner} disabled>{a.owner}（已停用或不可分配）</option>}{data.customers.map(c => <option key={c.username}>{c.username}</option>)}</select></label>
       <button disabled={busy || a.revoked}>分配</button>{notice && noticeTarget===a.id && <p className="admin-notice" role={noticeFailed?"alert":"status"}>{a.name} · {notice}</p>}
     </form>)}
   </section>;

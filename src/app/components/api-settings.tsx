@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "./ui/primitives";
 import { SettingsPanel } from "./settings-panel";
 import "./api-settings.css";
 import { SettingsDraftContext } from "./settings-drafts";
+import { useUnsavedChanges } from "../use-unsaved-changes";
 
 type SettingsSection = "ai" | "chat" | "defaults" | "profiles" | "video-profiles";
 const SettingsContext = createContext<((target?: InstanceDescriptor, section?: SettingsSection, publishingTarget?: PublishingTarget) => void) | undefined>(undefined);
@@ -23,6 +24,7 @@ export function ApiSettingsProvider({ children }: { children: ReactNode }) {
   const [saving, setSaving] = useState(false);
   const [section, setSection] = useState<SettingsSection>("ai");
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
+  useUnsavedChanges(open && Object.values(dirty).some(Boolean));
   const [confirmClose, setConfirmClose] = useState(false);
   const continueButton = useRef<HTMLButtonElement>(null);
   /** 汇总各页编辑标记，分类切换不会销毁表单或把密钥写入持久存储。 */

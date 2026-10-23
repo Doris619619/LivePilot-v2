@@ -28,7 +28,7 @@ export default function BroadcastAi({ id, instance, disabled, current, onApply, 
   }
   return <div className="broadcast-ai">
     <label htmlFor={`ai-brief-${id}`}>文案主题</label>
-    <div className="ai-compose"><input id={`ai-brief-${id}`} value={brief} maxLength={500} placeholder="lofi / jazz / rainy Tokyo night" disabled={locked} onChange={e => setBrief(e.target.value)} /><button type="button" className="btn-secondary" disabled={locked || !brief.trim()} onClick={() => void generate()}>{working ? "正在生成…" : "生成英文文案"}</button><ApiSettingsButton instance={instance} disabled={locked}>API 设置</ApiSettingsButton></div>
+    <div className="ai-compose"><input id={`ai-brief-${id}`} name="copyBrief" autoComplete="off" value={brief} maxLength={500} placeholder="lofi / jazz / rainy Tokyo night" disabled={locked} onChange={e => setBrief(e.target.value)} /><button type="button" className="btn-secondary" disabled={locked || !brief.trim()} onClick={() => void generate()}>{working ? "正在生成…" : "生成英文文案"}</button><ApiSettingsButton instance={instance} disabled={locked}>API 设置</ApiSettingsButton></div>
     {(message || previous) && <div className="ai-feedback">{message && <p className="field-hint" role="status">{message}</p>}{previous && <button type="button" className="btn-ghost" disabled={locked} onClick={() => { onApply(previous); setPrevious(undefined); setMessage("已恢复原文案"); }}>撤销填入</button>}</div>}
     {error && <p className="broadcast-error" role="alert">{error}</p>}
   </div>;

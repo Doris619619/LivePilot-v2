@@ -12,11 +12,11 @@ export function InstanceName({ instance, disabled, act }: Props) {
     setSaving(true);
     try { await act("rename", { id: instance.id, name }); } finally { setDraft(undefined); setSaving(false); }
   }
-  return <label className="field-group">实例名称<input aria-label={instance.name + "名称"} disabled={disabled || saving} value={draft ?? instance.name} maxLength={80} onChange={event => setDraft(event.target.value)} onBlur={() => void save()} />{saving && <span role="status">正在保存名称…</span>}</label>;
+  return <label className="field-group">实例名称<input name="name" autoComplete="off" aria-label={instance.name + "名称"} disabled={disabled || saving} value={draft ?? instance.name} maxLength={80} onChange={event => setDraft(event.target.value)} onBlur={() => void save()} />{saving && <span role="status">正在保存名称…</span>}</label>;
 }
 /** 二次明确确认仅用于退出活跃清单；服务端和本机仍会核对真实空闲状态。 */
 export function InstanceRetirement({ instance, disabled, act }: Props) {
   const [confirmed, setConfirmed] = useState(false);
   if (instance.id === "main") return null;
-  return <details><summary>退役此 OBS</summary><p>退役后不再接受直播任务，频道可交给其他实例。程序、素材、授权与历史保留；有未结束的场次或任务时不会执行。</p><label><input type="checkbox" checked={confirmed} disabled={disabled} onChange={event => setConfirmed(event.target.checked)} />确认将 {instance.name} 移出活跃清单</label><button disabled={disabled || !confirmed} onClick={() => void act("retire", { id: instance.id, confirmed: true })}>确认退役</button></details>;
+  return <details><summary>退役此 OBS</summary><p>退役后不再接受直播任务，频道可交给其他实例。程序、素材、授权与历史保留；有未结束的场次或任务时不会执行。</p><label><input name="retirementConfirmed" autoComplete="off" type="checkbox" checked={confirmed} disabled={disabled} onChange={event => setConfirmed(event.target.checked)} />确认将 {instance.name} 移出活跃清单</label><button disabled={disabled || !confirmed} onClick={() => void act("retire", { id: instance.id, confirmed: true })}>确认退役</button></details>;
 }

@@ -29,7 +29,7 @@ export default function TimezoneSelect({ value, date, change, disabled = false }
       <span id={id + "-value"}><strong>{selected.city}{selected.offset && " · " + selected.offset}</strong><small>{value}</small></span><span aria-hidden="true">⌄</span>
     </button>
     {open && <div className={styles.menu}>
-      <input ref={search} role="combobox" aria-label="搜索时区" aria-autocomplete="list" aria-expanded="true" aria-controls={id + "-list"} aria-activedescendant={visible[active] ? id + "-option-" + active : undefined} autoComplete="off" placeholder="城市、时区或 UTC 偏移" value={query} onChange={event => { setQuery(event.target.value); setActive(0); }} onKeyDown={navigate} />
+      <input name="publishing-timezone-query" autoComplete="off" spellCheck={false} ref={search} role="combobox" aria-label="搜索时区" aria-autocomplete="list" aria-expanded="true" aria-controls={id + "-list"} aria-activedescendant={visible[active] ? id + "-option-" + active : undefined} placeholder="例如 上海、Asia/Shanghai、UTC+8…" value={query} onChange={event => { setQuery(event.target.value); setActive(0); }} onKeyDown={navigate} />
       <div ref={list} id={id + "-list"} className={styles.options} role="listbox" tabIndex={-1} aria-labelledby={id + "-label"}>
         {visible.map((option, index) => <button key={option.value} id={id + "-option-" + index} type="button" role="option" tabIndex={-1} aria-selected={option.value === value} data-active={index === active} className={index === active ? styles.active : ""} onMouseDown={event => event.preventDefault()} onClick={() => choose(option.value)}><span>{option.city} · {option.offset}</span><small>{option.value}</small></button>)}
         {!visible.length && <p className={styles.empty} role="status">没有匹配时区，请换个城市或 IANA 名称。</p>}

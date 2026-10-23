@@ -10,7 +10,7 @@ export default function ComputerConnection({ online, paired, expired, configured
   const titleId = idPrefix ? idPrefix + "-connection-title" : "connection-title";
   const form = <form className="pairing-form" onSubmit={event => { event.preventDefault(); if (!busy && configured && invitation.trim()) onPair(); }}>
     <label htmlFor={codeId}>粘贴配对码</label>
-    <textarea id={codeId} value={invitation} onChange={event => onInvitation(event.target.value)} rows={2} spellCheck={false} autoComplete="off" placeholder="在这里粘贴网页复制的完整配对码" aria-describedby={hintId} disabled={busy} />
+    <textarea name="pairingInvitation" id={codeId} value={invitation} onChange={event => onInvitation(event.target.value)} rows={2} spellCheck={false} autoComplete="off" placeholder="在这里粘贴网页复制的完整配对码" aria-describedby={hintId} disabled={busy} />
     <div className="pairing-submit"><p id={hintId}>{configured ? "配对后，这台电脑的所有 OBS 都会出现在网页。" : "先完成第 1 步，添加一个 OBS。"}</p><button type="submit" className="btn-primary" disabled={busy || !configured || !invitation.trim()}>{busy ? "正在处理…" : "连接这台电脑"}</button></div>
   </form>;
   return <section id={idPrefix ? "computer-connection-" + idPrefix : "computer-connection"} className={(embedded ? styles.embeddedConnection : "computer-connection") + (online ? " is-connected" : "")} tabIndex={-1} aria-labelledby={embedded ? undefined : titleId} aria-label={embedded ? "连接这台电脑" : undefined}>
