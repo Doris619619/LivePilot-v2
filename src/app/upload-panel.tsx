@@ -295,6 +295,7 @@ function MemberUploadPanel({ instances, channels, heading, request, member }: Up
 
   /** 关闭已完成记录只结束面板会话；未完成取消必须先取得原设备的权威确认。 */
   async function clear() {
+    if (record?.status !== "complete" && (record || createIntent.current) && !window.confirm(`取消“${record?.filename || file?.name || "当前文件"}”的上传？\n目标：${destinationLabel}\n${record ? `已上传 ${bytes(record.received)} / ${bytes(record.size)}。\n` : ""}已上传的临时数据将删除，本次上传无法继续。`)) return;
     const lease = acquire(); if (!lease) return;
     setError("");
     try {
@@ -375,13 +376,13 @@ function MemberUploadPanel({ instances, channels, heading, request, member }: Up
           {record || busy || hasIntent ? <p className="upload-destination"><DeviceIcon /><span>{destinationLabel}</span><span>{activeKind === "videos" ? "视频" : "音乐"}</span></p> : <div className="form-row">
             <div className="field-group">
               <label htmlFor="upload-instance" className="field-label">上传到</label>
-              <select id="upload-instance" disabled={operationBusy} value={instanceId} onChange={e => setInstanceId(e.target.value)}>
+              <select id="upload-instance" name="upload-instance" autoComplete="off" disabled={operationBusy} value={instanceId} onChange={e => setInstanceId(e.target.value)}>
                 {instances.map(i => <option key={targetKey(i)} value={targetKey(i)}>{channels[targetKey(i)] || i.name} · {i.agentName || "本机"} / {i.name}</option>)}
               </select>
             </div>
             <div className="field-group">
               <label htmlFor="upload-kind" className="field-label">素材类型</label>
-              <select id="upload-kind" disabled={operationBusy} value={kind} onChange={e => { setKind(e.target.value as "videos" | "music"); setFile(undefined); }}>
+              <select id="upload-kind" name="upload-kind" autoComplete="off" disabled={operationBusy} value={kind} onChange={e => { setKind(e.target.value as "videos" | "music"); setFile(undefined); }}>
                 <option value="videos">视频</option><option value="music">音乐</option>
               </select>
             </div>
@@ -402,7 +403,7 @@ function MemberUploadPanel({ instances, channels, heading, request, member }: Up
           </div>
         </form>
         {error && <ProblemCard objectName={destinationLabel} problem={typeof errorState !== "string" ? errorState : record?.problem || makeProblem(paused?"CANCELLED":"UPLOAD",error,{domain:"media",target:{agentId:record?.agentId,instanceId:record?.instanceId,uploadId:record?.id},stage:"上传素材"})} onRefresh={record ? () => void queryRecord() : undefined} />}
-        <UploadRecovery key={instanceId} agentId={destination?.agentId} instanceId={destination?.id || "main"} currentId={record?.id} disabled={operationBusy || hasIntent} acquire={acquire} restore={restoreRecord} cancelled={cancelled} />
+        <UploadRecovery key={instanceId} agentId={destination?.agentId} instanceId={destination?.id || "main"} destinationLabel={destinationLabel} currentId={record?.id} disabled={operationBusy || hasIntent} acquire={acquire} restore={restoreRecord} cancelled={cancelled} />
       </div></Reveal>
     </section>
   );

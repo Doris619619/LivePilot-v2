@@ -8,6 +8,7 @@ import WorkspaceSidebar from "./workspace-sidebar";
 import { VideoIcon, UploadIcon } from "./icons";
 import { WorkbenchViewContext, WorkbenchTransferContext, type TransferSummary } from "./workbench-context";
 import "./workbench.css";
+import { useUrlHref } from "../use-url-state";
 
 /** 首次访问模块时显示局部读取反馈，外层导航始终可用。 */
 function LoadingView() { return <div className="main-wrapper" role="status">正在打开工作区…</div>; }
@@ -18,6 +19,8 @@ type Mode = "live" | "publishing";
 /** URL 保留分享与前进后退能力；已访问模块只隐藏，草稿和传输不会卸载。 */
 export default function Workbench() {
   const pathname = usePathname(); const mode: Mode = pathname === "/publishing" ? "publishing" : "live";
+  // 普通切换保留查询状态；上传定位锚点只用于主动查看传输，避免覆盖之后记住的滚动位置。
+  const liveHref = useUrlHref({}, "/workspace").split("#")[0], publishingHref = useUrlHref({}, "/publishing").split("#")[0];
   const [visited, setVisited] = useState<Record<Mode, boolean>>({ live: mode === "live", publishing: mode === "publishing" });
   // 首次进入新模块时同步记住它，避免快速往返导致上一视图卸载。
   if (!visited[mode]) setVisited({ ...visited, [mode]: true });
@@ -49,12 +52,12 @@ export default function Workbench() {
   return <WorkbenchTransferContext.Provider value={setTransfer}><div className="workspace-shell workbench-shell">
     <WorkspaceSidebar label="工作台导航">
       <nav className="workbench-primary" aria-label="工作空间">
-        <Link scroll={false} className={"sidebar-link " + (mode === "live" ? "is-active" : "")} href="/workspace" aria-current={mode === "live" ? "page" : undefined}><VideoIcon /><span>直播工作台</span></Link>
-        <Link scroll={false} className={"sidebar-link " + (mode === "publishing" ? "is-active" : "")} href="/publishing" aria-current={mode === "publishing" ? "page" : undefined}><UploadIcon /><span>视频发布</span></Link>
+        <Link scroll={false} className={"sidebar-link " + (mode === "live" ? "is-active" : "")} href={liveHref} aria-current={mode === "live" ? "page" : undefined}><VideoIcon /><span>直播工作台</span></Link>
+        <Link scroll={false} className={"sidebar-link " + (mode === "publishing" ? "is-active" : "")} href={publishingHref} aria-current={mode === "publishing" ? "page" : undefined}><UploadIcon /><span>视频发布</span></Link>
       </nav>
       <div hidden={mode !== "live"} ref={setLiveNavigation} />
       <div hidden={mode !== "publishing"} ref={setPublishingNavigation} />
-      {mode === "publishing" && transfer && <Link scroll={false} className="workbench-transfer sidebar-link" href="/workspace#upload-content" onClick={() => window.dispatchEvent(new Event("livenest-open-upload"))}><UploadIcon /><span><strong>{transfer.label}{transfer.percent !== undefined ? ` ${transfer.percent}%` : ""}</strong><small title={transfer.filename}>{transfer.filename}</small></span></Link>}
+      {mode === "publishing" && transfer && <Link scroll={false} className="workbench-transfer sidebar-link" href={liveHref + "#upload-content"} onClick={() => window.dispatchEvent(new Event("livenest-open-upload"))}><UploadIcon /><span><strong>{transfer.label}{transfer.percent !== undefined ? ` ${transfer.percent}%` : ""}</strong><small title={transfer.filename}>{transfer.filename}</small></span></Link>}
     </WorkspaceSidebar>
     <div className="workbench-content">
       {visited.live && <WorkbenchViewContext.Provider value={{ active: mode === "live", navigation: liveNavigation }}><div className="workbench-view" data-workspace="live" hidden={mode !== "live"} inert={mode !== "live"}><LiveWorkspace /></div></WorkbenchViewContext.Provider>}

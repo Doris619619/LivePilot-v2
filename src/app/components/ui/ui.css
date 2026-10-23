@@ -6,7 +6,7 @@
 .ui-tabs-trigger .step-number { display: grid; place-items: center; width: 24px; height: 24px; flex: none; border-radius: 50%; background: var(--surface-active); font-size: 12px; font-variant-numeric: tabular-nums; transition: background 180ms, color 180ms; }
 .ui-tabs-content[data-state="inactive"] { display: none !important; }
 .ui-tabs-content[data-state="active"] { animation: none; }
-.ui-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 240ms ease, opacity 180ms ease; }
+.ui-reveal { display: grid; grid-template-rows: 0fr; opacity: 0; transition: opacity 180ms ease; }
 .ui-reveal[data-state="open"] { grid-template-rows: 1fr; opacity: 1; }
 /* 将读屏用绝对定位内容限制在折叠容器内，避免隐藏表单撑出页面底部空白。 */
 .ui-reveal-inner { position: relative; min-height: 0; overflow: hidden; }
@@ -23,7 +23,7 @@
 .ui-dialog-heading h2 { font-size: 20px; margin: 0; }
 .ui-dialog-description { color: var(--text-secondary); font-size: 14px; margin-bottom: 24px; }
 button.ui-close { padding: 0; min-width: 44px; font-size: 26px; border: 0; background: transparent; color: var(--text-secondary); }
-.ui-popover { z-index: 110; padding: 12px; width: min(340px, calc(100vw - 24px)); background: var(--surface-base); border: 1px solid var(--border-subtle); border-radius: 14px; box-shadow: 0 12px 44px #1624401c; transform-origin: var(--radix-popover-content-transform-origin); animation: ui-enter 180ms ease-out; max-height: var(--radix-popover-content-available-height); overflow-y: auto; }
+.ui-popover { z-index: 110; padding: 12px; width: min(340px, calc(100vw - 24px)); background: var(--surface-base); border: 1px solid var(--border-subtle); border-radius: 14px; box-shadow: 0 12px 44px #1624401c; transform-origin: var(--radix-popover-content-transform-origin); animation: ui-enter 180ms ease-out; max-height: var(--radix-popover-content-available-height); overflow-y: auto; overscroll-behavior: contain; }
 .ui-dropzone { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 0; padding: 28px 18px; border: 1px dashed var(--border-default); border-radius: 12px; background: var(--surface-hover); text-align: center; transition: background 180ms, border-color 180ms, box-shadow 180ms; }
 .ui-dropzone[data-dragging="true"] { background: var(--accent-subtle); border-color: var(--accent-primary); box-shadow: 0 0 0 4px var(--accent-subtle); }
 .ui-dropzone[data-disabled="true"] { opacity: .65; }

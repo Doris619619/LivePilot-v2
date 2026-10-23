@@ -3,8 +3,8 @@
 .publishing-batch-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 12px; }
 .publishing-sidebar nav { display: grid; gap: 4px; }
 .publishing-sidebar button.sidebar-link { width: 100%; margin-bottom: 0; border: 0; background: transparent; justify-content: start; font-size: 15px; font-weight: 400; }
-.publishing-sidebar button.sidebar-link.is-active { background: var(--nav-active); color: var(--accent-primary); font-weight: 500; }
-.publishing-sidebar button.sidebar-link:hover { background: var(--surface-active); }
+.publishing-sidebar .sidebar-link.is-active { background: var(--nav-active); color: var(--accent-primary); font-weight: 500; }
+.publishing-sidebar .sidebar-link:hover { background: var(--surface-active); }
 .publishing-shell h2, .publishing-shell h3 { font-size: 16px; font-weight: 600; line-height: 1.5; }
 .publishing-shell label { display: grid; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: 15px; font-weight: 500; }
 .publishing-shell textarea { width: 100%; padding: 10px 14px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--surface-base); color: var(--text-primary); font: inherit; resize: vertical; }

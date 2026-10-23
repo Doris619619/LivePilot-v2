@@ -8,7 +8,10 @@
 .setup-row { display: grid; grid-template-columns: 32px minmax(0,1fr); gap: 16px; padding: 24px 0; border-bottom: 1px solid var(--border-subtle); }
 .setup-row .step-number { margin-top: 2px; }
 .setup-row h2 { font-size: 18px; font-weight: 500; margin: 0; }
-.setup-title { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.setup-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; min-width: 0; gap: 20px; }
+.setup-title > :is(h2,h3,strong) { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.setup-title > button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.desktop-configuration :is(.obs-config-row,.obs-candidate) > strong { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .setup-content { margin-top: 16px; display: flex; flex-direction: column; gap: 12px; align-items: start; }
 .setup-content > .field-group { width: 100%; max-width: 620px; }
 .setup-content textarea, .pairing-recovery textarea { width: 100%; min-height: 88px; padding: 12px; border: 1px solid var(--border-default); border-radius: 6px; resize: vertical; font: inherit; }

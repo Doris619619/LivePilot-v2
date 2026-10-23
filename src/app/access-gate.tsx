@@ -25,6 +25,9 @@ export default function AccessGate({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [visible, setVisible] = useState(false);
 
+  /** 手机保留页面位置和键盘状态；仅精确指针设备自动进入主登录字段。 */
+  useEffect(() => { if (user === null && window.matchMedia("(pointer: fine)").matches) document.getElementById("username")?.focus(); }, [user]);
+
   useEffect(() => {
     let active = true;
 
@@ -123,7 +126,6 @@ export default function AccessGate({ children }: { children: ReactNode }) {
                   title="2–32 位字母、数字或下划线，区分大小写"
                   required
                   disabled={busy}
-                  autoFocus
                 />
               </div>
             </div>

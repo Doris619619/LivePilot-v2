@@ -2,8 +2,9 @@
 "use client";
 import { useState } from "react";
 import type { PublishingPolicy } from "@/shared/publishing";
+import { useUnsavedChanges } from "../use-unsaved-changes";
 export type PublishingQuota = { day: string; uploads: number; units: number; reserved: { uploads: number; units: number } };
-type Props = { initial: PublishingPolicy; quota?: PublishingQuota; busy: boolean; save(policy: PublishingPolicy): Promise<void> };
+type Props = { initial: PublishingPolicy; quota?: PublishingQuota; busy: boolean; save(policy: PublishingPolicy): Promise<boolean> };
 const limits = [
   ["uploadsPerDay", "每日上传次数", 1, 10000, 1], ["otherUnitsPerDay", "每日 API 预算", 1, 10000000, 1],
   ["concurrency", "整机上传并发", 1, 4, 1], ["uploadMbps", "上传带宽 · Mbps", 0.1, 10000, 0.1],
@@ -17,11 +18,15 @@ const advanced = [
 /** 默认展示运营选项；保存期间冻结字段，避免未提交的后续编辑被误认为已保存。 */
 export default function PolicyEditor({ initial, quota, busy, save }: Props) {
   const [value, setValue] = useState(initial);
+  const [saved, setSaved] = useState(() => JSON.stringify(initial));
+  useUnsavedChanges(JSON.stringify(value) !== saved);
+  /** 保存失败继续保留 dirty 状态，成功后以本次提交作为新的离页基线。 */
+  async function submit() { if (!busy && await save(value)) setSaved(JSON.stringify(value)); }
   /** 数字范围与共享协议一致，避免界面接收后端一定拒绝的值。 */
   function fields(options: typeof limits | typeof advanced) {
-    return options.map(([key, label, min, max, step]) => <label key={key}>{label}<input disabled={busy} type="number" required min={min} max={max} step={step} value={value[key]} onChange={e => setValue({ ...value, [key]: Number(e.target.value) })} /></label>);
+    return options.map(([key, label, min, max, step]) => <label key={key}>{label}<input name={key} autoComplete="off" disabled={busy} type="number" required min={min} max={max} step={step} value={value[key]} onChange={e => setValue({ ...value, [key]: Number(e.target.value) })} /></label>);
   }
-  return <form className="publishing-form" onSubmit={e => { e.preventDefault(); if (!busy) void save(value); }}>
+  return <form className="publishing-form" onSubmit={e => { e.preventDefault(); void submit(); }}>
     <dl className="publishing-summary publishing-quota">
       <div><dt>今日上传</dt><dd>{quota?.uploads || 0} / {value.uploadsPerDay}</dd></div>
       <div><dt>API 已用</dt><dd>{quota?.units || 0} / {value.otherUnitsPerDay}</dd></div>
@@ -30,11 +35,11 @@ export default function PolicyEditor({ initial, quota, busy, save }: Props) {
     <p className="publishing-hint">产品预算，按 API Project 共享；不代表 YouTube 官方限制。</p>
     <div className="publishing-fields">{fields(limits)}</div>
     <details className="publishing-details"><summary>高级运行参数</summary>
-      <label>项目配额组<input disabled={busy} required value={value.projectKey} onChange={e => setValue({ ...value, projectKey: e.target.value })} /></label>
+      <label>项目配额组<input name="publishing-project-key" autoComplete="off" spellCheck={false} disabled={busy} required value={value.projectKey} onChange={e => setValue({ ...value, projectKey: e.target.value })} /></label>
       <div className="publishing-fields">{fields(advanced)}</div>
       <p className="publishing-hint">配额日：{quota?.day || "尚无请求"}。调整策略不会改变已确认的发布时间。</p>
     </details>
-    <details className="publishing-details"><summary>服务联系</summary><label>隐私联系地址<input disabled={busy} maxLength={200} value={value.privacyContact} onChange={e => setValue({ ...value, privacyContact: e.target.value })} placeholder="邮箱或支持页面" /></label></details>
+    <details className="publishing-details"><summary>服务联系</summary><label>隐私联系地址<input name="publishing-privacy-contact" autoComplete="off" disabled={busy} maxLength={200} value={value.privacyContact} onChange={e => setValue({ ...value, privacyContact: e.target.value })} placeholder="例如 support@example.com…" /></label></details>
     <button className="btn-primary" disabled={busy}>{busy ? "保存中…" : "保存策略"}</button>
   </form>;
 }

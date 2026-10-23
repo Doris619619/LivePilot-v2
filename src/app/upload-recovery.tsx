@@ -7,7 +7,7 @@ import type { UploadStatus } from "@/shared/uploads";
 type Recovery = Pick<UploadStatus, "id" | "instanceId" | "agentId" | "filename"> & { message: string };
 export type UploadOperation = { current: () => boolean; release: () => void };
 /** 查询与取消严格等待服务器回报；失败不从界面抹去待确认记录。 */
-export default function UploadRecovery({ agentId, instanceId, restore, cancelled, acquire, currentId, disabled = false }: { agentId?: string; instanceId: string; restore: (status: UploadStatus) => void; cancelled: (id: string) => void; acquire: () => UploadOperation | undefined; currentId?: string; disabled?: boolean }) {
+export default function UploadRecovery({ agentId, instanceId, destinationLabel, restore, cancelled, acquire, currentId, disabled = false }: { agentId?: string; instanceId: string; destinationLabel?: string; restore: (status: UploadStatus) => void; cancelled: (id: string) => void; acquire: () => UploadOperation | undefined; currentId?: string; disabled?: boolean }) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [items, setItems] = useState<Recovery[]>([]); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
@@ -15,6 +15,7 @@ export default function UploadRecovery({ agentId, instanceId, restore, cancelled
   useEffect(() => { let active = true; if (agentId) void api<Recovery[]>(url).then(value => { if (active) setItems(value); }, () => { if (active) setError("上传恢复列表暂不可用，请刷新重试。"); }); return () => { active = false; }; }, [agentId, url]);
   /** 只接纳当前目标的服务端结果，错误保留记录供后续对账。 */
   async function act(item?: Recovery, cancel = false) {
+    if (cancel && item && !window.confirm(`取消“${item.filename}”的上传？\n目标：${destinationLabel || instanceId}\n已上传的临时数据将删除，本次上传无法继续。`)) return;
     if (busy || disabled) return; const operation = acquire(); if (!operation) return; setBusy(true); setError("");
     try {
       if (item) {

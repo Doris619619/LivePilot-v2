@@ -18,12 +18,12 @@ export default function PublishingChannelOptionsFields({ profile, busy, change }
   }
   const options = { playlistIds: profile.playlistIds, thumbnailFilename: profile.thumbnailFilename };
   return <>
-    {profile.thumbnailMode === "fixed" && <label>本次固定封面<input required disabled={busy} value={profile.thumbnailFilename || ""} onChange={event => change({ ...options, thumbnailFilename: event.target.value })} placeholder="当前发布电脑中的图片文件名" /></label>}
+    {profile.thumbnailMode === "fixed" && <label>本次固定封面<input name="publishing-thumbnail-filename" autoComplete="off" spellCheck={false} required disabled={busy} value={profile.thumbnailFilename || ""} onChange={event => change({ ...options, thumbnailFilename: event.target.value })} placeholder="例如 cover.jpg…" /></label>}
     <details className="publishing-details"><summary>本次播放列表{profile.playlistIds.length ? ` · 已选 ${profile.playlistIds.length} 个` : "（可选）"}</summary>
       <button type="button" disabled={busy || reading || !profile.accountId} onClick={() => void load()}>{reading ? "读取中…" : "读取频道播放列表"}</button>
       {error && <p role="alert">{error}</p>}
       {playlists?.length === 0 && <p>这个频道还没有播放列表。</p>}
-      {playlists?.map(item => <label className="publishing-check" key={item.id}><input type="checkbox" disabled={busy} checked={profile.playlistIds.includes(item.id)} onChange={event => change({ ...options, playlistIds: event.target.checked ? [...profile.playlistIds, item.id] : profile.playlistIds.filter(id => id !== item.id) })} />{item.title}</label>)}
+      {playlists?.map(item => <label className="publishing-check" key={item.id}><input name="publishing-playlists" autoComplete="off" type="checkbox" disabled={busy} checked={profile.playlistIds.includes(item.id)} onChange={event => change({ ...options, playlistIds: event.target.checked ? [...profile.playlistIds, item.id] : profile.playlistIds.filter(id => id !== item.id) })} />{item.title}</label>)}
       {!!profile.playlistIds.length && <button type="button" disabled={busy} onClick={() => change({ ...options, playlistIds: [] })}>清空选择</button>}
     </details>
   </>;

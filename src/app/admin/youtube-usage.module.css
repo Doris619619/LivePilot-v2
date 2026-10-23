@@ -51,7 +51,7 @@ p.caption { margin: 8px 0 12px; max-width: 100ch; }
 .filterPanel summary { font-size: 13px; font-weight: 600; cursor: pointer; padding-bottom: 12px; }
 .filters { display: grid; grid-template-columns: 1fr; gap: 12px; padding: 2px 0 20px; }
 .appliedFilters { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 12px; }
-.appliedFilters button { font-size: 11px; padding: 5px 7px; border-radius: 4px; color: #244d99; background: #f0f4fc; border: 1px solid #d4dff3; overflow-wrap: anywhere; text-align: left; }
+.appliedFilters button { min-width: 0; max-width: 100%; white-space: normal; font-size: 11px; padding: 5px 7px; border-radius: 4px; color: #244d99; background: #f0f4fc; border: 1px solid #d4dff3; overflow-wrap: anywhere; text-align: left; }
 .appliedFilters .clearFilters { background: transparent; border: 0; padding: 4px 0; text-decoration: underline; text-underline-offset: 3px; }
 .breakdown { border-top: 1px solid var(--border-subtle); padding-top: 16px; }
 .breakdown h2 { font-size: 14px; margin-bottom: 10px; }
@@ -60,7 +60,7 @@ p.caption { margin: 8px 0 12px; max-width: 100ch; }
 .rankTabs button[aria-pressed="true"] { color: #244d99; border-color: #a7bce5; background: #f0f4fc; }
 .ranking { list-style: none; margin: 0; padding: 0; }
 .ranking li { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
-.ranking li > button { border: 0; background: transparent; color: var(--accent-primary); border-radius: 0; padding: 0; font-size: 12px; overflow-wrap: anywhere; text-align: left; }
+.ranking li > button { min-width: 0; white-space: normal; border: 0; background: transparent; color: var(--accent-primary); border-radius: 0; padding: 0; font-size: 12px; overflow-wrap: anywhere; text-align: left; }
 .ranking strong { white-space: nowrap; font-weight: 500; }
 .ranking small { font-size: 10px; font-weight: 400; color: var(--text-muted); }
 .empty { color: var(--text-muted); padding: 18px 0; font-size: 13px; }

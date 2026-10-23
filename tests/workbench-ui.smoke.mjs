@@ -2,12 +2,13 @@
 import { chromium } from "playwright";
 import { expect } from "playwright/test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { createPublishingPreview } from "../scripts/preview/publishing.mjs";
 
 const origin = process.env.LIVEPILOT_UI_ORIGIN || "http://127.0.0.1:3022";
-const output = path.resolve("docs/screenshots/workbench"); await mkdir(output, { recursive: true });
+const output = path.resolve(process.env.LIVEPILOT_WORKBENCH_SCREENSHOTS || "docs/screenshots/workbench"); await mkdir(output, { recursive: true });
 const publishing = createPublishingPreview(); publishing.view.plans = []; publishing.view.jobs = [];
 const instances = [{ id: "main", name: "OBS 1", agentId: "preview_liang", agentName: "演示电脑" }];
 let username = "Liang", sessions = 0, creates = 0, completes = 0, releaseChunk;
@@ -31,6 +32,7 @@ await context.route("**/api/**", async route => {
   else if (url.pathname === "/api/broadcast-profiles") result = { profiles: [] };
   else if (url.pathname === "/api/publishing-templates") result = { profiles: publishing.view.profiles.map(profile => Object.fromEntries(Object.entries(profile).filter(([key]) => !["agentId", "instanceId", "accountId", "channelId", "playlistIds", "thumbnailFilename"].includes(key)))) };
   else if (url.pathname === "/api/publishing") result = method === "GET" ? publishing.view : publishing.request(request.postDataJSON());
+  else if (url.pathname === "/api/uploads/prepare" && method === "POST") result = { requestId: randomUUID(), credential: "synthetic-workbench-preparation", expiresAt: Date.now() + 3600000 };
   else if (url.pathname === "/api/uploads" && method === "POST") {
     creates++; const input = request.postDataJSON();
     upload = { ...input, id: input.requestId, received: 0, chunkSize: 8388608, status: "uploading", expiresAt: Date.now() + 3600000 }; result = upload;
@@ -127,7 +129,7 @@ try {
   await settingsDialog.getByRole("button", { name: "返回", exact: true }).click();
   await settingsDialog.getByRole("button", { name: "放弃修改并返回", exact: true }).click();
   await settingsDialog.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByRole("button", { name: "我的发布", exact: true }).click();
+  await page.getByRole("link", { name: "我的发布", exact: true }).click();
   await switchTo("直播工作台"); await switchTo("视频发布");
   await expect(publish.getByRole("heading", { name: "我的发布", exact: true })).toBeVisible();
   await position(0); await page.screenshot({ path: path.join(output, "publishing-desktop.png") });

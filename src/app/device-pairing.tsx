@@ -31,15 +31,15 @@ export default function DevicePairing({ model }: { model: ReturnType<typeof useD
   const { agents, open, setOpen, name, setName, invitation, agentId, setAgentId, busy, message, setMessage, loadError, listReady, setLoadKey, customers, owner, setOwner, selected, paired, recoverable, create } = model;
   return <SurfaceDialog open={open} onOpenChange={setOpen} locked={busy} title="添加直播电脑" description="生成配对码，在直播电脑的 LiveNest 客户端中连接。"><section className="pairing-dialog">{loadError && <p role="alert">{loadError}<button onClick={()=>setLoadKey(k=>k+1)}>重新读取客户</button></p>}
     {paired && selected ? <><p role="status">{selected.online ? "连接成功" : "配对成功，等待电脑上线"}：{selected.name}</p><a href={"#device-" + selected.id} onClick={() => setOpen(false)}>查看电脑</a></> : <>
-      {!invitation && <>{customers && <label className="field-group">所属客户<select value={selected?.owner || owner} disabled={!!selected?.owner} onChange={e=>setOwner(e.target.value)}><option value="">选择客户</option>{customers.map(c=><option key={c}>{c}</option>)}</select></label>}
-        <label className="field-group">电脑名称<input disabled={!listReady || busy || !!agentId} value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="给这台电脑起个名字" /></label>
-        {!!recoverable.length && <details><summary>继续配对尚未连接的电脑</summary><label className="field-group">选择原电脑<select disabled={!listReady || busy} value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setMessage(""); }}><option value="">添加新电脑</option>{recoverable.map(a => <option key={a.id} value={a.id}>{a.name} · {a.id.slice(-6)}{a.revoked ? "（已移除）" : "（待配对）"}</option>)}</select></label></details>}
+      {!invitation && <>{customers && <label className="field-group">所属客户<select name="owner" autoComplete="off" value={selected?.owner || owner} disabled={!!selected?.owner} onChange={e=>setOwner(e.target.value)}><option value="">选择客户</option>{customers.map(c=><option key={c}>{c}</option>)}</select></label>}
+        <label className="field-group">电脑名称<input name="deviceName" autoComplete="off" disabled={!listReady || busy || !!agentId} value={name} maxLength={80} onChange={e => setName(e.target.value)} placeholder="例如：直播电脑 01…" /></label>
+        {!!recoverable.length && <details><summary>继续配对尚未连接的电脑</summary><label className="field-group">选择原电脑<select name="existingAgent" autoComplete="off" disabled={!listReady || busy} value={agentId || ""} onChange={e => { const id = e.target.value; setAgentId(id || undefined); setName(agents.find(a => a.id === id)?.name || ""); setMessage(""); }}><option value="">添加新电脑</option>{recoverable.map(a => <option key={a.id} value={a.id}>{a.name} · {a.id.slice(-6)}{a.revoked ? "（已移除）" : "（待配对）"}</option>)}</select></label></details>}
 
       </>}
       {invitation ? <>
         <p>将配对码粘贴到这台电脑的 LiveNest，点击“连接”。</p>
         <button className="btn-primary" onClick={() => void navigator.clipboard.writeText(invitation).then(() => setMessage("已复制，请到 LiveNest 粘贴并连接。"), () => setMessage("复制失败，请展开下方配对码，选中后按 Ctrl+C。"))}>复制配对码</button>
-        <details><summary>查看配对码</summary><label className="field-group">配对码（10 分钟内有效）<textarea readOnly value={invitation} rows={3} /></label><button disabled={!listReady || busy} onClick={() => void create()}>{busy ? "正在生成…" : "重新生成配对码"}</button></details>
+        <details><summary>查看配对码</summary><label className="field-group">配对码（10 分钟内有效）<textarea name="pairingInvitation" autoComplete="off" spellCheck={false} readOnly value={invitation} rows={3} /></label><button disabled={!listReady || busy} onClick={() => void create()}>{busy ? "正在生成…" : "重新生成配对码"}</button></details>
       </> : <button className="btn-primary" disabled={!listReady || busy || !name.trim()} onClick={() => void create()}>{busy ? "正在生成…" : "生成配对码"}</button>}
       {message && <p role="status">{message}</p>}<Link href="/download">下载 Windows 客户端</Link>
     </>}

@@ -45,7 +45,7 @@ export default function BroadcastRuntime({ id, data, stale, durationMs, summary,
             {url && <a className={styles.watchLink} href={url} target="_blank" rel="noopener noreferrer">打开直播页<ExternalLinkIcon width="16" height="16" aria-hidden="true" /></a>}
           </div>
           <div className={styles.linkField}>
-            <input id={`watch-link-${id}`} aria-label="本场直播链接" value={url || ""} placeholder="开播后显示" readOnly disabled={!url} />
+            <input id={`watch-link-${id}`} name="watchLink" type="url" autoComplete="off" spellCheck={false} aria-label="本场直播链接" value={url || ""} placeholder="开播后显示" readOnly disabled={!url} />
             {url && <button type="button" className={styles.copyButton} aria-label="复制链接" title={copyResult === "copied" ? "已复制" : "复制链接"} onClick={() => void copyLink()}>
               {copyResult === "copied" ? <CheckCircleIcon width="18" height="18" aria-hidden="true" /> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>}
             </button>}

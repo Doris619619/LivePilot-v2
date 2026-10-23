@@ -120,6 +120,11 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
       heading?.scrollIntoView({ block: "nearest" });
     });
   }
+  /** 停止前核对当前实例与场次；已确认结束时仅解锁旧素材，不重复询问结束场次。 */
+  async function stopBroadcast() {
+    if (!ended && !window.confirm(`结束“${title}”的直播？\n电脑：${instance.agentName || "本机"} · OBS：${name}\n场次：${data?.state.broadcastTitle || "当前场次"}\n结束后不能恢复此 YouTube 场次。`)) return;
+    await act("stop");
+  }
   const broadcastControls = <>
           {actionMode === "working" && <button type="button" className="btn-primary" disabled><span>{working === "stop" ? "结束中…" : "正在处理…"}</span></button>}
           {(actionMode === "check" || actionMode === "live") && <button type="button" className={actionMode === "check" ? "btn-primary" : "btn-secondary"} disabled={busy || checking} onClick={() => void checkPlatform()}><RefreshIcon />{checking ? "正在核对平台…" : "重新检查状态"}</button>}
@@ -127,7 +132,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           {(actionMode === "start" || actionMode === "retry" || actionMode === "resume") && <button type="button" className="btn-primary" disabled={!!blocker || detailsBusy} aria-describedby={`compact-readiness-${id}`} onClick={() => void act("start")}>
             <PlayIcon /><span>{actionMode === "resume" ? "继续本场开播" : actionMode === "retry" ? "重试开播" : "开始直播"}</span>
           </button>}
-          {stoppable && <button type="button" className="btn-danger" disabled={busy || stale || actionMode === "working"} onClick={() => void act("stop")}>
+          {stoppable && <button type="button" className="btn-danger" disabled={busy || stale || actionMode === "working"} onClick={() => void stopBroadcast()}>
             <StopIcon /><span>{working === "stop" ? "结束中…" : ended ? "确认结束并解锁素材" : "结束直播"}</span>
           </button>}
   </>;
@@ -188,7 +193,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
         <div className="form-row media-selection">
           <div className="field-group">
             <label htmlFor={`video-${id}-${suffix}`} className="field-label">循环视频</label>
-            <select id={`video-${id}-${suffix}`} value={selection.video} disabled={locked || !data?.media.videos.length} onChange={e => select({ video: e.target.value })}>
+            <select id={`video-${id}-${suffix}`} name={`video-${id}`} autoComplete="off" value={selection.video} disabled={locked || !data?.media.videos.length} onChange={e => select({ video: e.target.value })}>
               <option value="">选择视频素材</option>
               {selection.video && !data?.media.videos.includes(selection.video) && <option value={selection.video}>{selection.video}（缺失）</option>}
               {data?.media.videos.map(item => <option key={item} value={item}>{item}</option>)}
@@ -197,7 +202,7 @@ export default function InstanceConsole({ instance, onChannelChange, onUpload, i
           </div>
           <div className="field-group">
             <label htmlFor={`music-${id}-${suffix}`} className="field-label">背景音乐（必选）</label>
-            <select id={`music-${id}-${suffix}`} value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
+            <select id={`music-${id}-${suffix}`} name={`music-${id}`} autoComplete="off" value={selection.music} disabled={locked || !data?.media.music.length} onChange={e => select({ music: e.target.value })}>
               <option value="">选择背景音乐</option>
               {selection.music && !data?.media.music.includes(selection.music) && <option value={selection.music}>{selection.music}（缺失）</option>}
               {data?.media.music.map(item => <option key={item} value={item}>{item}</option>)}

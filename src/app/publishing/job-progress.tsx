@@ -36,7 +36,13 @@ export function jobProgress(job: VideoJob): JobProgressModel {
   const text = report?.state === "uploading" ? "正在上传 · " + percent + "%" : stage === 4 ? "等待 YouTube 公开" : report?.state === "generating_metadata" ? "正在生成文案" : report?.state === "ready" ? "等待处理" : labels[stage] + "中";
   return { labels, stage, complete: false, tone: "active", text };
 }
-/** 默认展示六条细阶段及短当前说明；错误使用文字和符号，同时保留屏幕阅读器阶段状态。 */
+/** 常显主行播报离散阶段；上传百分比变化不重复打断屏幕阅读器。 */
+export function jobProgressAnnouncement(job: VideoJob) {
+  const progress = jobProgress(job);
+  return (job.spec.contentPackage?.name || job.spec.asset.filename) + "：" + (job.observed?.state === "uploading" && progress.tone === "active" ? "正在上传" : progress.text);
+}
+
+/** 默认展示六条细阶段及短当前说明；错误使用文字和符号，播报由折叠区外的主行负责。 */
 export default function JobProgress({ job }: { job: VideoJob }) {
   const progress = jobProgress(job);
   return <div className={styles.progress}>

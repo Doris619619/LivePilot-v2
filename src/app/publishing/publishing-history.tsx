@@ -1,6 +1,6 @@
 /** 紧凑发布历史：对齐内容与结果，一次只展开一项，核对操作不影响列表读取。 */
 "use client";
-import { Fragment, useState } from "react";
+import { Fragment } from "react";
 import type { PublishingBatchRemoval, PublishingPlan, VideoJob } from "@/shared/publishing";
 import type { JobOperation } from "./batch-execution";
 import type { OverviewTarget } from "./publishing-overview";
@@ -8,6 +8,8 @@ import { jobStatus } from "./display";
 import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import { filterHistory, historyOutcome, historyResultLabels, historyTime, publishingHistory, type HistoryResult, type HistoryRow } from "./publishing-history-data";
 import styles from "./publishing-history.module.css";
+import { useUrlState } from "../use-url-state";
+import { publishingPage } from "./form-inputs";
 
 type Props = { plans: PublishingPlan[]; jobs: VideoJob[]; targets: OverviewTarget[]; removals?: PublishingBatchRemoval[]; busy: boolean; operate: JobOperation };
 
@@ -34,7 +36,7 @@ export function HistoryDetail({ row, busy, operate, removed = false }: { row: Hi
 
 /** 搜索和筛选不请求 YouTube；始终先筛选全部缓存数据，再限制每页25条。 */
 export default function PublishingHistory({ plans, jobs, targets, removals = [], busy, operate }: Props) {
-  const [query, setQuery] = useState(""); const [result, setResult] = useState<HistoryResult | "">(""); const [page, setPage] = useState(0); const [expanded, setExpanded] = useState("");
+  const [query, setQuery] = useUrlState("publishing-history-query", "", undefined, undefined, "replace"); const [result, setResult] = useUrlState<HistoryResult | "">("publishing-history-result", "", value => Object.hasOwn(historyResultLabels, value) ? value as HistoryResult : ""); const [page, setPage] = useUrlState("publishing-history-page", 0, publishingPage, String); const [expanded, setExpanded] = useUrlState("publishing-history-detail", "");
   const rows = publishingHistory(plans, jobs, targets); const filtered = filterHistory(rows, query, result);
   const currentPage = Math.min(page, Math.max(0, Math.ceil(filtered.length / PACKAGE_PAGE_SIZE) - 1));
   const visible = filtered.slice(currentPage * PACKAGE_PAGE_SIZE, (currentPage + 1) * PACKAGE_PAGE_SIZE);
@@ -46,8 +48,8 @@ export default function PublishingHistory({ plans, jobs, targets, removals = [],
   function changePage(value: number) { setPage(value); setExpanded(""); }
   return <section aria-label="发布历史" className={styles.history}>
     <div className={styles.toolbar}>
-      <label className={styles.search}><span className="sr-only">搜索发布历史</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input type="search" aria-label="搜索发布历史" placeholder="搜索内容或发布包" value={query} onChange={event => search(event.target.value)} /></label>
-      <label className={styles.resultFilter}><span className="sr-only">发布结果</span><select aria-label="发布结果" value={result} onChange={event => chooseResult(event.target.value as HistoryResult | "")}><option value="">全部结果</option>{Object.entries(historyResultLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label className={styles.search}><span className="sr-only">搜索发布历史</span><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input name="publishing-history-query" autoComplete="off" type="search" aria-label="搜索发布历史" placeholder="例如 夏日钢琴…" value={query} onChange={event => search(event.target.value)} /></label>
+      <label className={styles.resultFilter}><span className="sr-only">发布结果</span><select name="publishing-history-result" autoComplete="off" aria-label="发布结果" value={result} onChange={event => chooseResult(event.target.value as HistoryResult | "")}><option value="">全部结果</option>{Object.entries(historyResultLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <span className={styles.count} role="status">{filtered.length} 条记录</span>
     </div>
     {visible.length ? <table className={styles.table} aria-label="发布历史记录"><colgroup><col className={styles.contentColumn} /><col className={styles.batchColumn} /><col className={styles.channelColumn} /><col className={styles.timeColumn} /><col className={styles.resultColumn} /><col className={styles.actionColumn} /></colgroup>

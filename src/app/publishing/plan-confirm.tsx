@@ -13,17 +13,24 @@ import { PACKAGE_PAGE_SIZE, Pagination } from "./package-setup";
 import PlanCalendar from "./plan-calendar";
 import UploadReview from "./upload-review";
 import type { UploadBlock, UploadRepeat } from "./publishing-upload-review";
+import { confirmDiscardChanges, useUnsavedChanges } from "../use-unsaved-changes";
+import { useUrlState } from "../use-url-state";
+import { publishingPage } from "./form-inputs";
 type Props = { plan: PublishingPlan; channel?: string; busy: boolean; disabled?: boolean; blocked?: string; scheduleOnly?: boolean; lockedPackageIds?: string[]; replacements: string[]; uploadBlockers?: UploadBlock[]; uploadRepeats?: UploadRepeat[]; update(items: PublishingPlanItem[]): Promise<PublishingPlan | undefined>; confirm(ai: boolean, replacements: string[], republishJobIds: string[]): Promise<void>; back(): void; changeMaterials?(): void; viewHistory(): void; viewExecution?(): void };
 
 /** 保存服务端返回的计划修订后才能确认，日历切月和步骤回跳不丢弃正在编辑的字段。 */
 export default function PlanConfirm({ plan, channel, busy, disabled, blocked, scheduleOnly = false, lockedPackageIds, replacements, uploadBlockers = [], uploadRepeats = [], update, confirm, back, changeMaterials, viewHistory, viewExecution }: Props) {
-  const [page, setPage] = useState(0); const [editing, setEditing] = useState<PublishingPlanItem>(); const [date, setDate] = useState("");
+  const [page, setPage] = useUrlState("publishing-plan-page", 0, publishingPage, String); const [editing, setEditing] = useState<PublishingPlanItem>(); const [date, setDate] = useState("");
   const [error, setError] = useState(""); const [accepted, setAccepted] = useState(false); const [ai, setAi] = useState(false); const [replace, setReplace] = useState(false);
   const [submissionError, setSubmissionError] = useState<{ revision: number; message: string }>();
   const [republishConsent, setRepublishConsent] = useState("");
+  const [editSnapshot, setEditSnapshot] = useState("");
+  const dirty = !!editing && JSON.stringify({ item: editing, date }) !== editSnapshot;
+  useUnsavedChanges(dirty);
   const republishKey = JSON.stringify({ revision: plan.revision, repeats: uploadRepeats.map(value => [value.packageId, value.version, value.jobIds]) });
   const repeatAccepted = !uploadRepeats.length || republishConsent === republishKey;
   const active = plan.items.filter(item => !item.excluded); const ordered = active.map(item => item.publishAt).filter((value): value is string => !!value).sort();
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(plan.items.length / PACKAGE_PAGE_SIZE) - 1));
   const copies = new Map(plan.copies.map(copy => [copy.packageId, copy])); const packages = new Map(plan.batch.packages.map(item => [item.id, item]));
   const currentCopy = editing && copies.get(editing.packageId);
   const title = editing?.title ?? currentCopy?.title ?? ""; const description = editing?.description ?? currentCopy?.description ?? "";
@@ -31,7 +38,9 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
   const valid = scheduleOnly || !editing || copyValidation.success;
   const timezone = plan.rule.timezone;
   /** 一次只编辑一个发布包，日期输入始终使用已确认的计划时区。 */
-  function begin(item: PublishingPlanItem) { if (lockedPackageIds?.includes(item.packageId)) return; setEditing({ ...item }); setDate(item.publishAt ? localInputTime(item.publishAt, timezone) : ""); setError(""); }
+  function begin(item: PublishingPlanItem) { if (lockedPackageIds?.includes(item.packageId) || !confirmDiscardChanges(dirty)) return; const nextDate = item.publishAt ? localInputTime(item.publishAt, timezone) : ""; setEditing({ ...item }); setDate(nextDate); setEditSnapshot(JSON.stringify({ item, date: nextDate })); setError(""); }
+  /** 所有关闭入口共用丢弃确认，取消关闭时保持当前文本与时间。 */
+  function closeEditor() { if (confirmDiscardChanges(dirty)) setEditing(undefined); }
   /** 日期改动成为manual，恢复auto由服务端寻找空闲时刻；其他人工覆盖原样保留。 */
   async function save() {
     if (!editing || !editing.excluded && !valid) return;
@@ -62,24 +71,24 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     <div className="publishing-plan-overview"><div className="publishing-plan-content-actions"><strong>{active.length} 条视频</strong><PlanMediaPreview key={plan.id} plan={plan} channel={channel} /></div><div className="publishing-plan-destination"><span>{channel || plan.profile.channelId}</span><span className="publishing-plan-visibility">{visibilityLabel(plan.profile)}</span></div></div>
     <UploadReview blockers={uploadBlockers} repeats={uploadRepeats} busy={busy} history={viewHistory} change={changeMaterials} />
     {plan.profile.scheduled ? <PlanCalendar plan={plan} editingId={editing?.packageId} busy={busy || !!plan.archivedAt} lockedPackageIds={lockedPackageIds} edit={begin} /> : <>
-      <div className="publishing-plan-list">{plan.items.slice(page * PACKAGE_PAGE_SIZE, (page + 1) * PACKAGE_PAGE_SIZE).map(item => {
+      <div className="publishing-plan-list">{plan.items.slice(currentPage * PACKAGE_PAGE_SIZE, (currentPage + 1) * PACKAGE_PAGE_SIZE).map(item => {
         const pkg = packages.get(item.packageId); const copy = copies.get(item.packageId); const label = item.title ?? copy?.title ?? pkg?.name;
         return <article className="publishing-plan-item" key={item.packageId}><div className="publishing-plan-row"><div className="publishing-file"><h3>{pkg?.name}</h3>{label !== pkg?.name && <span>{label}</span>}</div><div className="publishing-slot">{item.excluded ? "暂不发布" : "完成后"}</div>{!scheduleOnly && <button className="btn-ghost" disabled={busy || !!plan.archivedAt} aria-label={"编辑发布包 " + pkg?.name} aria-expanded={editing?.packageId === item.packageId} onClick={() => begin(item)}>修改</button>}</div></article>;
       })}</div>
-      <Pagination page={page} total={plan.items.length} change={setPage} />
+      <Pagination page={currentPage} total={plan.items.length} change={setPage} />
     </>}
-    <SurfaceDialog open={!!editing} onOpenChange={open => { if (!open) setEditing(undefined); }} title="编辑发布内容" description={editing ? (packages.get(editing.packageId)?.name || "视频") + " · " + timezone : ""} side="right" locked={busy}>
+    <SurfaceDialog open={!!editing} onOpenChange={open => { if (!open) closeEditor(); }} title="编辑发布内容" description={editing ? (packages.get(editing.packageId)?.name || "视频") + " · " + timezone : ""} side="right" locked={busy}>
     {editing && <div className="publishing-shell publishing-sheet-editor" role="group" aria-label={"编辑 " + packages.get(editing.packageId)?.name}>
-      {!scheduleOnly && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
+      {!scheduleOnly && <label className="publishing-check"><input name="publishing-excluded" autoComplete="off" type="checkbox" disabled={busy} checked={editing.excluded} onChange={e => setEditing({ ...editing, excluded: e.target.checked })} />暂不发布</label>}
       {!editing.excluded && <>
-        {plan.profile.scheduled && <label>发布时间 · {timezone}<input type="datetime-local" disabled={busy} required value={date} onChange={e => setDate(e.target.value)} /></label>}
-        {!scheduleOnly && <><label>标题<input disabled={busy} value={title} aria-invalid={!title.trim() || titleCharacters(title) > 100} aria-describedby="plan-title-count" onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><FieldCounter id="plan-title-count" count={titleCharacters(title)} limit={100} />
-        <label>说明<textarea rows={3} disabled={busy} value={description} aria-invalid={descriptionBytes(description) > 5000} aria-describedby="plan-description-count" onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><FieldCounter id="plan-description-count" count={descriptionBytes(description)} limit={5000} unit="字节" />
+        {plan.profile.scheduled && <label>发布时间 · {timezone}<input name="publishing-publish-at" autoComplete="off" type="datetime-local" disabled={busy} required value={date} onChange={e => setDate(e.target.value)} /></label>}
+        {!scheduleOnly && <><label>标题<input name="publishing-title" autoComplete="off" disabled={busy} value={title} aria-invalid={!title.trim() || titleCharacters(title) > 100} aria-describedby="plan-title-count" onChange={e => setEditing({ ...editing, title: e.target.value })} /></label><FieldCounter id="plan-title-count" count={titleCharacters(title)} limit={100} />
+        <label>说明<textarea name="publishing-description" autoComplete="off" rows={3} disabled={busy} value={description} aria-invalid={descriptionBytes(description) > 5000} aria-describedby="plan-description-count" onChange={e => setEditing({ ...editing, description: e.target.value })} /></label><FieldCounter id="plan-description-count" count={descriptionBytes(description)} limit={5000} unit="字节" />
         {!valid && !copyValidation.success && <p className="publishing-validation" role="alert">{copyValidation.error.issues[0]?.message}</p>}</>}
       </>}
       {error && <p className="publishing-validation" role="alert">{error}</p>}
       <InlineMediaPreview selection={packages.get(editing.packageId) ? packagePreviewSelection(plan.profile, packages.get(editing.packageId)!, plan.profile) : undefined} key={plan.profile.channelId + editing.packageId + packages.get(editing.packageId)?.version} title={title || packages.get(editing.packageId)?.name || ""} channel={channel || plan.profile.channelId} videoName={packages.get(editing.packageId)?.sourceVideo?.filename} musicName={packages.get(editing.packageId)?.sourceMusic?.filename} coverName={plan.profile.thumbnailMode === "fixed" ? plan.profile.thumbnailFilename : plan.profile.thumbnailMode === "matching" ? packages.get(editing.packageId)?.cover?.filename : undefined} />
-      <div className="publishing-actions"><button className="btn-primary" disabled={busy || !editing.excluded && !valid} onClick={() => void save()}>{busy ? "保存中…" : "保存修改"}</button><button disabled={busy} onClick={() => setEditing(undefined)}>返回</button>{editing.scheduleSource === "manual" && <button className="btn-ghost" disabled={busy} onClick={() => void restoreAutomatic()}>恢复自动排期</button>}</div>
+      <div className="publishing-actions"><button className="btn-primary" disabled={busy || !editing.excluded && !valid} onClick={() => void save()}>{busy ? "保存中…" : "保存修改"}</button><button disabled={busy} onClick={closeEditor}>返回</button>{editing.scheduleSource === "manual" && <button className="btn-ghost" disabled={busy} onClick={() => void restoreAutomatic()}>恢复自动排期</button>}</div>
     </div>}</SurfaceDialog>
     <details className="publishing-details publishing-plan-details"><summary>计划详情</summary><dl className="publishing-summary">
       {plan.profile.scheduled && <><div><dt>每周</dt><dd>{plan.rule.weeklySlots.length} 条</dd></div><div><dt>首条 / 末条</dt><dd>{planTime(ordered[0], timezone)} / {planTime(ordered.at(-1), timezone)}</dd></div><div><dt>已避开占用时间</dt><dd>{plan.skippedOccupied} 个</dd></div></>}
@@ -87,10 +96,10 @@ export default function PlanConfirm({ plan, channel, busy, disabled, blocked, sc
     </dl>{plan.skipped.length > 0 && <p>夏令时已跳过：{plan.skipped.join("、")}</p>}{plan.profile.ai.enabled && <p>未填写的文案由 AI 生成，失败使用已确认兜底。</p>}</details>
     {blocked && <p className="publishing-warning" role="status">{blocked}</p>}
     {!scheduleOnly && !uploadBlockers.length && <div className="publishing-consent"><p>{UPLOAD_NOTICE}</p><div className="publishing-legal-links"><a href="https://www.youtube.com/t/terms" target="_blank" rel="noreferrer">YouTube Terms</a><a href="https://www.youtube.com/howyoutubeworks/policies/community-guidelines/" target="_blank" rel="noreferrer">Community Guidelines</a></div>
-      <label className="publishing-check"><input type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />确认频道、内容和时间；同意临时私密标题，完成后恢复文案。</label>
-      {plan.profile.ai.enabled && <label className="publishing-check"><input type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} />同意 AI 生成文案及失败兜底。</label>}
-      {replacements.length > 0 && <label className="publishing-check"><input type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)} />使用新内容创建新视频（原视频保留）。</label>}
-      {uploadRepeats.length > 0 && <label className="publishing-check"><input type="checkbox" disabled={busy} checked={repeatAccepted} onChange={e => setRepublishConsent(e.target.checked ? republishKey : "")} />再次发布这 {uploadRepeats.length} 条视频，原视频保留。</label>}
+      <label className="publishing-check"><input name="publishing-upload-consent" autoComplete="off" type="checkbox" checked={accepted} onChange={e => setAccepted(e.target.checked)} />确认频道、内容和时间；同意临时私密标题，完成后恢复文案。</label>
+      {plan.profile.ai.enabled && <label className="publishing-check"><input name="publishing-ai-consent" autoComplete="off" type="checkbox" checked={ai} onChange={e => setAi(e.target.checked)} />同意 AI 生成文案及失败兜底。</label>}
+      {replacements.length > 0 && <label className="publishing-check"><input name="publishing-replacement-consent" autoComplete="off" type="checkbox" checked={replace} onChange={e => setReplace(e.target.checked)} />使用新内容创建新视频（原视频保留）。</label>}
+      {uploadRepeats.length > 0 && <label className="publishing-check"><input name="publishing-republish-consent" autoComplete="off" type="checkbox" disabled={busy} checked={repeatAccepted} onChange={e => setRepublishConsent(e.target.checked ? republishKey : "")} />再次发布这 {uploadRepeats.length} 条视频，原视频保留。</label>}
     </div>}
     {submissionError?.revision === plan.revision && <p className="publishing-validation" role="alert">{submissionError.message}</p>}
     <div className="publishing-actions">{scheduleOnly ? <>

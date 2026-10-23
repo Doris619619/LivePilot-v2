@@ -99,6 +99,7 @@
 .profile-editor-heading { margin: 0 0 24px; font-size: 16px; font-weight: 600; }
 .profile-editor > input { width: 100%; min-width: 0; }
 .profile-editor-actions { display: flex; flex-wrap: wrap; gap: 10px; position: sticky; bottom: -28px; background: var(--surface-base); border-top: 1px solid var(--border-subtle); padding: 16px 0; margin-top: 24px; }
+.profile-library-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding-top: 16px; font-size: 13px; font-variant-numeric: tabular-nums; }
 @media (max-width: 600px) {
   .profile-library-toolbar { align-items: stretch; flex-direction: column; gap: 12px; margin-bottom: 8px; }
   .profile-library-row { align-items: flex-start; flex-direction: column; gap: 12px; }

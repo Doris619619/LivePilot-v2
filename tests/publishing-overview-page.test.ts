@@ -1,22 +1,20 @@
 /** 总览分页回归：后台数据减少或频道移除后，保留的页码必须回到实际有内容的一页。 */
-import { createElement, useState } from "react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 import MyPublishing from "@/app/publishing/my-publishing";
 import type { VideoJob } from "@/shared/publishing";
 import { fixtureJob } from "./publishing-fixtures";
 
-vi.mock("react", async importOriginal => {
-  const actual = await importOriginal<typeof import("react")>();
-  return { ...actual, useState: vi.fn(actual.useState) };
+const pagination = vi.hoisted(() => ({ page: 0 }));
+vi.mock("@/app/use-url-state", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/app/use-url-state")>();
+  return { ...actual, useUrlState: (...args: Parameters<typeof actual.useUrlState>) => args[0] === "publishing-page" ? [pagination.page, () => {}] : actual.useUrlState(...args) };
 });
 
-/** 仅重建用户已停留的页面状态，渲染及分页范围仍由真实总览组件计算。 */
+/** 以稳定的 URL 字段重建用户页码，渲染和数据减少后的钳制仍由真实组件计算。 */
 async function overview(values: VideoJob[], page: number) {
-  const actual = await vi.importActual<typeof import("react")>("react");
-  const state = vi.mocked(useState); state.mockImplementation(actual.useState);
-  for (let index = 0; index < 3; index++) state.mockImplementationOnce(actual.useState);
-  state.mockImplementationOnce(() => actual.useState<unknown>(page));
+  pagination.page = page;
   return renderToStaticMarkup(createElement(MyPublishing, { plans: [], jobs: values, busy: false, operate: async () => true, archive: async () => {} }));
 }
 

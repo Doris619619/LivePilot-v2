@@ -47,7 +47,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
     <legend className="visually-hidden">互动偏好</legend>
     <section className={styles.panel} aria-labelledby={`chat-persona-heading-${id}`}>
       <h4 className={styles.panelHeading} id={`chat-persona-heading-${id}`}><BroadcastChatIcon name="persona" /><label htmlFor={`chat-persona-${id}`}>互动人设</label></h4>
-      <div className={`${styles.panelBody} ${styles.field}`}><select id={`chat-persona-${id}`} name="preset" value={value.preset} onChange={handleFieldChange}>
+      <div className={`${styles.panelBody} ${styles.field}`}><select id={`chat-persona-${id}`} name="preset" autoComplete="off" value={value.preset} onChange={handleFieldChange}>
         {Object.entries(chatPersonas).map(([key, item]) => <option key={key} value={key}>{item.name}</option>)}
       </select></div>
     </section>
@@ -58,7 +58,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
       <div className={styles.paired}>
         <div className={styles.field}>
           <label htmlFor={`chat-mode-${id}`}>接话方式</label>
-          <select id={`chat-mode-${id}`} name="replyMode" value={value.replyMode || "responsive"} onChange={handleFieldChange}>
+          <select id={`chat-mode-${id}`} name="replyMode" autoComplete="off" value={value.replyMode || "responsive"} onChange={handleFieldChange}>
             <option value="responsive">尽量回应</option>
             <option value="natural">自然参与</option>
             <option value="addressed">被叫才回</option>
@@ -66,7 +66,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
         </div>
         <div className={styles.field}>
           <label htmlFor={`chat-interval-${id}`}>发送间隔</label>
-          <select id={`chat-interval-${id}`} name="intervalSeconds" value={value.intervalSeconds} onChange={handleFieldChange}>
+          <select id={`chat-interval-${id}`} name="intervalSeconds" autoComplete="off" value={value.intervalSeconds} onChange={handleFieldChange}>
             {Array.from({ length: 56 }, (_, index) => index + 5).map(seconds => <option key={seconds} value={seconds}>{seconds} 秒</option>)}
           </select>
         </div>
@@ -83,16 +83,16 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
       <div className={styles.panelBody}>
           <div className={styles.field}>
             <label htmlFor={`chat-nickname-${id}`}>助手昵称</label>
-            <input id={`chat-nickname-${id}`} name="nickname" maxLength={40} value={value.nickname || ""} placeholder="助手" onChange={handleFieldChange} />
+            <input id={`chat-nickname-${id}`} name="nickname" autoComplete="off" maxLength={40} value={value.nickname || ""} placeholder="助手" onChange={handleFieldChange} />
           </div>
           <div className={styles.field}>
             <label htmlFor={`chat-facts-${id}`}>频道背景</label>
-            <textarea id={`chat-facts-${id}`} name="channelFacts" rows={3} maxLength={1500} value={value.channelFacts || ""} onChange={handleFieldChange} placeholder="填写已确认的频道事实" />
+            <textarea id={`chat-facts-${id}`} name="channelFacts" autoComplete="off" rows={3} maxLength={1500} value={value.channelFacts || ""} onChange={handleFieldChange} placeholder="填写已确认的频道事实" />
             <button className={styles.factButton} type="button" onClick={fillMusicFacts}>填入「AI 音乐，未命名」</button>
           </div>
           <div className={styles.field}>
             <label htmlFor={`chat-prompt-${id}`}>人设描述</label>
-            <textarea id={`chat-prompt-${id}`} name="customPrompt" rows={3} maxLength={2000} value={value.customPrompt} onChange={handleFieldChange} aria-describedby={`chat-count-${id}`} />
+            <textarea id={`chat-prompt-${id}`} name="customPrompt" autoComplete="off" rows={3} maxLength={2000} value={value.customPrompt} onChange={handleFieldChange} aria-describedby={`chat-count-${id}`} />
             <FieldCounter id={`chat-count-${id}`} count={value.customPrompt.length} limit={2000} />
           </div>
       </div>
@@ -102,7 +102,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
       <div className={styles.panelBody}>
           <div className={styles.field}>
             <label htmlFor={`chat-length-${id}`}>回复长短</label>
-            <select id={`chat-length-${id}`} name="verbosity" value={value.verbosity || "brief"} onChange={handleFieldChange}>
+            <select id={`chat-length-${id}`} name="verbosity" autoComplete="off" value={value.verbosity || "brief"} onChange={handleFieldChange}>
               <option value="brief">简短</option>
               <option value="balanced">适中</option>
             </select>
@@ -110,7 +110,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
           <div className={styles.paired}>
             <div className={styles.field}>
               <label htmlFor={`chat-humor-${id}`}>幽默程度</label>
-              <select id={`chat-humor-${id}`} name="humor" value={value.humor || ""} onChange={handleFieldChange}>
+              <select id={`chat-humor-${id}`} name="humor" autoComplete="off" value={value.humor || ""} onChange={handleFieldChange}>
                 <option value="">跟随人设</option>
                 <option value="none">不用玩笑</option>
                 <option value="light">偶尔接梗</option>
@@ -119,7 +119,7 @@ export default function BroadcastChatPreferences({ id, value, disabled, onChange
             </div>
             <div className={styles.field}>
               <label htmlFor={`chat-emoji-${id}`}>表情</label>
-              <select id={`chat-emoji-${id}`} name="emoji" value={value.emoji || ""} onChange={handleFieldChange}>
+              <select id={`chat-emoji-${id}`} name="emoji" autoComplete="off" value={value.emoji || ""} onChange={handleFieldChange}>
                 <option value="">跟随人设</option>
                 <option value="none">不用表情</option>
                 <option value="occasional">偶尔使用</option>

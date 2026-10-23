@@ -202,7 +202,7 @@ try {
   const folderExample = await folderGuide.locator("pre").innerText(); assert.match(folderExample, /001\/\n\s+video\.mp4/); assert.equal(folderExample.includes("files"), false); await folderGuide.getByText("素材怎么放", { exact: true }).click();
   await expectStep(page, "准备素材"); assert.equal(await stepButton(page, "配置与排期").isDisabled(), true); assert.equal(await stepButton(page, "确认计划").isDisabled(), true);
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne); assert.equal(await page.getByLabel("发布账号", { exact: true }).locator("option").count(), 3);
-  assert.equal(await page.locator('nav[aria-label="发布功能"] button').count(), 2); assert.equal(await page.getByRole("button", { name: "发布策略", exact: true }).count(), 0);
+  assert.equal(await page.locator('nav[aria-label="发布功能"] a').count(), 2); assert.equal(await page.getByRole("link", { name: "发布策略", exact: true }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "检测素材", exact: true }).isDisabled(), true);
   await page.getByRole("button", { name: "同意并继续" }).click(); await page.getByText("D:\\LIVENEST\\Publishing\\Inbox", { exact: true }).waitFor(); assert.equal(await page.getByText("没有批次", { exact: true }).count(), 0); await page.locator(".publishing-inbox").screenshot({ path: path.join(output, "inbox-path.png") }); await page.getByRole("button", { name: "检测素材", exact: true }).click();
   await page.getByText("缺少 video", { exact: true }).waitFor(); assert.equal(await page.locator(".publishing-package-row").count(), 25);
@@ -230,8 +230,8 @@ try {
   // 侧栏直接进入配置/账号，返回发布流程保留原步骤与所选设备，不重复走设置子菜单。
   await page.getByRole("button", { name: "视频发布配置包", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
-  await page.getByRole("button", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
+  await page.getByRole("link", { name: "发布账号", exact: true }).click(); await page.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
+  await page.getByRole("link", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
   await page.getByRole("button", { name: "管理配置包", exact: true }).click(); await page.getByRole("button", { name: "新建视频发布配置包", exact: true }).click();
   assert.equal(await page.getByLabel("标题模板").count(), 0); assert.equal(await page.getByLabel("说明模板").count(), 0); assert.equal(await page.getByText("每周排期", { exact: true }).count(), 0);
@@ -390,7 +390,7 @@ try {
   const secondJob = structuredClone(view.jobs.find(job => job.spec.batchId === archivePlanId)); secondJob.spec.id = crypto.randomUUID(); secondJob.spec.batchId = secondPlan.id; secondJob.spec.profile = secondProfile;
   secondJob.observed = { ...secondJob.observed, id: secondJob.spec.id, revision: secondJob.spec.revision, state: "scheduled", videoId: "synthetic-second-video", observedPrivacy: "private", remoteCheckedAt: Date.now(), effectivePublishAt: new Date(Date.now() - 60000).toISOString() };
   view.profiles.push(secondProfile); view.plans.push(secondPlan); view.jobs.push(secondJob);
-  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.getByRole("button", { name: "我的发布", exact: true }).click();
+  await page.getByRole("button", { name: "刷新发布状态", exact: true }).click(); await page.getByRole("link", { name: "我的发布", exact: true }).click();
   assert.equal(await page.getByRole("button", { name: "总览", exact: true }).getAttribute("aria-pressed"), "true");
   const secondBatch = page.locator('[aria-label="批次 2030-10-Channel-02"]'); await secondBatch.waitFor(); await secondBatch.getByText("已公开 0", { exact: true }).waitFor(); await secondBatch.getByText("待发布 1", { exact: true }).waitFor(); await secondBatch.getByText(/^待核对 /).waitFor();
   const firstChannelVisual = await channelVisual(page, "channel_one"); const secondChannelVisual = await channelVisual(page, "channel_two");
@@ -422,7 +422,7 @@ try {
   await page.getByLabel("发布结果", { exact: true }).selectOption("published"); await page.getByLabel("搜索发布历史", { exact: true }).fill("2030-10-Batch-02"); await page.getByText("100 条记录", { exact: true }).waitFor(); assert.equal(await page.locator('[id^="history-detail-"]').count(), 0);
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "history-" + width + ".png"); }
   console.log("Publishing smoke: 100 history records, search, filters and one detail passed.");
-  await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByText("授权与数据 · Rainy Night Radio", { exact: true }).click(); await page.getByRole("button", { name: "撤销授权与删除数据", exact: true }).click(); await page.getByRole("button", { name: "确认撤销与删除", exact: true }).click(); await page.getByText(/等待设备清理，期限/).waitFor();
+  await page.getByRole("link", { name: "发布账号", exact: true }).click(); await page.getByText("授权与数据 · Rainy Night Radio", { exact: true }).click(); await page.getByRole("button", { name: "撤销授权与删除数据", exact: true }).click(); await page.getByRole("button", { name: "确认撤销与删除", exact: true }).click(); await page.getByText(/等待设备清理，期限/).waitFor();
   assert.equal(await page.getByText("授权撤销与设备清理已确认", { exact: true }).count(), 0);
   assert.equal(view.jobs.filter(job => job.spec.profile.accountId === accountTwo).length, 1); assert.equal(view.accounts.find(account => account.id === accountTwo).status, "connected"); assert.equal(view.accounts.find(account => account.id === accountThree).status, "connected");
   await page.getByRole("button", { name: "添加账号", exact: true }).click(); await page.waitForURL(url => url.searchParams.get("synthetic-account") === "44444444-4444-4444-8444-444444444444"); await page.getByLabel("发布账号", { exact: true }).waitFor(); await page.getByLabel("设备", { exact: true }).selectOption("pc:main");
@@ -491,7 +491,7 @@ try {
   // 管理员策略的保存快照也必须冻结，慢响应期间不能留下看似已保存的新输入。
   view.administrator = true;
   const policyPage = await browser.newPage(); policyPage.on("pageerror", error => errors.push(error.message)); await policyPage.route("**/api/**", mock);
-  await policyPage.goto(origin + "/publishing"); await policyPage.getByRole("button", { name: "发布策略", exact: true }).click();
+  await policyPage.goto(origin + "/publishing"); await policyPage.getByRole("link", { name: "发布策略", exact: true }).click();
   await policyPage.getByLabel("每日上传次数", { exact: true }).fill("21");
   settingsSave = new Promise(resolve => { releaseSettings = resolve; });
   await policyPage.getByRole("button", { name: "保存策略", exact: true }).click(); await policyPage.getByRole("button", { name: "保存中…", exact: true }).waitFor();

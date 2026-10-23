@@ -46,7 +46,7 @@ await page.route(origin + "/api/**", async route => {
   assert.ok(result, "Unexpected mock endpoint: " + url.pathname); await route.fulfill({ json: result });
 });
 try {
-  await page.goto(origin + "/publishing"); await page.getByRole("button", { name: "我的发布", exact: true }).click();
+  await page.goto(origin + "/publishing"); await page.getByRole("link", { name: "我的发布", exact: true }).click();
   const card = () => page.getByRole("article", { name: "批次 " + active.name, exact: true });
   const deletion = () => card().getByRole("button", { name: "删除批次：" + active.name, exact: true });
   await deletion().waitFor(); assert.equal(await deletion().isVisible(), true);

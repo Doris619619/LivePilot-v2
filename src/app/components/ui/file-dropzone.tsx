@@ -11,7 +11,7 @@ export default function FileDropzone({ id, label, hint, name, accept, maxSize, d
     onDropRejected: () => setError("文件未选择，请选择一个符合格式与大小要求的文件。"),
   });
   return <div {...getRootProps({ className: "ui-dropzone", "data-dragging": isDragActive, "data-disabled": !!disabled })}>
-    <input {...getInputProps({ id, "aria-hidden": true, tabIndex: -1 })} />
+    <input {...getInputProps({ id, name: id, "aria-hidden": true, tabIndex: -1 })} />
     <div className="ui-dropzone-icon">{name ? <CheckCircleIcon /> : <UploadIcon />}</div>
     <strong>{isDragActive ? "松开以选择文件" : name || "拖拽文件到这里"}</strong>
     <span id={id + "-hint"}>{hint}</span><button type="button" aria-describedby={id + "-hint"} disabled={disabled} onClick={open}>{label}</button>

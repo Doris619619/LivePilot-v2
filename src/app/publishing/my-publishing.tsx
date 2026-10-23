@@ -12,6 +12,9 @@ import { publishingOverview, type OverviewTarget, type PublishingOverviewBatch }
 import type { PublishingDevice } from "./publishing-removal-feedback";
 import styles from "./my-publishing.module.css";
 import { Progress } from "../components/ui/primitives";
+import { useUrlState } from "../use-url-state";
+import { confirmActiveDrafts, confirmDiscardChanges } from "../use-unsaved-changes";
+import { publishingPage } from "./form-inputs";
 
 type Props = { initialView?: "总览" | "历史"; plans: PublishingPlan[]; jobs: VideoJob[]; allJobs?: VideoJob[]; targets?: OverviewTarget[]; removals?: PublishingBatchRemoval[]; devices?: PublishingDevice[]; busy: boolean; operate: JobOperation; archive(id: string): Promise<void>; removeBatch?: BatchRemovalOperation; create?: () => void };
 
@@ -41,7 +44,10 @@ function OverviewBatch({ batch, now, open, busy, removeBatch }: { batch: Publish
 
 /** 默认跨所有权限内设备按频道汇总；筛选不修改任务归属，返回保留频道与分页位置。 */
 export default function MyPublishing({ initialView = "总览", plans, jobs, allJobs, targets = [], removals = [], devices, busy, operate, archive, removeBatch, create }: Props) {
-  const [tab, setTab] = useState<string>(initialView); const [selected, setSelected] = useState(""); const [channel, setChannel] = useState(""); const [page, setPage] = useState(0);
+  const [tab, setTab] = useUrlState<string>("publishing-list-view", initialView, value => ["总览", "日历", "历史"].includes(value) ? value : "总览"); const [selected, setSelected] = useUrlState("publishing-batch", ""); const [channel, setChannel] = useUrlState("publishing-channel", ""); const [page, setPage] = useUrlState("publishing-page", 0, publishingPage, String);
+  const [executionDirty, setExecutionDirty] = useState(false);
+  /** 切换频道会卸载批次详情，先保护未提交的改期或修复表单。 */
+  function chooseChannel(value: string) { if (!confirmActiveDrafts()) return; setChannel(value); setSelected(""); setPage(0); }
   const [now, setNow] = useState(() => Date.now());
   /** 只更新“等待公开确认”的时间提示，不根据浏览器时钟推进任务状态。 */
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(timer); }, []);
@@ -58,15 +64,15 @@ export default function MyPublishing({ initialView = "总览", plans, jobs, allJ
   return <section aria-label="我的发布总览">
     {orphaned.map(value => <p className="publishing-warning" role="status" key={value.batchId}>{value.name || "批次"}：删除未确认，任务记录不可用。请到 YouTube Studio 检查未公开排期。</p>)}
     <div className={styles.toolbar}><nav className="publishing-subnav" aria-label="我的发布视图">{["总览", "日历", "历史"].map(name => <button key={name} className={tab === name ? "is-active" : "btn-ghost"} aria-pressed={tab === name} onClick={() => { setTab(name); setPage(0); }}>{name}</button>)}</nav>
-      {channelOptions.length > 1 && <label className={styles.channelFilter}><span className="sr-only">发布频道</span><select aria-label="发布频道" value={choice} onChange={event => { setChannel(event.target.value); setSelected(""); setPage(0); }}><option value="">全部频道</option>{channelOptions.map(value => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>}
+      {channelOptions.length > 1 && <label className={styles.channelFilter}><span className="sr-only">发布频道</span><select name="publishing-channel" autoComplete="off" aria-label="发布频道" value={choice} onChange={event => chooseChannel(event.target.value)}><option value="">全部频道</option>{channelOptions.map(value => <option key={value.id} value={value.id}>{value.name}</option>)}</select></label>}
     </div>
-    {tab === "日历" ? <PublishingCalendar jobs={scopedJobs} /> : tab === "历史" ? <PublishingHistory key={choice} plans={plans} jobs={scopedJobs} targets={targets} removals={removals} busy={busy} operate={operate} />
-      : batch ? <><button className="btn-ghost" onClick={() => setSelected("")}>返回总览</button><BatchExecution key={batch.key} plan={batch.plan} jobs={batch.jobs} allJobs={allJobs} busy={busy} operate={operate} archive={batch.plan ? archive : undefined} removal={batch.removal} devices={devices} removeBatch={removeBatch} /></>
+    <div hidden={tab !== "日历"}><PublishingCalendar jobs={scopedJobs} /></div><div hidden={tab !== "历史"}><PublishingHistory key={choice} plans={plans} jobs={scopedJobs} targets={targets} removals={removals} busy={busy} operate={operate} /></div>
+    <div hidden={tab !== "总览"}>{batch ? <><button className="btn-ghost" onClick={() => { if (confirmDiscardChanges(executionDirty)) setSelected(""); }}>返回总览</button><BatchExecution onDirtyChange={setExecutionDirty} key={batch.key} plan={batch.plan} jobs={batch.jobs} allJobs={allJobs} busy={busy} operate={operate} archive={batch.plan ? archive : undefined} removal={batch.removal} devices={devices} removeBatch={removeBatch} /></>
         : <>{visible.map(value => { const pageBatches = value.batches.filter(item => pageKeys.has(item.key)); if (!pageBatches.length) return null; const accent = channelAccent(value.id); return <section className={styles.channel + " " + styles[accent]} key={value.id} data-channel-id={value.id} data-channel-accent={accent} aria-label={"频道 " + value.name}>
           <header className={styles.channelHeading}><div className={styles.channelIdentity}><span className={styles.channelAvatar} aria-hidden="true">{Array.from(value.name.trim())[0]?.toLocaleUpperCase() || "Y"}</span><div className={styles.channelTitle}><h2>{value.name}</h2>{value.device && <p>{value.device}</p>}</div></div><span className={styles.packageCount}>{value.batches.length} 个发布包</span></header>
           {pageBatches.map(item => <OverviewBatch key={item.key} batch={item} now={now} busy={busy} removeBatch={removeBatch} open={() => setSelected(item.key)} />)}
         </section>; })}<Pagination page={currentPage} total={batches.length} change={setPage} />
           {!batches.length && <div className="publishing-empty"><h2>还没有配置好的发布包</h2><p>准备素材、设置时间后，在这里跟进发布进度。</p>{create && <button className="btn-primary" onClick={create}>发布第一批视频</button>}</div>}
-        </>}
+        </>}</div>
   </section>;
 }

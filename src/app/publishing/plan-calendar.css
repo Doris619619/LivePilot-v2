@@ -36,6 +36,7 @@
 .publishing-shell .publishing-plan-event.is-compact:hover:not(:disabled), .publishing-shell .publishing-plan-event.is-compact.is-editing { background: var(--nav-active); }
 .publishing-plan-more { align-self: start; min-height: 44px; padding: 4px 8px; font-size: 14px; }
 .publishing-plan-mobile-agenda { display: none; }
+.publishing-plan-expanded-day { margin-top: 20px; }
 .publishing-plan-agenda > section { margin: 24px 0; }
 .publishing-plan-agenda > section:first-child { margin-top: 0; }
 .publishing-plan-agenda h3 { border-bottom: 1px solid var(--border-subtle); padding: 12px 0; color: var(--text-secondary); }
@@ -58,6 +59,7 @@
   .publishing-plan-month-controls > .btn-ghost { padding-inline: 8px; }
   .publishing-plan-view-controls { justify-content: space-between; gap: 12px; }
   .publishing-plan-month { display: none; }
+  .publishing-plan-expanded-day { display: none; }
   .publishing-plan-mobile-agenda { display: block; }
   .publishing-plan-agenda > section { margin: 16px 0; }
   .publishing-shell .publishing-plan-event { padding: 14px 0; gap: 12px; }

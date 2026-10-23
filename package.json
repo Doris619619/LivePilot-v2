@@ -15,6 +15,7 @@
     "test": "npm run test:unit && npm run test:storage-locks",
     "test:unit": "vitest run --exclude=tests/storage-locks.test.ts",
     "test:storage-locks": "vitest run tests/storage-locks.test.ts",
+    "test:ui-guidelines": "node tests/web-guidelines-ui.smoke.mjs && node tests/web-guidelines-components.smoke.mjs && node tests/web-guidelines-publishing.smoke.mjs && node tests/web-guidelines-next.smoke.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run test:deployment && npm run build && npm run agent:build",
     "recover:lock": "node scripts/recover-lock.mjs",
     "setup:local": "node scripts/setup-local.mjs",
