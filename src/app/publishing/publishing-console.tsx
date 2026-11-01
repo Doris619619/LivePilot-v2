@@ -250,6 +250,6 @@ export default function PublishingConsole({ accountsLayout = "compact", initialS
       </>}
       {tab === "发布策略" && view.administrator && <PolicyEditor initial={view.policy} quota={view.quota} busy={busy} save={async policy => { await perform(async () => { await post({ action: "policy", policy }); await refresh(); setNotice("策略已保存"); }); }} />}
     </>}
-    <AccountConnectDialog open={addingAccount} deviceName={host?.name || ""} busy={busy} blocked={!host || hostOffline || !accepted} retry={!!addingAccountId} error={addingAccountError || (hostOffline ? accountOfflineMessage : undefined)} onClose={() => setAddingAccount(false)} connect={() => void connectAddedAccount()} />
+    <AccountConnectDialog open={addingAccount} busy={busy} blocked={!host || hostOffline || !accepted} retry={!!addingAccountId} error={addingAccountError || (hostOffline ? accountOfflineMessage : undefined)} onClose={() => setAddingAccount(false)} connect={() => void connectAddedAccount()} />
   </main></div>;
 }
