@@ -13,7 +13,7 @@ const origin = `http://127.0.0.1:${port}`;
 const publishing = createPublishingPreview();
 const avatarSamples = new Map(publishing.view.accounts.filter(account => account.channelId).map((account, index) => [account.id, { letter: ['O', 'N', 'R', 'S'][index], color: ['#285ed5', '#32405a', '#397b6a', '#667386'][index] }]));
 const instances = [{ id: 'main', name: 'OBS 1', agentId: 'preview_liang', agentName: '演示电脑' }];
-const blockedMessage = '本地界面预览：不会连接真实频道、撤销授权或提交发布。';
+const blockedMessage = '演示预览，未执行此操作。';
 const entry = `
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';

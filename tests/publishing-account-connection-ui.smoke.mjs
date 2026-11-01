@@ -112,14 +112,65 @@ try {
     assert.equal(bounds.position, "fixed");
     assert.ok(bounds.left >= -1 && bounds.top >= -1 && bounds.right <= bounds.viewportWidth + 1 && bounds.bottom <= bounds.viewportHeight + 1, "Dialog must remain inside the current viewport: " + JSON.stringify(bounds));
   }
+  /** 按实际边界测量删除弹窗的间距，覆盖共享样式叠加和窄屏覆盖造成的布局回归。 */
+  async function assertDeleteGeometry(dialog, authorized) {
+    const geometry = await dialog.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const heading = element.querySelector(".ui-dialog-heading").getBoundingClientRect();
+      const description = element.querySelector(".ui-dialog-description").getBoundingClientRect();
+      const content = element.querySelector(".account-dialog-content").getBoundingClientRect();
+      const actions = element.querySelector(".account-dialog-actions").getBoundingClientRect();
+      const notes = element.querySelector(".account-dialog-notes");
+      const paragraphs = notes ? [...notes.querySelectorAll("p")].map(paragraph => paragraph.getBoundingClientRect()) : [];
+      return { width: box.width, expectedWidth: Math.min(440, innerWidth - 32), padding: [heading.top - box.top - parseFloat(style.borderTopWidth), heading.left - box.left - parseFloat(style.borderLeftWidth), box.right - content.right - parseFloat(style.borderRightWidth), box.bottom - actions.bottom - parseFloat(style.borderBottomWidth)], headingGap: description.top - heading.bottom, footerGap: actions.top - (notes ? notes.getBoundingClientRect().bottom : description.bottom), notesGap: notes ? notes.getBoundingClientRect().top - description.bottom : undefined, paragraphGap: paragraphs.length === 2 ? paragraphs[1].top - paragraphs[0].bottom : undefined };
+    });
+    for (const padding of geometry.padding) assert.ok(Math.abs(padding - 24) <= 1, "Delete dialog padding must measure 24px: " + JSON.stringify(geometry));
+    assert.ok(Math.abs(geometry.width - geometry.expectedWidth) <= 1, "Delete dialog width must adapt to the viewport");
+    assert.ok(Math.abs(geometry.headingGap - 8) <= 1, "Heading-description gap must measure 8px: " + JSON.stringify(geometry));
+    assert.ok(Math.abs(geometry.footerGap - 24) <= 1, "Content-action gap must measure 24px: " + JSON.stringify(geometry));
+    if (authorized) {
+      assert.ok(Math.abs(geometry.notesGap - 16) <= 1, "Authorization notes must start 16px after the description");
+      assert.ok(Math.abs(geometry.paragraphGap - 8) <= 1, "Authorization notes must retain an 8px paragraph gap");
+    }
+  }
+  /** 比较同一账号行选中前后的边框和背景，不绑定主题色值；键盘仍应获得独立的可见焦点。 */
+  async function assertCompactSelection() {
+    const button = manager.getByRole("button", { name: "选择账号 发布账号 2", exact: true });
+    /** 读取行与选择按钮的绘制边界，避免把原有分隔线或键盘焦点误判为新增选中框。 */
+    async function appearance() {
+      return button.evaluate(element => {
+        const row = getComputedStyle(element.closest(".account-manager-row"));
+        const item = getComputedStyle(element);
+        return { background: row.backgroundColor, boundary: [row.borderTop, row.borderRight, row.borderBottom, row.borderLeft, row.boxShadow, item.borderTop, item.borderRight, item.borderBottom, item.borderLeft, item.boxShadow] };
+      });
+    }
+    await selectAccount("原有账号");
+    await page.mouse.move(0, 0);
+    const plain = await appearance();
+    await selectAccount("发布账号 2");
+    await page.mouse.move(0, 0);
+    const selected = await appearance();
+    assert.deepEqual(selected.boundary, plain.boundary, "Selecting a compact row must not add a colored frame");
+    assert.notEqual(selected.background, plain.background, "Selection must remain distinguishable through its background");
+    await manager.getByRole("button", { name: "选择账号 原有账号", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    assert.equal(await button.evaluate(element => {
+      const style = getComputedStyle(element);
+      return element === document.activeElement && element.matches(":focus-visible") && ((style.outlineStyle !== "none" && parseFloat(style.outlineWidth) > 0) || style.boxShadow !== "none");
+    }), true, "Keyboard selection must retain a visible focus indicator");
+  }
   /** 删除入口打开可访问模态，隔离背景、锁定焦点并展示目标账号与远端保留边界，不提交清理请求。 */
   async function openDeleteConfirmation(label, authorized) {
     const trigger = manager.getByRole("button", { name: "删除账号 " + label, exact: true });
     await trigger.click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByRole("heading", { name: "删除发布账号？", exact: true }).waitFor();
+    const title = "删除「" + label + "」？";
+    await dialog.getByRole("heading", { name: title, exact: true }).waitFor();
     await assertDialogBounds(dialog);
-    assert.equal(await page.getByRole("dialog", { name: "删除发布账号？", exact: true }).count(), 1);
+    await assertDeleteGeometry(dialog, authorized);
+    assert.equal(await page.getByRole("dialog", { name: title, exact: true }).count(), 1);
     assert.equal(await manager.evaluate(element => !!element.closest('[aria-hidden="true"], [inert]')), true, "Modal must hide the background from assistive navigation");
     assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true);
     for (const key of ["Shift+Tab", "Tab", "Tab", "Tab", "Tab"]) {
@@ -127,10 +178,20 @@ try {
       assert.equal(await dialog.evaluate(element => element.contains(document.activeElement)), true, "Keyboard focus must stay inside the deletion dialog");
     }
     assert.ok((await dialog.innerText()).includes(label), "Deletion confirmation must identify the requested account");
-    await dialog.getByRole("button", { name: authorized ? "确认撤销并删除" : "确认删除账号", exact: true }).waitFor();
-    await dialog.getByText(/已提交的定时视频仍可能公开/).waitFor();
-    await dialog.getByText(/本地源文件和 YouTube 视频保留/).waitFor();
-    if (authorized) await dialog.getByText(/同一 Google 用户的直播和其他频道也可能需要重新连接/).waitFor();
+    const confirm = dialog.getByRole("button", { name: "删除账号", exact: true });
+    await confirm.waitFor();
+    const fill = await confirm.evaluate(element => getComputedStyle(element).backgroundColor);
+    const cancelFill = await dialog.getByRole("button", { name: "取消", exact: true }).evaluate(element => getComputedStyle(element).backgroundColor);
+    assert.notEqual(fill, "rgba(0, 0, 0, 0)", "Delete must remain a filled primary action");
+    assert.notEqual(fill, cancelFill, "Delete and cancel must retain distinct visual priority");
+    if (authorized) {
+      await dialog.getByText("删除发布记录，并撤销 Google 授权。", { exact: true }).waitFor();
+      await dialog.getByText("同一 Google 账号下的直播和其他频道可能需要重新授权。", { exact: true }).waitFor();
+      await dialog.getByText("已排期视频仍可能公开；YouTube 视频和本地文件保留。", { exact: true }).waitFor();
+    } else {
+      await dialog.getByText("删除后无法恢复。", { exact: true }).waitFor();
+      assert.equal(await dialog.getByText(/Google|已排期|设备离线/).count(), 0, "Never-authorized accounts must not show unrelated authorization or scheduled-video warnings");
+    }
     assert.equal(await dialog.getByRole("link").count(), 0);
     return { dialog, trigger };
   }
@@ -192,6 +253,7 @@ try {
     await page.evaluate(value => window.setLayout(value), layout);
     await page.locator(".account-manager--" + layout).waitFor();
     await assertReducedAccountManager();
+    if (layout === "compact") await assertCompactSelection();
     await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
     assert.equal(await page.getByRole("region", { name: /^发布账号 / }).count(), 1);
     assert.equal(await page.getByRole("combobox", { name: "发布账号", exact: true }).count(), 0);
