@@ -11,17 +11,19 @@ const port = Number(process.env.LIVENEST_PREVIEW_PORT || 3160);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid preview port');
 const origin = `http://127.0.0.1:${port}`;
 const publishing = createPublishingPreview();
+const avatarSamples = new Map(publishing.view.accounts.filter(account => account.channelId).map((account, index) => [account.id, { letter: ['O', 'N', 'R', 'S'][index], color: ['#285ed5', '#32405a', '#397b6a', '#667386'][index] }]));
 const instances = [{ id: 'main', name: 'OBS 1', agentId: 'preview_liang', agentName: '演示电脑' }];
 const blockedMessage = '本地界面预览：不会连接真实频道、撤销授权或提交发布。';
 const entry = `
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './src/app/globals.css';
+import './src/app/components/ui/ui.css';
 import PublishingConsole from './src/app/publishing/publishing-console';
 const layouts = [{ id: 'split', name: '方案一 · 列表与详情' }, { id: 'grid', name: '方案二 · 账号卡片' }, { id: 'compact', name: '方案三 · 紧凑表格' }];
 /** 布局选择只属于预览外壳；切换属性时保留真实工作台中的账号与页面状态。 */
 function Preview() {
-  const [layout, setLayout] = useState(() => { const candidate = new URLSearchParams(location.search).get('layout'); return layouts.some(value => value.id === candidate) ? candidate : 'split'; });
+  const [layout, setLayout] = useState(() => { const candidate = new URLSearchParams(location.search).get('layout'); return layouts.some(value => value.id === candidate) ? candidate : 'compact'; });
   const [notice, setNotice] = useState('');
   useEffect(() => {
     /** 外部管理链接及未提供的页面仅提示，不允许从示例界面打开真实授权或服务。 */
@@ -83,7 +85,12 @@ async function handle(request, response) {
     if (request.method === 'GET') {
       if (url.pathname === '/api/session') return json(response, 200, { user: { username: 'Liang', role: 'customer' } });
       if (url.pathname === '/api/instances') return json(response, 200, { instances, agents: [{ id: 'preview_liang', name: '演示电脑', owner: 'Liang', online: true, maintenance: false, revoked: false, paired: true, instances }] });
-      if (url.pathname === '/api/publishing') return json(response, 200, publishing.view);
+      if (url.pathname === '/api/publishing') return json(response, 200, { ...publishing.view, accounts: publishing.view.accounts.map(account => avatarSamples.has(account.id) ? { ...account, channelAvatarUrl: origin + '/preview-avatar/' + account.id + '.svg' } : account) });
+      if (url.pathname.startsWith('/preview-avatar/')) {
+        const sample = avatarSamples.get(url.pathname.slice('/preview-avatar/'.length).replace(/\.svg$/, ''));
+        if (!sample) return json(response, 404, { error: '示例头像不存在。' });
+        headers(response, 'image/svg+xml'); response.end('<svg xmlns="http://www.w3.org/2000/svg" width="112" height="112" viewBox="0 0 112 112"><rect width="112" height="112" rx="20" fill="' + sample.color + '"/><text x="56" y="74" text-anchor="middle" font-family="Arial,sans-serif" font-size="56" fill="white">' + sample.letter + '</text></svg>'); return;
+      }
       if (['/', '/publishing'].includes(url.pathname)) { headers(response, 'text/html; charset=utf-8'); response.end(html); return; }
       if (url.pathname === '/preview.js') { headers(response, 'text/javascript; charset=utf-8'); response.end(javascript); return; }
       if (url.pathname === '/preview.css') { headers(response, 'text/css; charset=utf-8'); response.end(css + previewStyles); return; }

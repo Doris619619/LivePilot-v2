@@ -60,6 +60,16 @@ it("creates independent public bindings with ownership checks and never exposes 
   const account = await connected("publish_channel"); expect(account).toMatchObject({ agentId: "pc", instanceId: "main", status: "connected", channelId: "publish_channel" }); expect(JSON.stringify(await publishingView(alice))).not.toMatch(/refreshToken|accessToken|cookie|clientSecret/);
   expect(await publishingAccounts(bob)).toEqual([]); await expect(authorizePublishingAccount(bob, account.id)).rejects.toMatchObject({ code: "FORBIDDEN" }); expect(await cloudStore().read("bindings.json")).toEqual([{ ...destination, channelId: "channel_one", confirmed: true }]);
 });
+it("publishes confirmed identity safely, preserves legacy reports, expires avatars, and erases identity after account cleanup", async () => {
+  const account = await connected("identity_channel"); const metadata = { channelAvatarUrl: "https://yt3.googleusercontent.com/synthetic=s240-c-k" };
+  await claimPublishingAccount("pc", account.id, "main", "identity_channel", "Synthetic brand", false, Date.now(), undefined, metadata); expect((await publishingAccounts(alice))[0].channelAvatarUrl).toBeUndefined();
+  await claimPublishingAccount("pc", account.id, "main", "identity_channel", "Synthetic brand", true, Date.now(), undefined, metadata); expect((await publishingAccounts(alice))[0]).toMatchObject(metadata); expect(await publishingAccounts(bob)).toEqual([]);
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", channelCheckedAt: Date.now() }]); expect((await publishingAccounts(alice))[0]).toMatchObject(metadata);
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", identity: {}, channelCheckedAt: Date.now() }]); expect((await publishingAccounts(alice))[0].channelAvatarUrl).toBeUndefined();
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", identity: metadata, channelCheckedAt: Date.now() }]);
+  vi.setSystemTime(Date.now() + 31 * 86400_000); await expirePublishingAccountData(); const expired = (await publishingAccounts(alice))[0]; expect(expired.channelAvatarUrl).toBeUndefined();
+  const cleanup = await requestPublishingAccountCleanup(alice, account.id); await completePublishingCleanup("pc", cleanup.id); const deleted = (await agentPublishingAccounts("pc"))[0]; expect(deleted.status).toBe("deleted"); expect(deleted.channelAvatarUrl).toBeUndefined();
+});
 it("allows a publishing channel to equal its live channel but reserves it globally among publishing accounts", async () => {
   const account = await connected("channel_one"); const other = await createPublishingAccount(alice, "pc", "main", "Other"); await expect(claimPublishingAccount("pc", other.id, "main", "channel_one", "Synthetic", false, Date.now())).rejects.toMatchObject({ code: "CHANNEL_IN_USE" });
   await expect(claimPublishingAccount("pc", account.id, "main", "other_channel", "Other", false, Date.now())).rejects.toMatchObject({ code: "CHANNEL" });

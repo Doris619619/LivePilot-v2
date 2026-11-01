@@ -1,6 +1,7 @@
 /** 发布配置、指令和公开报告的严格协议；任何浏览器 DTO 都不含上传会话或凭据。 */
 import { z } from "zod";
 import { videoCopySchema, videoTagsSchema } from "./video-metadata";
+import { publishingAccountIdentitySchema } from "./publishing-account-identity";
 export const PRIVACY_VERSION = "2026-10-16";
 export const UPLOAD_NOTICE = "点击“确认上传并按计划发布”，即表示您确认上传内容符合 YouTube 服务条款（包括社区准则）。请确保不侵犯他人的版权或隐私权。";
 const identity = z.string().regex(/^[a-z][a-z0-9_]{0,31}$/);
@@ -16,9 +17,9 @@ export const packageBatchSchema = z.object({ id: z.string().regex(/^[a-f0-9]{64}
 export type PackageBatch = z.infer<typeof packageBatchSchema>;
 export const packagesResultSchema = z.object({ root: z.string().max(1000), batches: z.array(packageBatchSchema).max(1000), thumbnails: z.array(safeName).max(10000).optional(), channelId: z.string().optional(), channel: z.string().optional() }).strict();
 /** 独立发布账号只公开设备路由和频道绑定，OAuth 凭据始终保存在 Agent。 */
-export const publishingAccountSchema = z.object({ id: z.string().uuid(), agentId: identity, instanceId: identity, name: z.string().trim().min(1).max(80), owner: z.string().min(1).max(32), status: z.enum(["unbound", "connected", "needs_reauthorization", "cleanup_pending", "deleted"]), channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), channelCheckedAt: z.number().nonnegative().optional(), createdAt: z.number().nonnegative(), updatedAt: z.number().nonnegative(), connectedAt: z.number().nonnegative().optional(), deletedAt: z.number().nonnegative().optional() }).strict();
+export const publishingAccountSchema = z.object({ id: z.string().uuid(), agentId: identity, instanceId: identity, name: z.string().trim().min(1).max(80), owner: z.string().min(1).max(32), status: z.enum(["unbound", "connected", "needs_reauthorization", "cleanup_pending", "deleted"]), channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), ...publishingAccountIdentitySchema.shape, channelCheckedAt: z.number().nonnegative().optional(), createdAt: z.number().nonnegative(), updatedAt: z.number().nonnegative(), connectedAt: z.number().nonnegative().optional(), deletedAt: z.number().nonnegative().optional() }).strict();
 export type PublishingAccount = z.infer<typeof publishingAccountSchema>;
-export const publishingAccountReportSchema = z.object({ id: z.string().uuid(), instanceId: identity, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), channelCheckedAt: z.number().nonnegative().optional(), connectedAt: z.number().nonnegative().optional(), cleanupPending: z.boolean().optional() }).strict();
+export const publishingAccountReportSchema = z.object({ id: z.string().uuid(), instanceId: identity, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/).optional(), channel: z.string().min(1).max(200).optional(), identity: publishingAccountIdentitySchema.optional(), channelCheckedAt: z.number().nonnegative().optional(), connectedAt: z.number().nonnegative().optional(), cleanupPending: z.boolean().optional() }).strict();
 export type PublishingAccountReport = z.infer<typeof publishingAccountReportSchema>;
 /** 排期归属计划，支持同日多个时刻；旧 Profile 排期只用作初始默认值。 */
 export const planRuleSchema = z.object({ timezone: z.string().min(1).max(100).refine(v => { try { new Intl.DateTimeFormat("en", { timeZone: v }); return true; } catch { return false; } }, "时区无效"), startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), weeklySlots: z.array(z.object({ weekday: z.number().int().min(1).max(7), time: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/) }).strict()).min(1).max(100), preuploadDays: z.number().int().min(1).max(365).default(28) }).strict();

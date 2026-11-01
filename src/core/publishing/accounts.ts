@@ -8,10 +8,11 @@ import { YouTubeAuth } from "../youtube/auth";
 import { YouTubeApi } from "../youtube/api";
 import { PublishingStore } from "./storage";
 import { withYouTubeContext } from "../youtube/usage";
+import type { PublishingAccountIdentity } from "@/shared/publishing-account-identity";
 
-type Record = { id: string; instanceId: string; authorizationGeneration?: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; channelAttemptAt?: number; deleted?: boolean; purge?: { createdAt: number; pending: boolean } };
-export type PublishingAccountStatus = { id: string; instanceId: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; cleanupPending?: boolean };
-type Binding = (id: string, instanceId: string, channel: { channelId: string; channel: string; channelCheckedAt?: number; authorizationEpoch?: string; authorizationGeneration?: string }, confirm: boolean) => Promise<void>;
+type Record = PublishingAccountIdentity & { id: string; instanceId: string; authorizationGeneration?: string; channelId?: string; channel?: string; connectedAt?: number; channelCheckedAt?: number; channelAttemptAt?: number; deleted?: boolean; purge?: { createdAt: number; pending: boolean } };
+export type PublishingAccountStatus = { id: string; instanceId: string; channelId?: string; channel?: string; identity?: PublishingAccountIdentity; connectedAt?: number; channelCheckedAt?: number; cleanupPending?: boolean };
+type Binding = (id: string, instanceId: string, channel: { channelId: string; channel: string; identity?: PublishingAccountIdentity; channelCheckedAt?: number; authorizationEpoch?: string; authorizationGeneration?: string }, confirm: boolean) => Promise<void>;
 const accountId = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 
 /** UUID 是服务端创建的账号身份，禁止使用路径字符或让浏览器提供存储路径。 */
@@ -46,11 +47,12 @@ export class PublishingAccounts {
       const record = await this.assertAvailable(id);
       if (record.channelId && record.channelId !== tokens.channelId) throw new AppError("CHANNEL", "请重新授权这个发布账号原来的频道。", 409);
       const channelCheckedAt = Date.now();
+      const identity = { channelAvatarUrl: tokens.channelAvatarUrl };
       const authorization = this.pendingGenerations.has(id) ? { authorizationGeneration: this.pendingGenerations.get(id), authorizationEpoch: this.pendingEpochs.get(id) } : {};
-      await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, channelCheckedAt, ...authorization }, false);
+      await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, identity, channelCheckedAt, ...authorization }, false);
       await store.write("youtube.enc", seal({ ...tokens, authorizationGeneration: this.pendingGenerations.get(id) }));
-      await store.write("account.json", { ...record, authorizationGeneration: this.pendingGenerations.get(id), channelId: tokens.channelId, channel: tokens.channel, connectedAt: Date.now(), channelCheckedAt });
-      await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, channelCheckedAt, ...authorization }, true);
+      await store.write("account.json", { ...record, ...identity, authorizationGeneration: this.pendingGenerations.get(id), channelId: tokens.channelId, channel: tokens.channel, connectedAt: Date.now(), channelCheckedAt });
+      await this.bind(id, record.instanceId, { channelId: tokens.channelId, channel: tokens.channel, identity, channelCheckedAt, ...authorization }, true);
     }, () => ({ instanceId: this.accountInstances.get(id) || "main", accountId: id }));
     this.auths.set(id, auth); return auth;
   }
@@ -64,7 +66,7 @@ export class PublishingAccounts {
   async authorizationGeneration(id: string) { return (await this.record(id)).authorizationGeneration; }
   /** 播放列表请求复用短 API 客户端，但授权只来自该发布账号。 */
   playlists(id: string, instanceId: string) { return this.run(id, async () => { await this.assertAvailable(id, instanceId); return { playlists: await new YouTubeApi(this.auth(id), this.store(id)).playlists() }; }); }
-  /** 频道标题只由真实查询续期；直接更新缓存而不调用 saveBinding，避免同账号队列重入；失败满30天清除标题。 */
+  /** 频道标题和头像只由真实查询续期；直接更新缓存避免同账号队列重入；失败满30天清除观察数据。 */
   private refreshMetadata(id: string) { return this.run(id, async () => {
     const store = this.store(id); let record = await this.record(id); const checkedAt = record.channelCheckedAt ?? record.connectedAt ?? 0; const now = Date.now();
     if (record.deleted || record.purge?.pending || !await this.auth(id).tokens()) return;
@@ -73,24 +75,24 @@ export class PublishingAccounts {
       record.channelAttemptAt = now; await store.write("account.json", record);
       try {
         const channel = await withYouTubeContext({ instanceId: record.instanceId, accountId: id, purpose: "background", trigger: "metadata" }, () => new YouTubeApi(this.auth(id), store).channel());
-        await store.exclusive(async () => { const token = await this.auth(id).tokens(); if (!token || channel.id !== token.channelId || record.channelId && channel.id !== record.channelId) throw new AppError("CHANNEL", "频道查询结果与这个发布账号不一致。", 409); await store.write("youtube.enc", seal({ ...token, channel: channel.title })); record = { ...record, channelId: channel.id, channel: channel.title, channelCheckedAt: Date.now() }; await store.write("account.json", record); }, "tokens.lock");
+        await store.exclusive(async () => { const token = await this.auth(id).tokens(); if (!token || channel.id !== token.channelId || record.channelId && channel.id !== record.channelId) throw new AppError("CHANNEL", "频道查询结果与这个发布账号不一致。", 409); await store.write("youtube.enc", seal({ ...token, channel: channel.title, channelAvatarUrl: channel.channelAvatarUrl })); record = { ...record, channelId: channel.id, channel: channel.title, channelAvatarUrl: channel.channelAvatarUrl, channelCheckedAt: Date.now() }; await store.write("account.json", record); }, "tokens.lock");
         return;
       } catch { /* 保留原频道身份；网络失败不伪造API刷新时间，也不输出上游诊断。 */ }
     }
-    if (checkedAt <= now - 30 * 86400_000) { await store.exclusive(async () => { const token = await this.auth(id).tokens(); if (token?.channel) await store.write("youtube.enc", seal({ ...token, channel: "" })); delete record.channel; await store.write("account.json", record); }, "tokens.lock"); }
+    if (checkedAt <= now - 30 * 86400_000) { await store.exclusive(async () => { const token = await this.auth(id).tokens(); if (token?.channel || token?.channelAvatarUrl) await store.write("youtube.enc", seal({ ...token, channel: "", channelAvatarUrl: undefined })); delete record.channel; delete record.channelAvatarUrl; await store.write("account.json", record); }, "tokens.lock"); }
   }); }
   /** 本机只上报频道公开身份与清理状态，不把 OAuth 事务或凭据传给浏览器。 */
   async statuses(): Promise<PublishingAccountStatus[]> {
     const entries = await readdir(this.root, { withFileTypes: true }).catch(error => { if (error.code === "ENOENT") return []; throw error; }); const values: PublishingAccountStatus[] = [];
-    for (const entry of entries) if (entry.isDirectory() && accountId.test(entry.name)) { await this.refreshMetadata(entry.name); const record = await this.record(entry.name); const token = await this.auth(entry.name).tokens(); values.push({ id: record.id, instanceId: record.instanceId, ...(token && !record.purge?.pending && !record.deleted ? { channelId: token.channelId, ...(record.channel && token.channel ? { channel: record.channel } : {}), connectedAt: record.connectedAt, channelCheckedAt: record.channelCheckedAt ?? record.connectedAt } : {}), ...(record.purge?.pending || record.deleted && token ? { cleanupPending: true } : {}) }); }
+    for (const entry of entries) if (entry.isDirectory() && accountId.test(entry.name)) { await this.refreshMetadata(entry.name); const record = await this.record(entry.name); const token = await this.auth(entry.name).tokens(); values.push({ id: record.id, instanceId: record.instanceId, ...(token && !record.purge?.pending && !record.deleted ? { channelId: token.channelId, ...(record.channel && token.channel ? { channel: record.channel } : {}), identity: { ...(record.channelAvatarUrl && token.channelAvatarUrl ? { channelAvatarUrl: record.channelAvatarUrl } : {}) }, connectedAt: record.connectedAt, channelCheckedAt: record.channelCheckedAt ?? record.connectedAt } : {}), ...(record.purge?.pending || record.deleted && token ? { cleanupPending: true } : {}) }); }
     return values;
   }
   /** Cloud 重连时恢复本机已落盘的账号确认，不重复 OAuth，也不触碰直播绑定。 */
-  async register() { for (const status of await this.statuses()) if (status.channelId && status.channel) await this.bind(status.id, status.instanceId, { channelId: status.channelId, channel: status.channel, channelCheckedAt: status.channelCheckedAt }, true); }
+  async register() { for (const status of await this.statuses()) if (status.channelId && status.channel) await this.bind(status.id, status.instanceId, { channelId: status.channelId, channel: status.channel, identity: status.identity, channelCheckedAt: status.channelCheckedAt }, true); }
   /** 先持久禁止新授权和任务；清理中断后仍由同一请求继续。 */
   startCleanup(id: string, instanceId: string, createdAt: number) { return this.run(id, async () => { const record = await this.record(id, instanceId); await this.store(id).write("account.json", { ...record, purge: { createdAt: Math.max(createdAt, record.purge?.createdAt || 0), pending: true } }); }); }
   /** 仅撤销该发布账号并清除频道观察数据，保留本地源素材及其他账号。 */
-  revoke(id: string) { return this.run(id, async () => { const record = await this.record(id); if (!record.purge?.pending) throw new AppError("CLEANUP", "清理请求尚未持久化。", 409); await this.auth(id).revoke(); delete record.channelId; delete record.channel; delete record.connectedAt; delete record.channelCheckedAt; delete record.channelAttemptAt; await this.store(id).write("account.json", record); }); }
+  revoke(id: string) { return this.run(id, async () => { const record = await this.record(id); if (!record.purge?.pending) throw new AppError("CLEANUP", "清理请求尚未持久化。", 409); await this.auth(id).revoke(); delete record.channelId; delete record.channel; delete record.channelAvatarUrl; delete record.connectedAt; delete record.channelCheckedAt; delete record.channelAttemptAt; await this.store(id).write("account.json", record); }); }
   /** 只有 Cloud 接收清理确认后完成本机标记，旧同意时间继续受 tombstone 保护。 */
   completeCleanup(id: string) { return this.run(id, async () => { const record = await this.record(id); if (record.purge) { record.purge.pending = false; record.deleted = true; await this.store(id).write("account.json", record); } }); }
   /** 维护期间不打断正在交换、落盘或撤销的账号授权操作。 */
