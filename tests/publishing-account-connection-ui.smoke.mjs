@@ -19,12 +19,14 @@ const rejectedMessage = "设备已离线，连接频道失败，请打开这台�
 const view = createPublishingPreview().view;
 Object.assign(view, { profiles: [], templates: [], jobs: [], plans: [], cleanups: [], administrator: false, accounts: [{ id: initialId, agentId: "synthetic_pc", instanceId: "main", name: "原有账号", owner: "tester", status: "unbound", createdAt: 1, updatedAt: 1 }] });
 const requests = [];
+const createdRequests = new Map();
 const pageErrors = [];
 const externalRequests = [];
 let online = true;
 let reads = 0;
 let oauthResultReads = 0;
 let connectionSucceeds = false;
+let dropCreateResponse = false;
 const screenshotDirectory = process.env.LIVEPILOT_ACCOUNT_UI_SCREENSHOTS && path.resolve(process.env.LIVEPILOT_ACCOUNT_UI_SCREENSHOTS);
 const entry = `import React from "react"; import {createRoot} from "react-dom/client"; import "./src/app/globals.css"; import "./src/app/components/ui/ui.css"; import PublishingConsole from "./src/app/publishing/publishing-console";
 /** 只改变真实组件的布局属性，切换布局时保留账号选择与连接错误。 */
@@ -65,8 +67,14 @@ try {
       if (body.action === "packages") result = { root: "D:\\Synthetic\\Publishing", batches: [], thumbnails: [] };
       else if (body.action === "account-create") {
         requests.push(body);
-        assert.equal(view.accounts.some(account => account.id === createdId), false, "Retry must not create a second account");
-        result = { id: createdId, agentId: body.agentId, instanceId: body.instanceId, name: body.name, owner: "tester", status: "unbound", createdAt: 2, updatedAt: 2 }; view.accounts.push(result);
+        assert.match(body.requestId, /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i, "Each add intent must carry a UUID retry key");
+        result = createdRequests.get(body.requestId);
+        if (!result) {
+          result = { id: view.accounts.some(account => account.id === createdId) ? "33333333-3333-4333-8333-333333333333" : createdId, agentId: body.agentId, instanceId: body.instanceId, name: body.name, owner: "tester", status: "unbound", createdAt: 2, updatedAt: 2 };
+          view.accounts.push(result); createdRequests.set(body.requestId, result);
+        }
+        // 模拟Cloud已落盘但响应丢失；同一标识重试返回原记录，不访问真实创建接口。
+        if (dropCreateResponse) { dropCreateResponse = false; return route.abort("connectionreset"); }
       } else if (body.action === "account-connect") {
         requests.push(body);
         if (connectionSucceeds) return route.fulfill({ json: { url: "https://accounts.google.com/o/oauth2/v2/auth?client_id=synthetic-client&state=synthetic-state" } });
@@ -359,10 +367,11 @@ try {
     { name: "需重新授权账号", channelId: "synthetic_reauthorize_channel", status: "needs_reauthorization", channelAvatarUrl: origin + "/synthetic-avatar-reauthorize.svg" },
     { name: "保留频道的账号", status: "unbound", channelId: "synthetic_old_channel" },
     { name: "保留连接时间的账号", status: "unbound", connectedAt: 10 },
+    { name: "授权保存未确认的账号", status: "unbound", channelCheckedAt: 10 },
   ];
   for (const [index, history] of historyCases.entries()) view.accounts.push({ ...view.accounts[0], ...history, id: String(index + 3).repeat(8) + "-1111-4111-8111-111111111111" });
   const cleanupCases = [{ name: "未连接账号待清理", status: "cleanup_pending" }, { name: "历史账号待清理", status: "cleanup_pending", channelId: "synthetic_cleanup_channel" }];
-  for (const [index, pending] of cleanupCases.entries()) view.accounts.push({ ...view.accounts[0], ...pending, id: String(index + 7).repeat(8) + "-1111-4111-8111-111111111111" });
+  for (const [index, pending] of cleanupCases.entries()) view.accounts.push({ ...view.accounts[0], ...pending, id: String(index + 8).repeat(8) + "-1111-4111-8111-111111111111" });
   const legacyProfile = { ...createPublishingPreview().view.profiles[0], agentId: "synthetic_pc", instanceId: "main" }; delete legacyProfile.accountId;
   view.profiles = [legacyProfile];
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
@@ -439,6 +448,40 @@ try {
   assert.equal(await page.getByRole("combobox", { name: "发布账号", exact: true }).inputValue(), createdId);
   assert.equal(oauthResultReads, 1);
   process.stdout.write("PASS: synthetic OAuth return selects the existing connected account, reports success and consumes its add marker without duplicating creation or replaying the result.\n");
+
+  connectionSucceeds = false; dropCreateResponse = true; view.accounts = [];
+  await page.reload();
+  await page.getByRole("button", { name: "发布账号", exact: true }).click();
+  const createsBeforeLostResponse = requests.filter(request => request.action === "account-create").length;
+  const connectsBeforeLostResponse = requests.filter(request => request.action === "account-connect").length;
+  await page.getByRole("button", { name: "添加账号", exact: true }).click();
+  await addDialog.getByRole("button", { name: "连接频道", exact: true }).click();
+  await addDialog.getByRole("alert").getByText("请求结果尚未确认，请查询原操作，避免重复执行。", { exact: true }).waitFor();
+  await waitForAccountActions();
+  assert.equal(view.accounts.length, 1, "The dropped response must follow a committed creation");
+  assert.equal(requests.filter(request => request.action === "account-connect").length, connectsBeforeLostResponse);
+  // 轮询先看到已提交的账号，再重试原创建；恢复结果不能把同一账号重复追加进React列表。
+  const pollAfterCommit = page.waitForResponse(response => response.url() === origin + "/api/publishing" && response.request().method() === "GET");
+  await page.clock.runFor(11000); await pollAfterCommit;
+  await addDialog.getByRole("button", { name: "连接频道", exact: true }).click();
+  await addDialog.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
+  await waitForAccountActions();
+  const retriedCreates = requests.filter(request => request.action === "account-create").slice(createsBeforeLostResponse);
+  assert.equal(retriedCreates.length, 2);
+  assert.equal(retriedCreates[0].requestId, retriedCreates[1].requestId, "An unknown create result must retain its original retry key");
+  assert.equal(view.accounts.length, 1, "The retry must reuse the committed account");
+  await addDialog.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(await manager.locator(".account-manager-row").count(), 1, "Polling and recovered creation must render the account once");
+  assert.equal(requests.filter(request => request.action === "account-connect").at(-1).accountId, createdId);
+  await page.getByRole("button", { name: "添加账号", exact: true }).click();
+  await addDialog.getByRole("button", { name: "连接频道", exact: true }).click();
+  await addDialog.getByRole("alert").getByText("原有账号的合成连接失败", { exact: true }).waitFor();
+  await waitForAccountActions();
+  const freshCreate = requests.filter(request => request.action === "account-create").at(-1);
+  assert.notEqual(freshCreate.requestId, retriedCreates[0].requestId, "A new add intent must use its own retry key");
+  assert.equal(view.accounts.length, 2);
+  await addDialog.getByRole("button", { name: "取消", exact: true }).click();
+  process.stdout.write("PASS: a lost committed create response retries with the same key and account after polling; a new add intent uses a fresh key.\n");
   assert.deepEqual(pageErrors, []);
   process.stdout.write("PASS: known offline devices block create/connect and recover when online. Synthetic API only.\n");
 } finally {

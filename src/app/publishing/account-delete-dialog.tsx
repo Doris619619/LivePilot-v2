@@ -13,7 +13,8 @@ export default function AccountDeleteDialog({ account, busy, error, onClose, rem
   const inFlight = useRef(false);
   const locked = busy || submitting;
   const unavailable = !account || ["cleanup_pending", "deleted"].includes(account.status);
-  const hasAuthorization = !!account && (["connected", "needs_reauthorization"].includes(account.status) || !!account.channelId || !!account.connectedAt);
+  // 已确认频道但绑定确认响应丢失时仍可能有凭据；不能只凭 unbound 隐去撤销影响。
+  const hasAuthorization = !!account && (["connected", "needs_reauthorization"].includes(account.status) || !!account.channelId || !!account.connectedAt || !!account.channelCheckedAt);
   const message = error || (failure?.accountId === account?.id ? failure?.message : undefined);
   const name = account?.channel || account?.name || "当前账号";
   /** 关闭清除本次失败，不把它带到之后选择的账号；在途请求继续锁定弹窗。 */

@@ -46,6 +46,7 @@ export default function PublishingConsole({ accountsLayout = "compact", initialS
   const [addingAccountId, setAddingAccountId] = useState("");
   const [addingAccountError, setAddingAccountError] = useState("");
   const addingRequest = useRef(false);
+  const addingAccountRequestId = useRef("");
   const [loadAttempt, setLoadAttempt] = useState(0); const initialized = useRef(false);
   const readRequest = useRef(0);
   const deviceRequest = useRef(0); const deviceRead = useRef<Promise<void> | undefined>(undefined);
@@ -158,12 +159,13 @@ export default function PublishingConsole({ accountsLayout = "compact", initialS
     if (!accepted || devices?.find(device => device.id === selected?.agentId)?.online === false) return;
     await perform(() => requestAccountConnection(id));
   }
-  /** 添加先打开确认连接窗口；关闭窗口不会创建空账号或触发授权。 */
+  /** 每次添加意图固定独立请求标识；只打开确认窗口，不创建账号或触发授权。 */
   function addAccount() {
     if (!host || hostOffline || !accepted) return;
+    addingAccountRequestId.current = crypto.randomUUID();
     setAddingAccountId(""); setAddingAccountError(""); setAddingAccount(true);
   }
-  /** 用户确认后才创建；同一窗口的连接重试复用已创建账号，避免失败时重复累积记录。 */
+  /** 确认后才创建；请求结果未知也复用同一标识，Cloud 返回原账号而不累积重复记录。 */
   async function connectAddedAccount() {
     if (!host || hostOffline || !accepted || addingRequest.current || !addingAccount) return;
     addingRequest.current = true; setAddingAccountError("");
@@ -171,8 +173,9 @@ export default function PublishingConsole({ accountsLayout = "compact", initialS
       await perform(async () => {
         let id = addingAccountId;
         if (!id) {
-          const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1) });
-          id = created.id; setAddingAccountId(id); setView(old => old && { ...old, accounts: [...(old.accounts || []), created] }); setAccountId(id); rememberSelection(chosen, id); setProfileId("");
+          const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1), requestId: addingAccountRequestId.current });
+          readRequest.current++;
+          id = created.id; setAddingAccountId(id); setView(old => old && { ...old, accounts: [...(old.accounts || []).filter(value => value.id !== created.id), created] }); setAccountId(id); rememberSelection(chosen, id); setProfileId("");
           try { sessionStorage.setItem("livenest-publishing-account-add:" + username, id); } catch { /* 身份与授权不依赖可选的新增成功提示缓存。 */ }
         }
         const message = await requestAccountConnection(id);

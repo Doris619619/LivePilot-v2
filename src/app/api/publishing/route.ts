@@ -16,7 +16,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const command = z.discriminatedUnion("action", [
   z.object({ action: z.literal("consent"), version: z.string().max(40) }).strict(),
-  z.object({ action: z.literal("account-create"), agentId: idSchema, instanceId: idSchema, name: z.string().trim().min(1).max(80) }).strict(),
+  z.object({ action: z.literal("account-create"), agentId: idSchema, instanceId: idSchema, name: z.string().trim().min(1).max(80), requestId: uuidSchema.optional() }).strict(),
   z.object({ action: z.literal("account-connect"), accountId: uuidSchema }).strict(),
   z.object({ action: z.literal("account-cleanup"), accountId: uuidSchema, confirmed: z.literal(true) }).strict(),
   z.object({ action: z.literal("account-playlists"), accountId: uuidSchema }).strict(),
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     guard(request, true); const user = await authenticate(request); if (!cloudMode()) throw new AppError("MODE", "视频发布请使用 Cloud 控制端。", 409);
     const value = command.parse(await readJson(request, 2 * 1024 ** 2)); let result: unknown;
     if (value.action === "consent") result = await acceptPublishingPrivacy(user, value.version);
-    else if (value.action === "account-create") result = await createPublishingAccount(user, value.agentId, value.instanceId, value.name);
+    else if (value.action === "account-create") result = await createPublishingAccount(user, value.agentId, value.instanceId, value.name, value.requestId);
     else if (value.action === "account-connect") { const oauth = await connectPublishingAccount(user, value.accountId); const response = NextResponse.json({ url: oauth.url }); response.cookies.set(oauthCookie(oauth.state), oauth.cookie, { httpOnly: true, sameSite: "lax", secure: true, path: "/api/youtube", maxAge: 600 }); return response; }
     else if (value.action === "account-cleanup") result = await requestPublishingAccountCleanup(user, value.accountId);
     else if (value.action === "account-playlists") result = await publishingAccountPlaylists(user, value.accountId);
