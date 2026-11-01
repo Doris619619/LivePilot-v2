@@ -1,4 +1,4 @@
-/** 发布账号连接回归：真实浏览器与组件使用合成 API，禁止访问真实 Agent、OAuth 或 YouTube。 */
+/** 发布账号连接与三种单账号布局回归：真实浏览器与组件使用合成 API，禁止访问真实 Agent、OAuth 或 YouTube。 */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
@@ -24,7 +24,10 @@ let online = true;
 let reads = 0;
 let connectionSucceeds = false;
 const screenshotDirectory = process.env.LIVEPILOT_ACCOUNT_UI_SCREENSHOTS && path.resolve(process.env.LIVEPILOT_ACCOUNT_UI_SCREENSHOTS);
-const entry = `import React from "react"; import {createRoot} from "react-dom/client"; import "./src/app/globals.css"; import PublishingConsole from "./src/app/publishing/publishing-console"; createRoot(document.getElementById("root")).render(<PublishingConsole/>);`;
+const entry = `import React from "react"; import {createRoot} from "react-dom/client"; import "./src/app/globals.css"; import PublishingConsole from "./src/app/publishing/publishing-console";
+/** 只改变真实组件的布局属性，切换布局时保留账号选择与连接错误。 */
+function Harness() { const [layout, setLayout] = React.useState("split"); React.useEffect(() => { window.setLayout = setLayout; return () => { delete window.setLayout; }; }, []); return <PublishingConsole accountsLayout={layout}/>; }
+createRoot(document.getElementById("root")).render(<Harness/>);`;
 await build({ stdin: { contents: entry, resolveDir: repo, loader: "tsx" }, outfile: path.join(directory, "probe.js"), bundle: true, platform: "browser", format: "iife", jsx: "automatic", alias: { "@": path.join(repo, "src") }, define: { "process.env.NODE_ENV": '"development"', "process.env": "{}" }, logLevel: "silent" });
 const javascript = await readFile(path.join(directory, "probe.js"));
 const css = await readFile(path.join(directory, "probe.css"));
@@ -73,19 +76,36 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(4000);
   page.on("pageerror", error => pageErrors.push(error.message));
+  const manager = page.getByRole("region", { name: "发布账号管理", exact: true });
+  /** 通过可见账号导航选择目标，并确认只挂载该账号的详情，避免旧账号数据与操作混入。 */
+  async function selectAccount(name, label = name) {
+    const button = manager.getByRole("button", { name: "选择账号 " + label, exact: true });
+    await button.click();
+    const detail = page.getByRole("region", { name: "发布账号 " + name, exact: true });
+    await detail.waitFor();
+    assert.equal(await button.getAttribute("aria-pressed"), "true");
+    assert.equal(await page.getByRole("region", { name: /^发布账号 / }).count(), 1);
+    return detail;
+  }
+  /** 等待真实连接流程收尾，再统计请求或判断按钮恢复，避免只等到错误渲染就读取中间态。 */
+  async function waitForAccountActions() {
+    await page.waitForFunction(() => document.querySelector('[aria-label="发布账号管理"]')?.getAttribute("aria-busy") === "false");
+  }
   await page.clock.install();
   await page.goto(origin + "/publishing");
   await page.getByRole("button", { name: "发布账号", exact: true }).click();
+  assert.equal(await page.getByRole("combobox", { name: "发布账号", exact: true }).count(), 0, "Desktop management uses account navigation instead of a second visible picker");
+  assert.equal(await page.getByRole("button", { name: "添加账号", exact: true }).count(), 1);
   await page.getByRole("button", { name: "添加账号", exact: true }).click();
-  await page.waitForFunction(id => document.querySelector('select[aria-label="发布账号"]')?.value === id, createdId);
+  await page.getByRole("button", { name: "选择账号 发布账号 2", exact: true, pressed: true }).waitFor();
   await page.getByText(rejectedMessage, { exact: true }).waitFor();
   assert.equal(requests.filter(request => request.action === "account-create").length, 1);
   process.stdout.write("PASS: failed connection remains visible after creating and selecting the account.\n");
 
   const createdRow = page.getByRole("region", { name: "发布账号 发布账号 2", exact: true });
   await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
-  await createdRow.getByRole("button", { name: "连接频道", exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('select[aria-label="发布账号"]')?.disabled);
+  await createdRow.getByRole("button", { name: "重试连接频道", exact: true }).click();
+  await waitForAccountActions();
   assert.equal(requests.filter(request => request.action === "account-create").length, 1);
   assert.equal(requests.filter(request => request.action === "account-connect" && request.accountId === createdId).length, 2);
   const readsBefore = reads;
@@ -96,12 +116,42 @@ try {
   await createdRow.getByText(rejectedMessage, { exact: true }).waitFor();
   process.stdout.write("PASS: retry uses the same account and background refresh preserves the failure.\n");
 
-  const initialRow = page.getByRole("region", { name: "发布账号 原有账号", exact: true });
+  for (const layout of ["split", "grid", "compact"]) {
+    await page.evaluate(value => window.setLayout(value), layout);
+    await page.locator(".account-manager--" + layout).waitFor();
+    await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
+    assert.equal(await page.getByRole("region", { name: /^发布账号 / }).count(), 1);
+    assert.equal(await page.getByRole("combobox", { name: "发布账号", exact: true }).count(), 0);
+    assert.equal(await page.getByRole("button", { name: "添加账号", exact: true }).count(), 1);
+    await selectAccount("原有账号");
+    assert.equal(await createdRow.count(), 0);
+    await selectAccount("发布账号 2");
+    await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
+    await page.setViewportSize({ width: 390, height: 900 });
+    const mobilePicker = page.getByRole("combobox", { name: "发布账号", exact: true });
+    await mobilePicker.waitFor();
+    assert.equal(await mobilePicker.inputValue(), createdId);
+    assert.equal(await page.getByRole("button", { name: /^选择账号 / }).count(), 0);
+    await mobilePicker.selectOption(initialId);
+    await page.getByRole("region", { name: "发布账号 原有账号", exact: true }).waitFor();
+    assert.equal(await page.getByRole("region", { name: /^发布账号 / }).count(), 1);
+    await mobilePicker.selectOption(createdId);
+    await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, layout + " must fit 390px without horizontal overflow");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: "选择账号 发布账号 2", exact: true, pressed: true }).waitFor();
+  }
+  process.stdout.write("PASS: split, grid and compact layouts retain selection and errors with one detail, desktop navigation and a 390px account picker.\n");
+
+  const initialRow = await selectAccount("原有账号");
   await initialRow.getByRole("button", { name: "连接频道", exact: true }).click();
   await initialRow.getByRole("alert").getByText("原有账号的合成连接失败", { exact: true }).waitFor();
+  await selectAccount("发布账号 2");
+  await createdRow.getByRole("alert").getByText(rejectedMessage, { exact: true }).waitFor();
   assert.equal(await createdRow.getByText("原有账号的合成连接失败", { exact: true }).count(), 0);
-  await page.getByRole("combobox", { name: "发布账号", exact: true }).selectOption(initialId);
+  await selectAccount("原有账号");
   await page.getByRole("button", { name: "发布视频", exact: true }).click();
+  assert.equal(await page.getByRole("combobox", { name: "发布账号", exact: true }).inputValue(), initialId);
   await page.getByRole("alert").getByText("原有账号的合成连接失败", { exact: true }).waitFor();
   assert.equal(await page.getByText(rejectedMessage, { exact: true }).isVisible().catch(() => false), false);
   process.stdout.write("PASS: another account's connection failure stays attached to its row and selection.\n");
@@ -111,12 +161,12 @@ try {
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
   await page.getByText(offlineMessage, { exact: true }).first().waitFor();
   assert.equal(await page.getByRole("button", { name: "添加账号", exact: true }).isDisabled(), true);
-  assert.equal(await initialRow.getByRole("button", { name: "连接频道", exact: true }).isDisabled(), true);
+  assert.equal(await initialRow.getByRole("button", { name: "重试连接频道", exact: true }).isDisabled(), true);
   assert.equal(requests.filter(request => request.action === "account-create").length, 1);
   online = true;
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some(button => button.textContent === "添加账号" && !button.disabled));
-  assert.equal(await initialRow.getByRole("button", { name: "连接频道", exact: true }).isEnabled(), true);
+  assert.equal(await initialRow.getByRole("button", { name: "重试连接频道", exact: true }).isEnabled(), true);
   online = false;
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some(button => button.textContent === "添加账号" && button.disabled));
@@ -124,7 +174,7 @@ try {
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
   await page.waitForFunction(() => [...document.querySelectorAll("button")].some(button => button.textContent === "添加账号" && !button.disabled));
   assert.equal(await page.getByRole("button", { name: "添加账号", exact: true }).isEnabled(), true);
-  assert.equal(await initialRow.getByRole("button", { name: "连接频道", exact: true }).isEnabled(), true);
+  assert.equal(await initialRow.getByRole("button", { name: "重试连接频道", exact: true }).isEnabled(), true);
   assert.equal(await page.getByText(offlineMessage, { exact: true }).count(), 0);
   process.stdout.write("PASS: unknown device status remains actionable instead of being treated as offline.\n");
 
@@ -145,11 +195,12 @@ try {
   process.stdout.write("PASS: first-account creation from the video page keeps the failure and created account visible.\n");
 
   await page.getByRole("button", { name: "发布账号", exact: true }).click();
-  const unboundData = page.locator("details").filter({ has: page.locator("summary").getByText(/ · 发布账号 1$/) });
-  assert.equal(await unboundData.locator("summary").innerText(), "账号数据 · 发布账号 1");
+  const unboundDetail = await selectAccount("发布账号 1");
+  const unboundData = unboundDetail.locator("details");
+  assert.equal(await unboundData.locator("summary").innerText(), "账号数据");
   await unboundData.locator("summary").click();
   assert.equal(await unboundData.locator('a[href="https://security.google.com/settings/security/permissions"]').count(), 0, "A never-connected account must not show the Google authorization-management link");
-  await unboundData.getByText("此发布账号尚未连接频道，请使用账号行右侧的“连接频道”。", { exact: true }).waitFor();
+  await unboundData.getByText("此发布账号尚未连接频道，请使用上方的“连接频道”。", { exact: true }).waitFor();
   await unboundData.getByRole("button", { name: "删除账号与数据", exact: true }).click();
   await unboundData.getByRole("button", { name: "确认删除账号与数据", exact: true }).waitFor();
   await unboundData.getByRole("button", { name: "返回", exact: true }).click();
@@ -168,7 +219,7 @@ try {
   }
 
   const historyCases = [
-    { name: "已连接账号", status: "connected" },
+    { name: "已连接账号", channel: "合成已连接频道", status: "connected" },
     { name: "需重新授权账号", status: "needs_reauthorization" },
     { name: "保留频道的账号", status: "unbound", channelId: "synthetic_old_channel" },
     { name: "保留连接时间的账号", status: "unbound", connectedAt: 10 },
@@ -180,21 +231,24 @@ try {
   view.profiles = [legacyProfile];
   await page.getByRole("button", { name: "刷新发布状态", exact: true }).click();
   for (const history of historyCases) {
-    const data = page.locator("details").filter({ has: page.locator("summary").getByText(new RegExp(" · " + history.name + "$")) });
+    const detail = await selectAccount(history.name, history.channel || history.name);
+    const data = detail.locator("details");
+    assert.equal(await data.locator("summary").innerText(), history.status === "unbound" ? "账号数据" : "授权与数据");
     await data.locator("summary").click();
     const link = data.getByRole("link", { name: "查看或撤销 Google 授权", exact: true });
     assert.equal(await link.getAttribute("href"), "https://security.google.com/settings/security/permissions");
-    await data.getByText("此入口用于管理已有授权，连接频道请使用账号行中的按钮。", { exact: true }).waitFor();
+    await data.getByText("此入口用于管理已有授权，重新连接请使用上方的连接按钮。", { exact: true }).waitFor();
     await data.getByRole("button", { name: "撤销授权与删除数据", exact: true }).waitFor();
     await data.locator("summary").click();
   }
   for (const pending of cleanupCases) {
-    const data = page.locator("details").filter({ has: page.locator("summary").getByText(new RegExp(" · " + pending.name + "$")) });
+    const detail = await selectAccount(pending.name);
+    const data = detail.locator("details");
     await data.locator("summary").click();
     await data.getByText("此账号正在等待设备完成清理，请保持设备在线。清理完成后如需连接频道，请添加新账号。", { exact: true }).waitFor();
-    assert.equal(await data.getByText(/连接频道请使用账号行|请使用账号行右侧/).count(), 0);
+    assert.equal(await data.getByText(/请使用上方的|重新连接请使用上方/).count(), 0);
     assert.equal(await data.getByRole("link", { name: "查看或撤销 Google 授权", exact: true }).count(), pending.channelId ? 1 : 0);
-    assert.equal(await page.getByRole("region", { name: "发布账号 " + pending.name, exact: true }).getByRole("button", { name: "连接频道", exact: true }).isDisabled(), true);
+    assert.equal(await detail.getByRole("button", { name: /连接频道|重新授权/ }).count(), 0, "Cleanup-pending details must not offer a connection action");
     assert.equal(await data.getByRole("button", { name: pending.channelId ? "撤销授权与删除数据" : "删除账号与数据", exact: true }).isDisabled(), true);
     await data.locator("summary").click();
   }
@@ -203,14 +257,15 @@ try {
   await legacyData.locator("summary").click();
   assert.equal(await legacyData.getByRole("link", { name: "查看或撤销 Google 授权", exact: true }).getAttribute("href"), "https://security.google.com/settings/security/permissions");
   await legacyData.getByText("此入口用于查看或撤销旧实例已有的 Google 授权。", { exact: true }).waitFor();
-  assert.equal(await legacyData.getByText(/连接频道请使用账号行|请使用账号行右侧/).count(), 0);
+  assert.equal(await legacyData.getByText(/请使用上方的|重新连接请使用上方/).count(), 0);
   await legacyData.getByText("撤销旧实例的授权，并删除保存的 YouTube 数据。", { exact: true }).waitFor();
   process.stdout.write("PASS: connected, reauthorization, retained-channel, retained-connection-time and legacy accounts retain explicit authorization management.\n");
 
   connectionSucceeds = true;
   const createsBeforeAuthorization = requests.filter(request => request.action === "account-create").length;
   const connectionsBeforeAuthorization = requests.filter(request => request.action === "account-connect").length;
-  await page.getByRole("region", { name: "发布账号 发布账号 1", exact: true }).getByRole("button", { name: "连接频道", exact: true }).click();
+  await selectAccount("发布账号 1");
+  await unboundDetail.getByRole("button", { name: "重试连接频道", exact: true }).click();
   await page.getByRole("heading", { name: "合成Google授权页", exact: true }).waitFor();
   assert.equal(requests.filter(request => request.action === "account-create").length, createsBeforeAuthorization);
   assert.equal(requests.filter(request => request.action === "account-connect").length, connectionsBeforeAuthorization + 1);

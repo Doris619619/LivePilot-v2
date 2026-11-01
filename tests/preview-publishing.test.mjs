@@ -8,12 +8,37 @@ describe('publishing UI preview', () => {
   it('uses valid public DTOs and a current-month draft', () => {
     const preview = createPublishingPreview();
     expect(profileSchema.safeParse(preview.view.profiles[0]).success).toBe(true);
-    expect(publishingAccountSchema.safeParse(preview.view.accounts[0]).success).toBe(true);
+    for (const account of preview.view.accounts) expect(publishingAccountSchema.safeParse(account).success).toBe(true);
+    expect(preview.view.accounts.map(account => account.status)).toEqual(['connected', 'connected', 'unbound', 'needs_reauthorization', 'cleanup_pending']);
+    expect(preview.view.accounts.every(account => account.agentId === 'preview_liang' && account.instanceId === 'main')).toBe(true);
+    expect(preview.view.profiles[0].accountId).toBe(preview.view.accounts[0].id);
+    expect(preview.view.profiles[0].channelId).toBe(preview.view.accounts[0].channelId);
+    expect(preview.view.cleanups[0].accountId).toBe(preview.view.accounts[4].id);
     expect(packagesResultSchema.safeParse(preview.request({ action: 'packages' })).success).toBe(true);
     for (const job of preview.view.jobs) {
       expect(jobSpecSchema.safeParse(job.spec).success).toBe(true);
       expect(publishingReportSchema.safeParse(job.observed).success).toBe(true);
+      expect(job.spec.profile.accountId).toBe(preview.view.accounts[0].id);
     }
+  });
+  it('creates only unbound synthetic accounts in the current preview and keeps authorization blocked', () => {
+    const first = createPublishingPreview(); const second = createPublishingPreview();
+    const created = first.request({ action: 'account-create', agentId: 'preview_liang', instanceId: 'main', name: '  新的合成账号  ', owner: 'outside' });
+    expect(publishingAccountSchema.safeParse(created).success).toBe(true);
+    expect(created).toMatchObject({ name: '新的合成账号', owner: 'Liang', status: 'unbound', agentId: 'preview_liang', instanceId: 'main' });
+    expect(created.channelId).toBeUndefined(); expect(created.connectedAt).toBeUndefined();
+    expect(first.view.accounts).toHaveLength(6); expect(second.view.accounts).toHaveLength(5);
+    expect(first.view.accounts.find(account => account.id === created.id)).toEqual(created);
+    const snapshot = structuredClone(first.view);
+    for (const action of ['account-connect', 'account-cleanup']) expect(() => first.request({ action, accountId: created.id, confirmed: true })).toThrow('本地界面预览');
+    expect(first.view).toEqual(snapshot);
+  });
+  it('rejects foreign targets and invalid names before creating any preview account', () => {
+    const preview = createPublishingPreview();
+    for (const fields of [{ agentId: 'outside' }, { instanceId: 'outside' }, { name: '' }, { name: ' ' }, { name: 'x'.repeat(81) }, { name: null }]) {
+      expect(() => preview.request({ action: 'account-create', agentId: 'preview_liang', instanceId: 'main', name: '示例账号', ...fields })).toThrow('请选择示例电脑');
+    }
+    expect(preview.view.accounts).toHaveLength(5);
   });
   it('isolates edits per preview and rejects publish or authorization actions', () => {
     const first = createPublishingPreview(); const second = createPublishingPreview();

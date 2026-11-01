@@ -10,7 +10,7 @@ export default function DataSettings({ disabled, busy, cleanups, readAt, account
   const hasAuthorization = !account || ["connected", "needs_reauthorization"].includes(account.status) || !!account.channelId || !!account.connectedAt;
   return <section className="publishing-data">
     <div className="publishing-section-heading"><h2>{hasAuthorization ? "撤销授权与删除数据" : "账号数据"}</h2>{hasAuthorization && <a href="https://security.google.com/settings/security/permissions" target="_blank" rel="noreferrer">查看或撤销 Google 授权</a>}</div>
-    <p className="publishing-hint">{account?.status === "cleanup_pending" ? "此账号正在等待设备完成清理，请保持设备在线。清理完成后如需连接频道，请添加新账号。" : !account ? "此入口用于查看或撤销旧实例已有的 Google 授权。" : hasAuthorization ? "此入口用于管理已有授权，连接频道请使用账号行中的按钮。" : "此发布账号尚未连接频道，请使用账号行右侧的“连接频道”。"}</p>
+    <p className="publishing-hint">{account?.status === "cleanup_pending" ? "此账号正在等待设备完成清理，请保持设备在线。清理完成后如需连接频道，请添加新账号。" : !account ? "此入口用于查看或撤销旧实例已有的 Google 授权。" : hasAuthorization ? "此入口用于管理已有授权，重新连接请使用上方的连接按钮。" : "此发布账号尚未连接频道，请使用上方的“连接频道”。"}</p>
     <p className="publishing-hint">{accountName ? "删除「" + accountName + "」的" + (hasAuthorization ? "发布授权与数据。" : "账号记录与数据。") : "撤销旧实例的授权，并删除保存的 YouTube 数据。"}</p>
     <button className="btn-danger" disabled={busy || disabled} onClick={() => setConfirming(!confirming)}>{hasAuthorization ? "撤销授权与删除数据" : "删除账号与数据"}</button>
     {confirming && <div className="publishing-warning">
