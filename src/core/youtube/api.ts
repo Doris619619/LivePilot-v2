@@ -7,6 +7,7 @@ import { AppError } from "../errors";
 import { YouTubeAuth } from "./auth";
 import { youtubeMethodSchema } from "@/shared/youtube-usage";
 import { youtubeFetch, YouTubePageGuard } from "./usage";
+import { channelAvatar, type ChannelSnippet } from "./account-identity";
 export type Broadcast = { id: string; snippet: { title: string; actualStartTime?: string; scheduledStartTime?: string; liveChatId?: string }; status: { lifeCycleStatus: string; madeForKids?: boolean; selfDeclaredMadeForKids?: boolean }; contentDetails?: { boundStreamId?: string } };
 export type Stream = { id: string; snippet: { title: string }; status: { streamStatus: string }; cdn?: { ingestionInfo?: { streamName?: string; rtmpsIngestionAddress?: string } } };
 type List<T> = { items?: T[]; nextPageToken?: string };
@@ -22,7 +23,7 @@ const reasons: Record<string, string> = {
   redundantTransition: "YouTube 已收到同一状态请求，请刷新状态后重试。",
 };
 export interface YouTubePort {
-  channel(): Promise<{ id: string; title: string }>;
+  channel(): Promise<{ id: string; title: string; channelAvatarUrl?: string }>;
   broadcast(id: string): Promise<Broadcast | null>;
   stream(id: string): Promise<Stream | null>;
   createBroadcast(title: string, details?: BroadcastDetails): Promise<Broadcast>;
@@ -56,10 +57,12 @@ export class YouTubeApi implements YouTubePort {
     }
     return await response.json() as T;
   }
+  /** 标题和头像来自同一频道查询；头像缺失不改变旧调用者的身份核验结果。 */
   async channel() {
-    const data = await this.request<List<{ id: string; snippet: { title: string } }>>("channels", { part: "id,snippet", mine: "true" });
+    const data = await this.request<List<{ id: string; snippet: ChannelSnippet }>>("channels", { part: "id,snippet", mine: "true" });
     if (data.items?.length !== 1) throw new AppError("CHANNEL", "未找到唯一的已授权 YouTube Channel。");
-    return { id: data.items[0].id, title: data.items[0].snippet.title };
+    const avatar = channelAvatar(data.items[0].snippet);
+    return { id: data.items[0].id, title: data.items[0].snippet.title, ...(avatar ? { channelAvatarUrl: avatar } : {}) };
   }
   async broadcast(id: string) {
     const data = await this.request<List<Broadcast>>("liveBroadcasts", { part: "id,snippet,status,contentDetails", id });

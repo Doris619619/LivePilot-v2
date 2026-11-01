@@ -6,7 +6,7 @@ import { useWorkbenchActive } from "../components/workbench-context";
 import WorkbenchNavigation from "../components/workbench-navigation";
 import SidebarGroup from "../components/sidebar-group";
 import { WorkspaceUserContext } from "../components/workspace-account";
-import { api } from "../client-request";
+import { api, requestProblem } from "../client-request";
 import { RefreshIcon } from "../components/icons";
 import { PRIVACY_VERSION, type PackageBatch, type PublishingAccount, type PublishingBatchRemoval, type PublishingPlan, type PublishingPlanItem, type PublishingPlanRule, type PublishingProfile, type PublishingPolicy, type VideoJob, type PublishingRepair } from "@/shared/publishing";
 import type { InstanceDescriptor } from "@/shared/types";
@@ -18,7 +18,8 @@ import PolicyEditor, { type PublishingQuota } from "./policy-editor";
 import DataSettings, { type PublishingCleanup } from "./data-settings";
 import PublishingWizard from "./publishing-wizard";
 import MyPublishing from "./my-publishing";
-import ChannelBinding from "./channel-binding";
+import PublishingAccountManager, { type AccountsLayout } from "./account-manager";
+import AccountConnectDialog from "./account-connect-dialog";
 import { publishingTargetStorageKey, restorePublishingTarget } from "./publishing-target-selection";
 import { usePublishingDirectory } from "./use-publishing-directory";
 import "./publishing.css";
@@ -26,23 +27,31 @@ import { publishingTemplateForUse, type PublishingTemplate } from "@/shared/publ
 type View = { templates?: PublishingTemplate[]; profiles: PublishingProfile[]; jobs: VideoJob[]; plans?: PublishingPlan[]; removals?: PublishingBatchRemoval[]; accounts?: PublishingAccount[]; policy: PublishingPolicy; quota?: PublishingQuota; consent?: { version: string }; cleanups: PublishingCleanup[]; administrator: boolean };
 type PackageIndex = { root: string; batches: PackageBatch[]; thumbnails?: string[]; channelId?: string; channel?: string };
 type Inventory = { instances: InstanceDescriptor[]; agents?: PublishingDevice[] };
+const accountOfflineMessage = "设备离线，请打开这台电脑的 LiveNest，待设备上线后再连接频道。";
 /** 所有发布编辑共用同源请求，检测等待不等于执行成功。 */
 async function post<T>(value: unknown) { return api<T>("/api/publishing", { method: "POST", timeoutMs: 60000, headers: { "content-type": "application/json", "x-livepilot": "1" }, body: JSON.stringify(value) }); }
-/** Cloud状态轮询独立于表单和持久计划，不覆盖用户正在编辑的输入。 */
-export default function PublishingConsole() {
+/** Cloud状态轮询独立于表单；可选布局与首屏参数只供本地方案比选，不添加正式站点的设计控件。 */
+export default function PublishingConsole({ accountsLayout = "compact", initialSection }: { accountsLayout?: AccountsLayout; initialSection?: "accounts" } = {}) {
   const openSettings = useOpenSettings();
   const active = useWorkbenchActive(); const member = useContext(WorkspaceUserContext)?.username;
   const [view, setView] = useState<View>(); const [username, setUsername] = useState(""); const [targets, setTargets] = useState<PublishingTarget[]>([]); const [chosen, setChosen] = useState("");
   const [devices, setDevices] = useState<PublishingDevice[]>();
-  const [tab, setTab] = useState("发布视频"); const [setting, setSetting] = useState("发布账号"); const [index, setIndex] = useState<PackageIndex>(); const [profileId, setProfileId] = useState("");
+  const [tab, setTab] = useState(initialSection === "accounts" ? "设置" : "发布视频"); const [setting, setSetting] = useState("发布账号"); const [index, setIndex] = useState<PackageIndex>(); const [profileId, setProfileId] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(false); const [readAt, setReadAt] = useState(0);
   const [operationError, setOperationError] = useState<{ context: string; message: string }>(); const [historyEntry, setHistoryEntry] = useState(false);
+  const [connectionErrors, setConnectionErrors] = useState<Record<string, string>>({});
   const [draftEpoch, setDraftEpoch] = useState(0);
   const [accountId, setAccountId] = useState("");
+  const [addingAccount, setAddingAccount] = useState(false);
+  const [addingAccountId, setAddingAccountId] = useState("");
+  const [addingAccountError, setAddingAccountError] = useState("");
+  const addingRequest = useRef(false);
+  const addingAccountRequestId = useRef("");
   const [loadAttempt, setLoadAttempt] = useState(0); const initialized = useRef(false);
   const readRequest = useRef(0);
   const deviceRequest = useRef(0); const deviceRead = useRef<Promise<void> | undefined>(undefined);
   const host = targets.find(value => value.agentId + ":" + value.instanceId === chosen);
+  const hostOffline = devices?.find(device => device.id === host?.agentId)?.online === false;
   const accounts = view?.accounts?.filter(account => account.agentId === host?.agentId && account.status !== "deleted") || [];
   const account = accounts.find(value => value.id === accountId);
   const target = host && { ...host, accountId: account?.id, channelId: account?.status === "connected" ? account.channelId : undefined, channel: account?.status === "connected" ? account.channel : undefined };
@@ -85,7 +94,12 @@ export default function PublishingConsole() {
           // 成功读取后只消费本次授权结果；保留其他 URL 状态，后续刷新尊重客户的新账号选择。
           if (authorization) { const destination = new URL(window.location.href); destination.searchParams.delete("oauthResult"); window.history.replaceState(window.history.state, "", destination.pathname + destination.search + destination.hash); }
           if (authorization?.problem) setError(authorization.problem.message);
-          else if (authorization) setNotice(authorization.status === "connected" ? "发布账号已连接" : "本次授权已取消");
+          else if (authorization) {
+            let pendingAdd = "";
+            try { pendingAdd = sessionStorage.getItem("livenest-publishing-account-add:" + session.user.username) || ""; if (authorization.accountId === pendingAdd) sessionStorage.removeItem("livenest-publishing-account-add:" + session.user.username); } catch { /* 窗口存储不可用时仍确认真实授权结果，只省略新增来源。 */ }
+            setNotice(authorization.status === "connected" ? authorization.accountId && authorization.accountId === pendingAdd ? "账号添加成功" : "频道连接成功" : "本次授权已取消");
+          }
+          if (authorization?.accountId) { setSetting("发布账号"); setTab("设置"); }
         }
         let saved: unknown;
         try { saved = JSON.parse(localStorage.getItem(publishingTargetStorageKey(session.user.username)) || "null"); } catch { /* 缓存损坏或不可用时，以最新授权清单和Cloud草稿恢复。 */ }
@@ -133,17 +147,46 @@ export default function PublishingConsole() {
   function newProfile() { openSettings?.(undefined, "video-profiles", target); }
   /** 设置保存后即时刷新候选配置，不重置当前发布计划和素材。 */
   useEffect(() => { const saved = () => { void refresh(); }; window.addEventListener("livenest-publishing-profiles-saved", saved); return () => window.removeEventListener("livenest-publishing-profiles-saved", saved); }, [refresh]);
-  /** 重新授权只操作指定发布账号，绝不发送旧直播 connect 请求。 */
-  async function connectAccount(id: string) {
-    await perform(async () => { const result = await post<{ url: string }>({ action: "account-connect", accountId: id }); window.location.assign(result.url); });
+  /** 连接失败归属请求账号，创建后的选择变化与后台轮询不清除该账号的安全错误说明。 */
+  async function requestAccountConnection(id: string) {
+    setConnectionErrors(previous => ({ ...previous, [id]: "" }));
+    try { const result = await post<{ url: string }>({ action: "account-connect", accountId: id }); window.location.assign(result.url); }
+    catch (error) { const message = requestProblem(error).message; setConnectionErrors(previous => ({ ...previous, [id]: message })); return message; }
   }
-  /** 一个新账号有独立授权目录；连接失败保留未绑定账号，重试不重新创建。 */
-  async function addAccount() {
-    await perform(async () => { if (!host) return; const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1) }); setView(old => old && { ...old, accounts: [...(old.accounts || []), created] }); setAccountId(created.id); rememberSelection(chosen, created.id); setProfileId(""); const result = await post<{ url: string }>({ action: "account-connect", accountId: created.id }); window.location.assign(result.url); });
+  /** 重试仅连接原账号；设备明确离线时等待上线，状态未知仍由服务端决定能否准入。 */
+  async function connectAccount(id: string) {
+    const selected = accounts.find(value => value.id === id);
+    if (!accepted || devices?.find(device => device.id === selected?.agentId)?.online === false) return;
+    await perform(() => requestAccountConnection(id));
+  }
+  /** 每次添加意图固定独立请求标识；只打开确认窗口，不创建账号或触发授权。 */
+  function addAccount() {
+    if (!host || hostOffline || !accepted) return;
+    addingAccountRequestId.current = crypto.randomUUID();
+    setAddingAccountId(""); setAddingAccountError(""); setAddingAccount(true);
+  }
+  /** 确认后才创建；请求结果未知也复用同一标识，Cloud 返回原账号而不累积重复记录。 */
+  async function connectAddedAccount() {
+    if (!host || hostOffline || !accepted || addingRequest.current || !addingAccount) return;
+    addingRequest.current = true; setAddingAccountError("");
+    try {
+      await perform(async () => {
+        let id = addingAccountId;
+        if (!id) {
+          const created = await post<PublishingAccount>({ action: "account-create", agentId: host.agentId, instanceId: host.instanceId, name: "发布账号 " + (accounts.length + 1), requestId: addingAccountRequestId.current });
+          readRequest.current++;
+          id = created.id; setAddingAccountId(id); setView(old => old && { ...old, accounts: [...(old.accounts || []).filter(value => value.id !== created.id), created] }); setAccountId(id); rememberSelection(chosen, id); setProfileId("");
+          try { sessionStorage.setItem("livenest-publishing-account-add:" + username, id); } catch { /* 身份与授权不依赖可选的新增成功提示缓存。 */ }
+        }
+        const message = await requestAccountConnection(id);
+        if (message) setAddingAccountError(message);
+      }, true);
+    } catch (error) { setAddingAccountError(requestProblem(error).message); }
+    finally { addingRequest.current = false; }
   }
   /** 删除范围只包含这个发布账号；离线时保留账号清理状态而不提前声称完成。 */
   async function removeAccount(id: string) {
-    await perform(async () => { await post({ action: "account-cleanup", accountId: id, confirmed: true }); await refresh(); if (accountId === id) { setProfileId(""); setIndex(undefined); setDraftEpoch(value => value + 1); } setNotice("已请求清理发布账号，等待设备确认"); });
+    await perform(async () => { await post({ action: "account-cleanup", accountId: id, confirmed: true }); await refresh(); if (accountId === id) { setProfileId(""); setIndex(undefined); setDraftEpoch(value => value + 1); } setNotice("已请求清理发布账号，等待设备确认"); }, true);
   }
   /** 返回明确受理结果并先显示已保存的修订；列表刷新失败不撤销成功受理，远端结果仍等待 Agent。 */
   async function operate(id: string, operation: "pause" | "resume" | "cancel" | "reschedule" | "reconcile" | "repair", publishAt?: string, repair?: PublishingRepair): Promise<boolean> {
@@ -178,6 +221,8 @@ export default function PublishingConsole() {
   async function rescheduleConfirm(plan: PublishingPlan) { return perform(async () => { const result = await post<PublishingPlan>({ action: "plan-reschedule-confirm", planId: plan.id, revision: plan.revision, previewId: plan.schedulePreviewId }); await refresh(); setNotice("已提交排期，等待设备确认"); return result; }, true); }
   /** 视频发布配置与账号直接从侧栏进入，保留正在准备的向导及返回路径。 */
   function navigate(name: string) { setTab(name); setNotice(""); setHistoryEntry(false); }
+  /** 将选中账号固定为发布目标后进入原有向导，不创建任务或发起平台调用。 */
+  function publishWithAccount(id: string) { chooseAccount(id); navigate("发布视频"); }
   /** 从重复素材提示直接进入历史；保留新计划及表单，返回发布视频可以继续调整。 */
   function viewHistory() { navigate("我的发布"); setHistoryEntry(true); }
   const heading = tab === "设置" ? setting : tab;
@@ -185,11 +230,16 @@ export default function PublishingConsole() {
     <SidebarGroup name="publishing-tasks" title="发布任务" label="发布功能">{["发布视频", "我的发布"].map(name => <button className={"sidebar-link " + (tab === name ? "is-active" : "")} key={name} aria-current={tab === name ? "page" : undefined} onClick={() => navigate(name)}>{name}</button>)}</SidebarGroup>
     <SidebarGroup name="publishing-settings" title="配置与账号" label="视频发布设置"><button className="sidebar-link" onClick={() => openSettings?.(undefined, "video-profiles", target)}>视频发布配置包</button><button className={"sidebar-link " + (tab === "设置" ? "is-active" : "")} aria-current={tab === "设置" ? "page" : undefined} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>发布账号</button></SidebarGroup>
     {view?.administrator && <SidebarGroup name="publishing-admin" title="管理员" label="发布管理"><button className={"sidebar-link " + (tab === "发布策略" ? "is-active" : "")} onClick={() => navigate("发布策略")}>发布策略</button></SidebarGroup>}
-  </WorkbenchNavigation><main id={active ? "workspace" : undefined} tabIndex={-1} className="main-wrapper publishing-shell"><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
+  </WorkbenchNavigation><main id={active ? "workspace" : undefined} tabIndex={-1} className={"main-wrapper publishing-shell" + (tab === "设置" ? " is-accounts-page" : "")}><header className="workspace-heading"><h1>{heading}</h1><button className="btn-ghost" disabled={busy} onClick={reload} aria-label="刷新发布状态"><RefreshIcon />刷新</button></header>
     {visibleError && <div className="publishing-error" role="alert"><span>{visibleError}</span><button onClick={reload}>刷新状态</button></div>}{notice && <div className="publishing-message" role="status"><span>{notice}</span><button className="btn-ghost" onClick={() => setNotice("")}>关闭</button></div>}
     {!view || !username ? <p className="publishing-empty" role="status">正在读取…</p> : <>
       {!accepted && <section className="publishing-warning publishing-onboarding"><p>使用前请同意 <Link href="/privacy">隐私政策</Link> 和 <Link href="/terms">服务条款</Link>。</p><button disabled={busy} onClick={() => void perform(async () => { await post({ action: "consent", version: PRIVACY_VERSION }); await refresh(); })}>同意并继续</button></section>}
-      {tab !== "我的发布" && <div className="publishing-target"><label>设备<select aria-label="设备" disabled={busy} value={chosen} onChange={e => choose(e.target.value)}><option value="">请选择设备</option>{targets.map(value => <option key={value.agentId + ":" + value.instanceId} value={value.agentId + ":" + value.instanceId}>{value.name}</option>)}</select></label>{target && <><label>发布账号<select aria-label="发布账号" disabled={busy} value={account?.id || ""} onChange={e => chooseAccount(e.target.value)}><option value="">请选择发布账号</option>{accounts.map(value => <option key={value.id} value={value.id}>{value.channel || value.name}{value.status === "cleanup_pending" ? " · 清理中" : value.status !== "connected" ? " · 未连接" : ""}</option>)}</select></label>{!accounts.length && <button disabled={busy || !accepted} onClick={() => void addAccount()}>添加账号</button>}{tab === "发布视频" && account && <button className="btn-ghost" disabled={busy} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>管理账号</button>}</>}</div>}
+      {tab !== "我的发布" && <div className={"publishing-target" + (tab === "设置" ? " is-accounts" : "")}>
+        <label>设备<select aria-label="设备" disabled={busy} value={chosen} onChange={event => choose(event.target.value)}><option value="">请选择设备</option>{targets.map(value => <option key={value.agentId + ":" + value.instanceId} value={value.agentId + ":" + value.instanceId}>{value.name}</option>)}</select></label>
+        {target && tab !== "设置" && <><label>发布账号<select aria-label="发布账号" disabled={busy} value={account?.id || ""} onChange={event => chooseAccount(event.target.value)}><option value="">请选择发布账号</option>{accounts.map(value => <option key={value.id} value={value.id}>{value.channel || value.name}{value.status === "cleanup_pending" ? " · 清理中" : value.status !== "connected" ? " · 未连接" : ""}</option>)}</select></label>{!accounts.length && <button disabled={busy || !accepted || hostOffline} onClick={() => void addAccount()}>添加账号</button>}{tab === "发布视频" && account && <button className="btn-ghost" disabled={busy} onClick={() => { setSetting("发布账号"); navigate("设置"); }}>管理账号</button>}</>}
+      </div>}
+      {target && hostOffline && (tab === "发布视频" || tab === "设置") && <p className="publishing-warning" role="status">{accountOfflineMessage}</p>}
+      {tab === "发布视频" && account && connectionErrors[account.id] && <div className="publishing-error" role="alert"><span>{connectionErrors[account.id]}</span><button disabled={busy || !accepted || hostOffline || ["cleanup_pending", "deleted"].includes(account.status)} onClick={() => void connectAccount(account.id)}>重试连接频道</button></div>}
 
       {target && <div hidden={tab !== "发布视频"}><PublishingWizard key={username + ":" + chosen + ":" + accountId + ":" + draftEpoch} username={username} target={target} root={index?.root || directory.root} directoryMessage={directory.message} directoryReading={directory.reading} retryDirectory={directory.retry} scanned={!!index} batches={index?.batches || []} profiles={profiles} profileId={profileId} selectProfile={setProfileId} plans={plans} jobs={jobs} allJobs={view.jobs} removals={view.removals} devices={devices} busy={busy} accepted={accepted} scan={scan} newProfile={() => void newProfile()} operate={operate} archive={archive} removeBatch={removeBatch} update={update} reschedulePreview={reschedulePreview} rescheduleConfirm={rescheduleConfirm} viewOverview={() => navigate("我的发布")} viewHistory={viewHistory}
         preview={(id, batchId, rule, items, options, copy) => perform(async () => { const result = await post<PublishingPlan>({ action: "plan-preview", profileId: id, batchId, rule, items, copy, ...(view.templates ? { use: { agentId: target.agentId, instanceId: target.instanceId, accountId: target.accountId, channelId: target.channelId, templateRevision: profiles.find(profile => profile.id === id)!.revision, ...options } } : {}) }); await refresh(); return result; })}
@@ -198,9 +248,11 @@ export default function PublishingConsole() {
       {!target && tab !== "我的发布" && <div className="publishing-empty"><h2>{targets.length ? "请选择直播电脑" : "还没有直播电脑"}</h2>{targets.length ? <p>从上方选择要发布视频的电脑与实例。</p> : <Link href="/workspace">添加直播电脑</Link>}</div>}
       {tab === "我的发布" && <MyPublishing initialView={historyEntry ? "历史" : "总览"} create={() => navigate("发布视频")} plans={view.plans || []} jobs={view.jobs} targets={(view.accounts || []).map(account => ({ agentId: account.agentId, instanceId: account.instanceId, channelId: account.channelId, channel: account.channel, name: targets.find(target => target.agentId === account.agentId && target.instanceId === account.instanceId)?.name || account.name }))} allJobs={view.jobs} removals={view.removals} devices={devices} busy={busy} operate={operate} archive={archive} removeBatch={removeBatch} />}
       {tab === "设置" && <>
-        {<><div className="publishing-section-heading"><span>{accounts.length} 个账号</span>{!!accounts.length && <button disabled={busy || !target || !accepted} onClick={() => void addAccount()}>添加账号</button>}</div>{accounts.map(value => <div key={value.id}><ChannelBinding account={value} busy={busy} disabled={!accepted} connect={() => void connectAccount(value.id)} /><details className="publishing-details"><summary>授权与数据 · {value.channel || value.name}</summary><DataSettings accountName={value.channel || value.name} disabled={value.status === "cleanup_pending"} busy={busy} cleanups={view.cleanups.filter(cleanup => cleanup.accountId === value.id)} readAt={readAt} remove={() => removeAccount(value.id)} /></details></div>)}{!accounts.length && <div className="publishing-empty"><h2>还没有发布账号</h2></div>}{view.profiles.some(profile => !profile.accountId && profile.agentId + ":" + profile.instanceId === chosen) && <details className="publishing-details"><summary>旧版任务授权</summary><DataSettings key={chosen} disabled={!target} busy={busy} cleanups={cleanups} readAt={readAt} remove={async () => { await perform(async () => { await post({ action: "cleanup", agentId: target!.agentId, instanceId: target!.instanceId, confirmed: true }); await refresh(); setIndex(undefined); try { localStorage.removeItem("livenest-publishing-draft:" + username + ":" + chosen); } catch { /* 浏览器存储不可用不阻止清理Cloud数据。 */ } setDraftEpoch(value => value + 1); setNotice("删除请求已保存，等待设备确认"); }); }} /></details>}</>}
+        {target && <PublishingAccountManager accounts={accounts} selectedId={accountId} layout={accountsLayout} busy={busy} accepted={accepted} offline={hostOffline} connectionErrors={connectionErrors} cleanups={view.cleanups} readAt={readAt} select={chooseAccount} add={addAccount} connect={id => void connectAccount(id)} publish={publishWithAccount} remove={removeAccount} />}
+        {view.profiles.some(profile => !profile.accountId && profile.agentId + ":" + profile.instanceId === chosen) && <details className="publishing-details"><summary>旧版任务授权</summary><DataSettings key={chosen} disabled={!target} busy={busy} cleanups={cleanups} readAt={readAt} remove={async () => { await perform(async () => { await post({ action: "cleanup", agentId: target!.agentId, instanceId: target!.instanceId, confirmed: true }); await refresh(); setIndex(undefined); try { localStorage.removeItem("livenest-publishing-draft:" + username + ":" + chosen); } catch { /* 浏览器存储不可用不阻止清理Cloud数据。 */ } setDraftEpoch(value => value + 1); setNotice("删除请求已保存，等待设备确认"); }); }} /></details>}
       </>}
       {tab === "发布策略" && view.administrator && <PolicyEditor initial={view.policy} quota={view.quota} busy={busy} save={async policy => { await perform(async () => { await post({ action: "policy", policy }); await refresh(); setNotice("策略已保存"); }); }} />}
     </>}
+    <AccountConnectDialog open={addingAccount} busy={busy} blocked={!host || hostOffline || !accepted} retry={!!addingAccountId} error={addingAccountError || (hostOffline ? accountOfflineMessage : undefined)} onClose={() => setAddingAccount(false)} connect={() => void connectAddedAccount()} />
   </main></div>;
 }

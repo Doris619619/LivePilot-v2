@@ -7,7 +7,9 @@ import { store, Store, seal, unseal } from "../storage";
 import { AppError, isAppError } from "../errors";
 import { youtubeFetch, type YouTubeContext } from "./usage";
 import { bindAuthorizationFailure } from "./authorization-failure";
-type Tokens = { accessToken: string; refreshToken: string; expiresAt: number; channelId: string; channel: string; authorizationGeneration?: string };
+import { channelAvatar, type ChannelSnippet } from "./account-identity";
+import type { PublishingAccountIdentity } from "@/shared/publishing-account-identity";
+type Tokens = PublishingAccountIdentity & { accessToken: string; refreshToken: string; expiresAt: number; channelId: string; channel: string; authorizationGeneration?: string };
 type TokenReply = { access_token?: string; refresh_token?: string; expires_in?: number };
 type Transaction = { actor?: string; instanceId: string; state: string; verifier: string; expiresAt: number };
 /** 用 Cookie 摘要定位内部事务文件，不把随机 Cookie 直接用作路径。 */
@@ -107,11 +109,12 @@ export class YouTubeAuth {
       if (body?.error?.errors?.some(error => ["quotaExceeded", "dailyLimitExceeded"].includes(error.reason || ""))) throw new AppError("YOUTUBE_DAILY_QUOTA", "YouTube 配额已耗尽，频道确认尚未完成，请等待太平洋时间次日恢复。", 429);
       throw new AppError("YOUTUBE_CHANNEL", "无法读取 YouTube Channel。请启用 YouTube Data API v3 并检查授权。");
     }
-    const data = await response.json() as { items?: { id: string; snippet: { title: string } }[] };
+    const data = await response.json() as { items?: { id: string; snippet: ChannelSnippet }[] };
     if (data.items?.length !== 1) throw new AppError("YOUTUBE_CHANNEL", "请授权一个明确的 YouTube Channel。");
     const channel = data.items[0];
     if (expectedChannel && channel.id !== expectedChannel) throw new AppError("CHANNEL", "当前有未结束场次，请重新授权原 Channel。");
-    await this.save({ accessToken: reply.access_token!, refreshToken: reply.refresh_token, expiresAt: Date.now() + (reply.expires_in || 3600) * 1000, channelId: channel.id, channel: channel.snippet.title } satisfies Tokens);
+    const identity = this.usageIdentity?.().accountId ? { channelAvatarUrl: channelAvatar(channel.snippet) } : {};
+    await this.save({ accessToken: reply.access_token!, refreshToken: reply.refresh_token, expiresAt: Date.now() + (reply.expires_in || 3600) * 1000, channelId: channel.id, channel: channel.snippet.title, ...identity } satisfies Tokens);
   }
   /** 返回实际凭据及其私有代次；受控刷新错误绑定旧凭据，新OAuth代次即使复用refresh token也不可被旧刷新覆盖。 */
   async access(rejectedAccessToken?: string): Promise<Tokens> {

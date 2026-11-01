@@ -139,10 +139,10 @@ export async function removePublishingBatch(user: Member, batchId: string) {
 }
 /** 记录产品隐私同意，不代替用户对具体上传批次和 AI 自动操作的确认。 */
 export async function acceptPublishingPrivacy(user: Member, version: string) { if (version !== PRIVACY_VERSION) throw new AppError("INPUT", "隐私政策版本已更新，请重新阅读。"); await edit(s => { s.consents[user.username] = { version, acceptedAt: Date.now() }; }); return { ok: true }; }
-/** 账号创建是独立发布入口，首次使用仍需明确接受产品隐私政策。 */
-export async function createPublishingAccount(user: Member, agentId: string, instanceId: string, name: string) {
+/** 账号创建仍需隐私同意；可选请求标识使未知结果的重试复用原账号，不能绕过当前归属核查。 */
+export async function createPublishingAccount(user: Member, agentId: string, instanceId: string, name: string, requestId?: string) {
   if ((await readState()).consents[user.username]?.version !== PRIVACY_VERSION) throw new AppError("PRIVACY", "请先同意隐私政策再创建发布账号。");
-  const account = await newPublishingAccount(user, agentId, instanceId, name); await audit(user.username, "publishing-account-create", instanceId, "succeeded"); return account;
+  const account = await newPublishingAccount(user, agentId, instanceId, name, requestId); await audit(user.username, "publishing-account-create", instanceId, "succeeded"); return account;
 }
 /** 连接只发起用户所选账号的 OAuth 桥；Cookie 由 HTTP 层保存，不能进入 Browser DTO。 */
 export async function connectPublishingAccount(user: Member, accountId: string) {

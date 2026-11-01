@@ -1,0 +1,109 @@
+/* 发布账号工作区的空间节奏和三种布局；沿用现有蓝白工作台，详情始终只显示一个账号。 */
+.publishing-shell.is-accounts-page { width: 100%; max-width: 1320px; justify-self: center; }
+.account-manager { --account-space-sm: 8px; --account-space-md: 16px; --account-space-lg: 24px; --account-space-xl: 32px; display: grid; grid-template-columns: 280px minmax(0, 1fr); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--surface-base); min-height: 496px; overflow: clip; }
+.account-manager-directory { min-width: 0; padding: var(--account-space-lg) var(--account-space-md); border-right: 1px solid var(--border-subtle); }
+.account-manager-toolbar { display: flex; align-items: center; justify-content: space-between; gap: var(--account-space-md); margin-bottom: var(--account-space-lg); padding-inline: var(--account-space-sm); }
+.account-manager-toolbar h2 { display: flex; align-items: center; gap: var(--account-space-sm); font-size: 15px; font-weight: 600; }
+.account-manager-toolbar h2 > span { color: var(--text-muted); font-size: 14px; font-weight: 400; }
+.account-manager-toolbar > button { padding-inline: 12px; font-size: 14px; }
+.account-manager-collection { display: grid; gap: 4px; }
+.account-manager-row { display: grid; grid-template-columns: minmax(0, 1fr) 44px; gap: 12px; align-items: center; min-width: 0; border: 1px solid transparent; border-radius: var(--radius-md); padding-right: 4px; }
+.account-manager-row.is-selected { background: var(--bg-subtle); }
+.account-manager-row:hover { background: var(--surface-hover); }
+.account-manager-row.is-selected:hover { background: var(--bg-subtle); }
+.account-manager--split .account-manager-collection, .account-manager--compact .account-manager-collection { max-height: 560px; overflow-y: auto; scrollbar-color: var(--border-default) transparent; }
+.account-manager .account-manager-item { display: grid; grid-template-columns: 36px minmax(0, 1fr); justify-items: start; align-items: center; column-gap: 12px; row-gap: 4px; width: 100%; padding: 14px 12px; min-height: 80px; border: 1px solid transparent; border-radius: var(--radius-md); background: transparent; white-space: normal; text-align: left; font-weight: 400; }
+.account-manager .account-manager-item:hover:not(:disabled) { background: transparent; border-color: transparent; }
+.account-manager .account-manager-item.is-selected { background: transparent; border-color: transparent; }
+.account-manager-item.is-selected .account-manager-item-name strong { font-weight: 600; }
+.account-manager button.account-manager-delete { width: 44px; min-width: 44px; height: 44px; padding: 0; color: var(--text-muted); border-color: transparent; background: transparent; }
+.account-manager button.account-manager-delete:hover:not(:disabled) { color: var(--live-red); background: var(--live-red-subtle); border-color: transparent; }
+.account-manager-avatar { display: grid; place-items: center; grid-row: 1 / 3; width: 36px; height: 36px; border-radius: var(--radius-md); color: var(--text-muted); background: var(--bg-subtle); }
+.account-manager-item.is-selected .account-manager-avatar { background: var(--surface-base); color: var(--accent-primary); }
+.account-manager-item-name { display: grid; min-width: 0; gap: 4px; }
+.account-manager-item-name strong { font-size: 14px; font-weight: 550; color: var(--text-primary); overflow-wrap: anywhere; }
+.account-manager-item-name > span { color: var(--text-muted); font-size: 13px; }
+.account-manager-state { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; line-height: 1.5; color: var(--text-muted); white-space: normal; }
+.account-manager-state > i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.account-manager-state--connected { color: var(--success-green); }
+.account-manager-state--attention { color: var(--warning-amber); }
+.account-manager-state--pending { color: var(--text-muted); }
+.account-manager-detail { min-width: 0; padding: var(--account-space-xl); }
+.account-manager-detail-heading { display: flex; align-items: center; gap: var(--account-space-md); margin-bottom: var(--account-space-xl); }
+.account-manager-detail-logo { display: grid; place-items: center; width: 56px; height: 56px; border-radius: var(--radius-lg); background: var(--accent-subtle); color: var(--accent-primary); flex: none; }
+.account-manager-detail-logo > img { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.account-manager-detail-heading > div { display: grid; gap: var(--account-space-sm); min-width: 0; }
+.account-manager .account-manager-detail-heading h2 { font-size: 21px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.account-manager-channel-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-top: -16px; margin-bottom: 16px; font-size: 14px; }
+.account-manager-connection { display: grid; gap: var(--account-space-md); margin-bottom: var(--account-space-xl); }
+.account-manager-connection > p { max-width: 62ch; font-size: 14px; color: var(--text-secondary); line-height: 1.7; }
+.account-manager-primary-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.account-manager-primary-actions > button { min-width: 120px; }
+.account-manager-connection > .account-manager-error { padding: 12px 16px; color: var(--error-rose); background: var(--error-rose-subtle); border-radius: var(--radius-sm); overflow-wrap: anywhere; }
+.account-manager-cleanup { color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+/* 账号弹窗自行定义完整节奏，避免共享描述外边距与内容 gap 累加。 */
+.ui-dialog:has(> .account-dialog-content) { width: min(440px, calc(100vw - 32px)); padding: 24px; border-radius: var(--radius-lg); }
+.ui-dialog:has(> .account-dialog-content) > .ui-dialog-heading { margin-bottom: 8px; padding-right: 40px; }
+.ui-dialog:has(> .account-dialog-content) > .ui-dialog-heading h2 { min-width: 0; font-size: 20px; line-height: 1.4; overflow-wrap: anywhere; }
+.ui-dialog:has(> .account-dialog-content) .ui-close { position: absolute; top: 16px; right: 16px; width: 44px; height: 44px; }
+.ui-dialog:has(> .account-dialog-content) > .ui-dialog-description { margin-bottom: 0; line-height: 1.6; }
+.account-dialog-content { display: flex; flex-direction: column; color: var(--text-secondary); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.account-dialog-notes { display: grid; gap: 8px; margin-top: 16px; color: var(--text-muted); }
+.account-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.account-dialog-actions > button { min-width: 80px; }
+.account-dialog-actions > .btn-danger { color: white; background: var(--live-red); border-color: var(--live-red); }
+.account-dialog-actions > .btn-danger:hover:not(:disabled) { color: white; background: color-mix(in srgb, var(--live-red) 90%, black); border-color: transparent; }
+.account-dialog-content .account-manager-error { margin-top: 16px; padding: 12px 16px; color: var(--error-rose); background: var(--error-rose-subtle); border-radius: var(--radius-sm); }
+.account-manager-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 40px 24px; min-height: 360px; text-align: center; }
+.account-manager-empty h2 { font-size: 18px; }
+.account-manager-empty p { font-size: 14px; color: var(--text-muted); }
+.account-manager-mobile-picker { display: none !important; }
+.account-manager--grid { display: block; border: 0; border-radius: 0; }
+.account-manager--grid .account-manager-directory { padding: 0; border: 0; }
+.account-manager--grid .account-manager-toolbar { padding: 0; }
+.account-manager--grid .account-manager-collection { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.account-manager--grid .account-manager-row { border-color: var(--border-subtle); border-radius: var(--radius-lg); }
+.account-manager--grid .account-manager-item { min-height: 108px; padding: 20px 12px; grid-template-columns: 40px minmax(0, 1fr); border-radius: var(--radius-lg); }
+.account-manager--grid .account-manager-row.is-selected { border-color: var(--border-subtle); }
+.account-manager--grid .account-manager-avatar { width: 40px; height: 40px; }
+.account-manager--grid .account-manager-item-name strong { font-size: 15px; }
+.account-manager--grid .account-manager-detail { padding: 32px 0 0; margin-top: 32px; border-top: 1px solid var(--border-subtle); }
+.account-manager--compact { grid-template-columns: minmax(0, 1fr) 348px; }
+.account-manager--compact .account-manager-directory { padding: 24px; }
+.account-manager--compact .account-manager-collection { gap: 0; }
+.account-manager--compact .account-manager-detail { padding: 28px 24px; background: var(--surface-hover); }
+.account-manager--compact .account-manager-row { border-radius: 0; border-block-end-color: var(--border-subtle); padding-right: 4px; }
+.account-manager--compact .account-manager-row.is-selected { border-color: transparent; border-block-end-color: var(--border-subtle); }
+.account-manager--compact .account-manager-item { min-height: 72px; grid-template-columns: minmax(0, 1fr) 104px; padding: 12px; border-radius: 0; column-gap: 12px; }
+.account-manager--compact .account-manager-avatar { display: none; }
+.account-manager--compact .account-manager-item-name { grid-row: 1; }
+.account-manager-table-heading { display: grid; grid-template-columns: minmax(0, 1fr) 104px 44px; padding: 0 12px 12px; column-gap: 12px; border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font-size: 13px; }
+.account-manager--compact .account-manager-primary-actions > button { min-width: 0; }
+.account-manager--compact .account-manager-detail-heading { gap: 12px; }
+.account-manager--compact .account-manager-detail-logo { width: 44px; height: 44px; }
+.account-manager--compact .account-manager-detail-heading h2 { font-size: 18px; }
+.publishing-target.is-accounts { max-width: 460px; padding-bottom: 0; border-bottom: 0; margin-bottom: 24px; }
+@media (max-width: 1100px) and (min-width: 761px) {
+  .account-manager { grid-template-columns: 224px minmax(0, 1fr); }
+  .account-manager-detail { padding: 24px; }
+  .account-manager--compact { grid-template-columns: minmax(0, 1fr) 292px; }
+  .account-manager--compact .account-manager-item { grid-template-columns: minmax(0, 1fr) 92px; }
+  .account-manager-table-heading { grid-template-columns: minmax(0, 1fr) 92px 44px; }
+  .account-manager--compact .account-manager-directory { padding: 24px 12px; }
+}
+@media (max-width: 760px) {
+  .account-manager { display: block; min-height: 0; }
+  .account-manager-directory { border-right: 0; border-bottom: 1px solid var(--border-subtle); padding: 16px; }
+  .account-manager-toolbar { padding: 0; margin-bottom: 16px; }
+  .account-manager-mobile-picker { display: grid !important; grid-template-columns: minmax(0, 1fr) 44px; align-items: end; gap: 12px; font-size: 14px; }
+  .account-manager-collection, .account-manager-table-heading { display: none !important; }
+  .account-manager-detail, .account-manager--compact .account-manager-detail { padding: 24px 20px; }
+  .account-manager-detail-heading { margin-bottom: 24px; }
+  .account-manager .account-manager-detail-heading h2 { font-size: 19px; }
+  .account-manager-detail-logo { width: 44px; height: 44px; }
+  .account-manager-connection { margin-bottom: 24px; }
+  .account-manager--grid .account-manager-directory { padding: 0 0 20px; }
+  .account-manager--grid .account-manager-detail { padding: 24px 0 0; margin-top: 0; }
+  .account-manager--compact .account-manager-directory { padding: 16px; }
+  .publishing-target.is-accounts { max-width: none; }
+}

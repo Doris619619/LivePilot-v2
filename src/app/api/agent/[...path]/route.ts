@@ -4,6 +4,7 @@ import { authenticate } from "@/server/access";
 import { problemSchema } from "@/shared/problems";
 import { z } from "zod";
 import { publishingReportSchema, publishingAccountReportSchema } from "@/shared/publishing";
+import { publishingAccountIdentitySchema } from "@/shared/publishing-account-identity";
 import { aiKeySchema } from "@/shared/broadcast-ai";
 import { agentPublishingAccounts, claimPublishingAccount, syncPublishingAccounts } from "@/cloud/publishing-accounts";
 import { reportPublishing, chargePublishing, publishingCleanups, completePublishingCleanup } from "@/cloud/publishing";
@@ -82,7 +83,7 @@ export async function POST(request: Request, context: Context) {
       return Response.json(apiKey.success ? { apiKey: apiKey.data } : {}, { headers: { "Cache-Control": "no-store" } });
     }
     if (route === "publishing/sync") { const v = z.object({ reports: z.array(publishingReportSchema).max(32), busy: z.boolean(), accounts: z.array(publishingAccountReportSchema).max(1000).optional() }).strict().parse(raw); const acknowledged = await reportPublishing(agent.id, v.reports); const accounts = v.accounts ? await syncPublishingAccounts(agent.id, v.accounts) : await agentPublishingAccounts(agent.id); await agentStore(agent.id).write("publishing-runtime.json", { busy: v.busy, at: Date.now() }); return Response.json({ acknowledged, accounts, cleanups: await publishingCleanups(agent.id) }); }
-    if (route === "publishing/accounts-binding") { const v = z.object({ accountId: uuidSchema, instanceId: idSchema, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), channel: z.string().min(1).max(200), channelCheckedAt: z.number().nonnegative().optional(), authorizationEpoch: uuidSchema.optional(), authorizationGeneration: uuidSchema.optional(), confirm: z.boolean() }).strict().parse(raw); return Response.json(await claimPublishingAccount(agent.id, v.accountId, v.instanceId, v.channelId, v.channel, v.confirm, v.channelCheckedAt, { epoch: v.authorizationEpoch, generation: v.authorizationGeneration })); }
+    if (route === "publishing/accounts-binding") { const v = z.object({ accountId: uuidSchema, instanceId: idSchema, channelId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/), channel: z.string().min(1).max(200), identity: publishingAccountIdentitySchema.optional(), channelCheckedAt: z.number().nonnegative().optional(), authorizationEpoch: uuidSchema.optional(), authorizationGeneration: uuidSchema.optional(), confirm: z.boolean() }).strict().parse(raw); return Response.json(await claimPublishingAccount(agent.id, v.accountId, v.instanceId, v.channelId, v.channel, v.confirm, v.channelCheckedAt, { epoch: v.authorizationEpoch, generation: v.authorizationGeneration }, v.identity)); }
     if (route === "publishing/quota") { const v = z.object({ id: uuidSchema, receipt: uuidSchema, units: z.number().int().min(0).max(400), upload: z.boolean() }).strict().parse(raw); return Response.json(await chargePublishing(agent.id, v.id, v.receipt, v.units, v.upload)); }
     if (route === "publishing/cleanup") { const v = z.object({ id: uuidSchema }).strict().parse(raw); return Response.json(await completePublishingCleanup(agent.id, v.id)); }
     // 维护同样要求既有的有效会话，桌面通过 Agent IPC 调用。

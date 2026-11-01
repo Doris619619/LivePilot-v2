@@ -11,6 +11,7 @@ import { Executor } from "@/agent/executor";
 import { Transport } from "@/agent/transport";
 import { fixtureApi, fixtureJob } from "./publishing-fixtures";
 import type { Service } from "@/core/service";
+import { YouTubeAuth } from "@/core/youtube/auth";
 
 let root: string;
 const executors: Executor[] = [], runners: PublishingRunner[] = [];
@@ -43,7 +44,27 @@ it("claims then saves an isolated encrypted publishing token without changing th
   await connect(accounts, id); expect(calls).toEqual([false, true]);
   const encrypted = await readFile(path.join(accounts.store(id).dir, "youtube.enc"), "utf8"); expect(encrypted).not.toContain("ACCESS_one"); expect(encrypted).not.toContain("REFRESH_one");
   expect(await readFile(path.join(root, "youtube.enc"), "utf8")).toBe(originalToken); expect(await readFile(path.join(root, "control.json"), "utf8")).toBe(originalControl);
-  expect(await accounts.statuses()).toEqual([{ id, instanceId: "main", channelId: "channel_one", channel: "Channel One", connectedAt: expect.any(Number), channelCheckedAt: expect.any(Number) }]);
+  expect(await accounts.statuses()).toEqual([{ id, instanceId: "main", channelId: "channel_one", channel: "Channel One", identity: {}, connectedAt: expect.any(Number), channelCheckedAt: expect.any(Number) }]);
+});
+
+it("uses the existing YouTube permission for channel avatars, survives restart, and clears the avatar on cleanup", async () => {
+  const id = randomUUID(); const avatar = "https://yt3.googleusercontent.com/synthetic-channel=s240-c-k"; const upstream = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (url, input) => {
+    if (String(url).includes("/channels?")) return Response.json({ items: [{ id: "channel_one", snippet: { title: "Brand Channel", thumbnails: { medium: { url: avatar } } } }] });
+    return upstream(url, input);
+  });
+  const binding = vi.fn(async () => {}); const accounts = new PublishingAccounts(binding);
+  const begin = await accounts.begin(id, "main", "alice"); expect(new URL(begin.url).searchParams.get("scope")).toBe("https://www.googleapis.com/auth/youtube");
+  const legacy = await new YouTubeAuth(new Store(root), "main").begin("alice"); expect(new URL(legacy.url).searchParams.get("scope")).toBe("https://www.googleapis.com/auth/youtube");
+  await accounts.finish(id, "main", begin.cookie, new URL(begin.url).searchParams.get("state")!, "one", "alice");
+  expect((await accounts.statuses())[0]).toMatchObject({ channel: "Brand Channel", identity: { channelAvatarUrl: avatar } });
+  expect(JSON.stringify(await accounts.statuses())).not.toMatch(/ACCESS_|REFRESH_/);
+  expect(vi.mocked(fetch).mock.calls.every(([url]) => String(url) === "https://oauth2.googleapis.com/token" || String(url).startsWith("https://www.googleapis.com/youtube/v3/channels?"))).toBe(true);
+  const restored = new PublishingAccounts(binding); await restored.register(); expect(binding).toHaveBeenLastCalledWith(id, "main", expect.objectContaining({ identity: { channelAvatarUrl: avatar } }), true);
+  vi.mocked(fetch).mockImplementation(upstream);
+  await connect(restored, id); expect((await restored.statuses())[0].identity).toEqual({});
+  await restored.startCleanup(id, "main", Date.now()); await restored.revoke(id);
+  const record = await restored.store(id).read<Record<string, unknown>>("account.json"); expect(record).not.toHaveProperty("channelAvatarUrl");
 });
 
 it("isolates two accounts on one host and rejects a reconnect to a different channel before saving", async () => {
@@ -59,7 +80,7 @@ it("does not persist a token if Cloud rejects the account channel reservation", 
 it("recovers a lost Cloud confirmation using the exact local account after a process restart", async () => {
   const id = randomUUID(); const binding = vi.fn(async (_id: string, _instance: string, _channel: unknown, confirm: boolean) => { if (confirm) throw new Error("lost confirmation"); }); const first = new PublishingAccounts(binding);
   await expect(connect(first, id)).rejects.toThrow("lost confirmation"); expect((await first.auth(id).tokens())?.channelId).toBe("channel_one");
-  const restoredBinding = vi.fn(async () => {}); const restored = new PublishingAccounts(restoredBinding); await restored.register(); expect(restoredBinding).toHaveBeenCalledExactlyOnceWith(id, "main", { channelId: "channel_one", channel: "Channel One", channelCheckedAt: expect.any(Number) }, true);
+  const restoredBinding = vi.fn(async () => {}); const restored = new PublishingAccounts(restoredBinding); await restored.register(); expect(restoredBinding).toHaveBeenCalledExactlyOnceWith(id, "main", { channelId: "channel_one", channel: "Channel One", identity: {}, channelCheckedAt: expect.any(Number) }, true);
 });
 
 it("binds PKCE transactions to their publishing account and actor", async () => {
@@ -120,7 +141,9 @@ it("refreshes cached channel metadata using a real mocked API read instead of tr
 
 it("deletes expired cached channel titles after a failed refresh, retains the target identity and persists retry backoff across restart", async () => {
   vi.useFakeTimers({ toFake: ["Date"] }); const start = Date.parse("2026-01-01T00:00:00Z"); vi.setSystemTime(start); const id = randomUUID(); const accounts = new PublishingAccounts(async () => {}); await connect(accounts, id); vi.mocked(fetch).mockReset().mockRejectedValue(new Error("synthetic network failure"));
+  const avatar = "https://yt3.ggpht.com/synthetic=s88-c-k"; await accounts.store(id).write("account.json", { ...await accounts.store(id).read<Record<string, unknown>>("account.json"), channelAvatarUrl: avatar }); await accounts.store(id).write("youtube.enc", seal({ ...await accounts.auth(id).tokens(), channelAvatarUrl: avatar }));
   vi.setSystemTime(start + 31 * 86400_000); const status = (await accounts.statuses())[0]; expect(status).toMatchObject({ channelId: "channel_one", channelCheckedAt: start }); expect(status.channel).toBeUndefined(); expect((await accounts.auth(id).tokens())?.channel).toBe("");
   expect(await accounts.store(id).read("account.json")).toMatchObject({ channelId: "channel_one", channelCheckedAt: start }); expect((await accounts.store(id).read<{ channel?: string }>("account.json"))?.channel).toBeUndefined(); expect(fetch).toHaveBeenCalledOnce();
+  expect(status.identity?.channelAvatarUrl).toBeUndefined(); expect((await accounts.auth(id).tokens())?.channelAvatarUrl).toBeUndefined(); expect(await accounts.store(id).read("account.json")).not.toHaveProperty("channelAvatarUrl");
   const restored = new PublishingAccounts(async () => {}); vi.setSystemTime(Date.now() + 1000); expect((await restored.statuses())[0].channel).toBeUndefined(); expect(fetch).toHaveBeenCalledOnce();
 });

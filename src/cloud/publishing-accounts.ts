@@ -6,10 +6,11 @@ import { AppError } from "@/core/errors";
 import { publishingAccountSchema, type PublishingAccount, type PublishingAccountReport } from "@/shared/publishing";
 import { agentStore, listAgents, requireTarget } from "./agents";
 import { cloudStore, transaction } from "./store";
+import { publishingAccountIdentitySchema, type PublishingAccountIdentity } from "@/shared/publishing-account-identity";
 
 export type PublishingAccountCleanup = { id: string; accountId: string; owner: string; actor: string; agentId: string; instanceId: string; createdAt: number; deadline: number; state: "pending" | "complete"; completedAt?: number };
 type AuthorizationAttempt = { epoch: string; generation?: string; writePossible: boolean; previous?: { generation?: string; channelId: string; connectedAt?: number } };
-type AccountRecord = { value: PublishingAccount; reauthorizationEpoch?: string; authorizationGeneration?: string; authorizationFailures?: Record<string, string>; authorizationAttempt?: AuthorizationAttempt; candidateChannelId?: string; candidateChannel?: string; candidateCheckedAt?: number; claimedAt?: number };
+type AccountRecord = { value: PublishingAccount; creationRequest?: { id: string; actor: string }; channelAvatarCheckedAt?: number; reauthorizationEpoch?: string; authorizationGeneration?: string; authorizationFailures?: Record<string, string>; authorizationAttempt?: AuthorizationAttempt; candidateChannelId?: string; candidateChannel?: string; candidateCheckedAt?: number; claimedAt?: number };
 type AccountState = { accounts: AccountRecord[]; cleanups: PublishingAccountCleanup[] };
 const file = "publishing-accounts.json";
 
@@ -20,14 +21,15 @@ async function edit<T>(fn: (state: AccountState) => Promise<T> | T) {
 }
 /** 缺文件是尚未创建独立账号；损坏文件不能被当作空账号列表。 */
 async function readState() { const state = await cloudStore().read<AccountState>(file) || { accounts: [], cleanups: [] }; expireChannelNames(state); return state; }
-/** API 频道名只按真实 channels 请求时间保留30天，心跳和 Token 刷新均不续期。 */
+/** 标题和头像分别按真实观察时间保留30天；旧 Agent 的标题回报不能续期头像，缺头像观察时间时保守清除。 */
 function expireChannelNames(state: AccountState) {
   for (const record of state.accounts) {
     if (!record.value.channelCheckedAt || record.value.channelCheckedAt <= Date.now() - 30 * 86400_000) delete record.value.channel;
+    if (!record.channelAvatarCheckedAt || record.channelAvatarCheckedAt <= Date.now() - 30 * 86400_000) { delete record.value.channelAvatarUrl; delete record.channelAvatarCheckedAt; }
     if (!record.candidateCheckedAt || record.candidateCheckedAt <= Date.now() - 30 * 86400_000) delete record.candidateChannel;
   }
 }
-/** Scheduler 持久删除到期 API 名称；当前页面读取也不能返回已经过期的缓存。 */
+/** Scheduler 持久删除到期频道名称和头像；当前页面读取也不能返回已经过期的缓存。 */
 export async function expirePublishingAccountData() { return edit(state => expireChannelNames(state)); }
 /** 旧 Agent 可以继续直播和旧任务；新独立账号必须明确声明协议能力。 */
 export async function requirePublishingAccountsCapability(agentId: string) {
@@ -75,17 +77,25 @@ export async function requirePublishingAccountOwner(agentId: string, instanceId:
 export async function ownsPublishingAccountHistory(agentId: string, instanceId: string, id: string) {
   return (await readState()).accounts.some(record => record.value.id === id && record.value.agentId === agentId && record.value.instanceId === instanceId);
 }
-/** 账号可先建立路由，只有用户主动连接才触发 OAuth；名称不参与 Token 定位。 */
-export async function createPublishingAccount(user: Member, agentId: string, instanceId: string, name: string) {
+/** 添加意图在同一操作者和目标内原子去重；重试复用原名称与服务端 UUID，仍核对当前归属及清理状态。 */
+export async function createPublishingAccount(user: Member, agentId: string, instanceId: string, name: string, requestId?: string) {
   await requirePublishingAccountsCapability(agentId);
   return edit(async state => {
     const agent = await authorizeAgent(user, agentId); await requireTarget(agentId, instanceId);
-    const account = publishingAccountSchema.parse({ id: randomUUID(), agentId, instanceId, name, owner: agent.owner || user.username, status: "unbound", createdAt: Date.now(), updatedAt: Date.now() });
-    state.accounts.push({ value: account }); return account;
+    const owner = agent.owner || user.username;
+    const existing = requestId ? state.accounts.find(record => record.creationRequest?.id === requestId && record.creationRequest.actor === user.username && record.value.agentId === agentId && record.value.instanceId === instanceId) : undefined;
+    if (existing) {
+      if (existing.value.owner !== owner) throw new AppError("FORBIDDEN", "这次添加请求的设备客户归属已改变，请重新添加发布账号。", 403);
+      if (["cleanup_pending", "deleted"].includes(existing.value.status)) throw new AppError("ACCOUNT", "这次添加请求对应的发布账号正在清理或已删除，请重新添加。", 409);
+      return publishingAccountSchema.parse(existing.value);
+    }
+    const account = publishingAccountSchema.parse({ id: randomUUID(), agentId, instanceId, name, owner, status: "unbound", createdAt: Date.now(), updatedAt: Date.now() });
+    state.accounts.push({ value: account, ...(requestId ? { creationRequest: { id: requestId, actor: user.username } } : {}) }); return account;
   });
 }
-/** Agent 在保存 Token 前永久占位，再确认同一频道；重复回报恢复原占位，不推断写入是否成功。 */
-export async function claimPublishingAccount(agentId: string, accountId: string, instanceId: string, channelId: string, channel: string | undefined, confirm: boolean, channelCheckedAt?: number, authorization?: { epoch?: string; generation?: string }) {
+/** Agent 在保存 Token 前永久占位，再确认同一频道；只对明确回报的头像续期，省略身份的旧协议保留原观察时间。 */
+export async function claimPublishingAccount(agentId: string, accountId: string, instanceId: string, channelId: string, channel: string | undefined, confirm: boolean, channelCheckedAt?: number, authorization?: { epoch?: string; generation?: string }, identity?: PublishingAccountIdentity) {
+  const metadata = identity === undefined ? undefined : publishingAccountIdentitySchema.parse(identity);
   return edit(async state => {
     const agent = await requireTarget(agentId, instanceId); const record = state.accounts.find(record => record.value.id === accountId); const account = record?.value;
     if (!record || !account || account.agentId !== agentId || account.instanceId !== instanceId || agent.owner && account.owner !== agent.owner) throw new AppError("ACCOUNT", "发布账号目标或客户归属无效。", 403);
@@ -101,6 +111,11 @@ export async function claimPublishingAccount(agentId: string, accountId: string,
     if (!confirm && record.authorizationAttempt) record.authorizationAttempt.writePossible = true;
     record.candidateChannelId = channelId; record.claimedAt ??= Date.now(); account.updatedAt = Date.now();
     if (channel && channelCheckedAt !== undefined && channelCheckedAt > Date.now() - 30 * 86400_000 && channelCheckedAt >= (account.channelCheckedAt || 0)) { record.candidateChannel = channel; record.candidateCheckedAt = channelCheckedAt; account.channelCheckedAt = channelCheckedAt; if (confirm) account.channel = channel; }
+    // 头像使用内部独立时间；旧 Agent 刷新标题不续期，明确缺图同时清除头像与它的观察时间。
+    if (confirm && metadata !== undefined && channelCheckedAt !== undefined && channelCheckedAt > Date.now() - 30 * 86400_000 && channelCheckedAt >= (account.channelCheckedAt || 0)) {
+      if (metadata.channelAvatarUrl) { account.channelAvatarUrl = metadata.channelAvatarUrl; record.channelAvatarCheckedAt = channelCheckedAt; }
+      else { delete account.channelAvatarUrl; delete record.channelAvatarCheckedAt; }
+    }
     if (confirm && (account.status !== "needs_reauthorization")) { account.channelId = channelId; account.status = "connected"; account.connectedAt ??= Date.now(); if (record.candidateChannel && record.candidateCheckedAt && record.candidateCheckedAt > Date.now() - 30 * 86400_000) { account.channel = record.candidateChannel; account.channelCheckedAt = record.candidateCheckedAt; } }
     return { ok: true };
   });
@@ -113,7 +128,7 @@ export async function syncPublishingAccounts(agentId: string, reports: Publishin
     if (["cleanup_pending", "deleted"].includes(account.status)) continue;
     if (report.cleanupPending) { await beginPublishingAccountCleanup(agentId, report.id, account.owner); continue; }
     if (account.status === "needs_reauthorization") continue;
-    if (report.channelId && !report.cleanupPending) await claimPublishingAccount(agentId, report.id, report.instanceId, report.channelId, report.channel, true, report.channelCheckedAt);
+    if (report.channelId && !report.cleanupPending) await claimPublishingAccount(agentId, report.id, report.instanceId, report.channelId, report.channel, true, report.channelCheckedAt, undefined, report.identity);
     else if (account.status === "connected") await edit(state => { const current = state.accounts.find(record => record.value.id === report.id)!.value; if (current.status === "connected") { current.status = "unbound"; current.updatedAt = Date.now(); } });
   }
   return agentPublishingAccounts(agentId);
@@ -195,13 +210,13 @@ export async function requestPublishingAccountCleanup(user: Member, accountId: s
 }
 /** 重连先提供账号级清理任务，仅携带 ID 与宿主路由，不携带凭据。 */
 export async function publishingAccountCleanups(agentId?: string) { return (await readState()).cleanups.filter(cleanup => !agentId || cleanup.agentId === agentId); }
-/** 只有所属 Agent 确认本机清理与撤销后才释放独立频道；直播绑定和状态完全不在此事务范围。 */
+/** 所属 Agent 确认清理后释放独立频道并清除头像观察时间；直播绑定和状态完全不在此事务范围。 */
 export async function completePublishingAccountCleanup(agentId: string, id: string) {
   return edit(state => {
     const cleanup = state.cleanups.find(cleanup => cleanup.id === id && cleanup.agentId === agentId); if (!cleanup) throw new AppError("CLEANUP", "独立发布账号清理请求不存在。", 404);
     const record = state.accounts.find(record => record.value.id === cleanup.accountId)!; const account = record.value;
     cleanup.state = "complete"; cleanup.completedAt ??= Date.now(); account.status = "deleted"; account.deletedAt ??= Date.now(); account.updatedAt = Date.now();
-    delete account.channelId; delete account.channel; delete account.channelCheckedAt; delete account.connectedAt; delete record.candidateChannelId; delete record.candidateChannel; delete record.candidateCheckedAt; delete record.claimedAt;
+    delete account.channelId; delete account.channel; delete account.channelAvatarUrl; delete account.channelCheckedAt; delete account.connectedAt; delete record.channelAvatarCheckedAt; delete record.candidateChannelId; delete record.candidateChannel; delete record.candidateCheckedAt; delete record.claimedAt;
     return { ok: true };
   });
 }

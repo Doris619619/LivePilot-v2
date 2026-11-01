@@ -60,6 +60,74 @@ it("creates independent public bindings with ownership checks and never exposes 
   const account = await connected("publish_channel"); expect(account).toMatchObject({ agentId: "pc", instanceId: "main", status: "connected", channelId: "publish_channel" }); expect(JSON.stringify(await publishingView(alice))).not.toMatch(/refreshToken|accessToken|cookie|clientSecret/);
   expect(await publishingAccounts(bob)).toEqual([]); await expect(authorizePublishingAccount(bob, account.id)).rejects.toMatchObject({ code: "FORBIDDEN" }); expect(await cloudStore().read("bindings.json")).toEqual([{ ...destination, channelId: "channel_one", confirmed: true }]);
 });
+/** 同一添加意图在并发或丢失响应重试时复用原记录；旧调用省略请求 ID 时仍各自创建。 */
+it("creates one account for concurrent retries of the same intent and keeps legacy creation distinct", async () => {
+  const requestId = randomUUID(); const [first, retry] = await Promise.all([
+    accountChecks.createPublishingAccount(alice, "pc", "main", "First suggestion", requestId),
+    accountChecks.createPublishingAccount(alice, "pc", "main", "Changed suggestion", requestId),
+  ]);
+  expect(retry).toEqual(first); expect(first.id).not.toBe(requestId); expect(first).not.toHaveProperty("creationRequest"); expect(await publishingAccounts(alice)).toHaveLength(1);
+  const later = await accountChecks.createPublishingAccount(alice, "pc", "main", "Another suggestion", requestId); expect(later).toEqual(first);
+  const legacyFirst = await accountChecks.createPublishingAccount(alice, "pc", "main", "Legacy"); const legacySecond = await accountChecks.createPublishingAccount(alice, "pc", "main", "Legacy");
+  expect(legacyFirst.id).not.toBe(legacySecond.id); expect(await publishingAccounts(alice)).toHaveLength(3);
+});
+/** 请求 ID 只在同一操作者、设备和宿主实例内去重，不能泄露另一添加意图。 */
+it("scopes creation retries to the actor, Agent, and instance", async () => {
+  const pair = await createPairing("pc_two", "Synthetic second", "alice"); await pairAgent("pc_two", pair.code, "c".repeat(64));
+  await openSession("pc_two", randomUUID(), [{ id: "main", name: "Main" }, { id: "second", name: "Second" }]); await agentStore("pc_two").write("capabilities.json", ["publishing-accounts-v1"]);
+  const requestId = randomUUID(); const accounts = [
+    await accountChecks.createPublishingAccount(alice, "pc", "main", "Customer intent", requestId),
+    await accountChecks.createPublishingAccount(admin, "pc", "main", "Admin intent", requestId),
+    await accountChecks.createPublishingAccount(alice, "pc_two", "main", "Other Agent", requestId),
+    await accountChecks.createPublishingAccount(alice, "pc_two", "second", "Other instance", requestId),
+  ];
+  expect(new Set(accounts.map(account => account.id)).size).toBe(4); expect(accounts.every(account => account.owner === "alice")).toBe(true);
+});
+/** 设备转让后重试仍验证当前归属；管理员也不能把旧客户的添加结果归入新客户。 */
+it("rechecks current ownership before recovering a creation result", async () => {
+  const requestId = randomUUID(); await accountChecks.createPublishingAccount(admin, "pc", "main", "Original owner", requestId); await setAgentOwner("pc", "bob");
+  await expect(accountChecks.createPublishingAccount(admin, "pc", "main", "New owner", requestId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  await expect(accountChecks.createPublishingAccount(alice, "pc", "main", "Former customer", requestId)).rejects.toMatchObject({ code: "FORBIDDEN" });
+  expect(await publishingAccounts(admin)).toHaveLength(1);
+});
+/** 已停用的添加意图保留去重痕迹，重放不能复活账号或生成替代账号。 */
+it("rejects reuse of a creation intent after cleanup starts or completes", async () => {
+  const requestId = randomUUID(); const account = await accountChecks.createPublishingAccount(alice, "pc", "main", "To delete", requestId); const cleanup = await requestPublishingAccountCleanup(alice, account.id);
+  await expect(accountChecks.createPublishingAccount(alice, "pc", "main", "Pending retry", requestId)).rejects.toMatchObject({ code: "ACCOUNT", status: 409 });
+  await completePublishingCleanup("pc", cleanup.id);
+  await expect(accountChecks.createPublishingAccount(alice, "pc", "main", "Deleted retry", requestId)).rejects.toMatchObject({ code: "ACCOUNT", status: 409 }); expect(await publishingAccounts(alice)).toHaveLength(1);
+});
+/** 公开头像只随确认同步；明确缺图和账号清理都删除独立观察时间。 */
+it("publishes confirmed identity safely, preserves legacy reports, and erases identity after account cleanup", async () => {
+  const account = await connected("identity_channel"); const metadata = { channelAvatarUrl: "https://yt3.googleusercontent.com/synthetic=s240-c-k" };
+  await claimPublishingAccount("pc", account.id, "main", "identity_channel", "Synthetic brand", false, Date.now(), undefined, metadata); expect((await publishingAccounts(alice))[0].channelAvatarUrl).toBeUndefined();
+  await claimPublishingAccount("pc", account.id, "main", "identity_channel", "Synthetic brand", true, Date.now(), undefined, metadata); expect((await publishingAccounts(alice))[0]).toMatchObject(metadata); expect(await publishingAccounts(bob)).toEqual([]);
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", channelCheckedAt: Date.now() }]); expect((await publishingAccounts(alice))[0]).toMatchObject(metadata);
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", identity: {}, channelCheckedAt: Date.now() }]); expect((await publishingAccounts(alice))[0].channelAvatarUrl).toBeUndefined();
+  expect((await cloudStore().read<{ accounts: { channelAvatarCheckedAt?: number }[] }>("publishing-accounts.json"))?.accounts[0].channelAvatarCheckedAt).toBeUndefined();
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Synthetic brand", identity: metadata, channelCheckedAt: Date.now() }]);
+  const cleanup = await requestPublishingAccountCleanup(alice, account.id); await completePublishingCleanup("pc", cleanup.id); const deleted = (await agentPublishingAccounts("pc"))[0]; expect(deleted.status).toBe("deleted"); expect(deleted.channelAvatarUrl).toBeUndefined();
+  expect((await cloudStore().read<{ accounts: { channelAvatarCheckedAt?: number }[] }>("publishing-accounts.json"))?.accounts[0].channelAvatarCheckedAt).toBeUndefined();
+});
+/** 回退旧 Agent 后只更新标题，不得让未重新观察的头像超出30天保留期。 */
+it("expires an avatar independently when a legacy Agent refreshes only the channel title", async () => {
+  const account = await connected("identity_channel"); const observedAt = Date.now();
+  await claimPublishingAccount("pc", account.id, "main", "identity_channel", "Original title", true, observedAt, undefined, { channelAvatarUrl: "https://yt3.ggpht.com/synthetic=s88-c-k" });
+  vi.setSystemTime(observedAt + 25 * 86400_000);
+  await syncPublishingAccounts("pc", [{ id: account.id, instanceId: "main", channelId: "identity_channel", channel: "Fresh legacy title", channelCheckedAt: Date.now() }]);
+  expect((await publishingAccounts(alice))[0].channelAvatarUrl).toBeDefined();
+  vi.setSystemTime(observedAt + 31 * 86400_000); await expirePublishingAccountData();
+  const current = (await publishingAccounts(alice))[0];
+  expect(current).toMatchObject({ channel: "Fresh legacy title", channelCheckedAt: observedAt + 25 * 86400_000 }); expect(current.channelAvatarUrl).toBeUndefined();
+});
+/** 无独立观察时间的缓存不能借用标题时间；保守清除头像并保留新鲜标题。 */
+it("expires avatar data whose own observation time is unknown", async () => {
+  const account = await connected("identity_channel");
+  const state = (await cloudStore().read<{ accounts: { value: PublishingAccount; channelAvatarCheckedAt?: number }[] }>("publishing-accounts.json"))!;
+  const record = state.accounts.find(record => record.value.id === account.id)!; record.value.channelAvatarUrl = "https://yt3.ggpht.com/synthetic=s88-c-k"; delete record.channelAvatarCheckedAt;
+  await cloudStore().write("publishing-accounts.json", state); await expirePublishingAccountData();
+  const current = (await publishingAccounts(alice))[0]; expect(current.channel).toBe("Synthetic identity_channel"); expect(current.channelAvatarUrl).toBeUndefined();
+});
 it("allows a publishing channel to equal its live channel but reserves it globally among publishing accounts", async () => {
   const account = await connected("channel_one"); const other = await createPublishingAccount(alice, "pc", "main", "Other"); await expect(claimPublishingAccount("pc", other.id, "main", "channel_one", "Synthetic", false, Date.now())).rejects.toMatchObject({ code: "CHANNEL_IN_USE" });
   await expect(claimPublishingAccount("pc", account.id, "main", "other_channel", "Other", false, Date.now())).rejects.toMatchObject({ code: "CHANNEL" });

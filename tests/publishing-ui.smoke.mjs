@@ -1,4 +1,4 @@
-/** 四步发布浏览器验收：覆盖草稿、100个模拟发布包和频道分区辨识，不连接真实Agent、OBS或YouTube。 */
+/** 四步发布浏览器验收：覆盖草稿、100个模拟发布包、频道分区和账号删除确认，不连接真实Agent、OBS或YouTube。 */
 import { chromium } from "playwright";
 import { Temporal } from "@js-temporal/polyfill";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -231,6 +231,9 @@ try {
   await page.getByRole("button", { name: "视频发布配置包", exact: true }).click(); await page.getByRole("heading", { name: "发布配置", exact: true }).waitFor();
   await page.getByRole("dialog").getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
+  await page.locator(".account-manager--compact").waitFor();
+  const accountManager = page.getByRole("region", { name: "发布账号管理", exact: true });
+  assert.equal(await accountManager.locator('a[href="https://security.google.com/settings/security/permissions"], a[href="/privacy"], a[href="/terms"], .account-manager-metadata, time, button button').count(), 0);
   await page.getByRole("button", { name: "发布视频", exact: true }).click(); await expectStep(page, "配置与排期");
   assert.equal(await page.getByLabel("发布账号", { exact: true }).inputValue(), accountOne);
   await page.getByRole("button", { name: "管理配置包", exact: true }).click(); await page.getByRole("button", { name: "新建视频发布配置包", exact: true }).click();
@@ -422,18 +425,46 @@ try {
   await page.getByLabel("发布结果", { exact: true }).selectOption("published"); await page.getByLabel("搜索发布历史", { exact: true }).fill("2030-10-Batch-02"); await page.getByText("100 条记录", { exact: true }).waitFor(); assert.equal(await page.locator('[id^="history-detail-"]').count(), 0);
   for (const width of [320, 390, 1024, 1440]) { await page.setViewportSize({ width, height: 900 }); await capture(page, "history-" + width + ".png"); }
   console.log("Publishing smoke: 100 history records, search, filters and one detail passed.");
-  await page.getByRole("button", { name: "发布账号", exact: true }).click(); await page.getByText("授权与数据 · Rainy Night Radio", { exact: true }).click(); await page.getByRole("button", { name: "撤销授权与删除数据", exact: true }).click(); await page.getByRole("button", { name: "确认撤销与删除", exact: true }).click(); await page.getByText(/等待设备清理，期限/).waitFor();
+  // 行末删除确认保留授权影响与远端视频边界，仍只清理指定账号的合成记录。
+  await page.getByRole("button", { name: "发布账号", exact: true }).click();
+  await page.getByRole("button", { name: "选择账号 Rainy Night Radio", exact: true }).click();
+  await page.getByRole("button", { name: "删除账号 Rainy Night Radio", exact: true }).click();
+  const deleteAccountDialog = page.getByRole("dialog");
+  await deleteAccountDialog.getByRole("heading", { name: "删除「Rainy Night Radio」？", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog", { name: "删除「Rainy Night Radio」？", exact: true }).count(), 1);
+  assert.equal(await page.locator(".account-manager").evaluate(element => !!element.closest('[aria-hidden="true"], [inert]')), true);
+  await page.keyboard.press("Tab");
+  assert.equal(await deleteAccountDialog.evaluate(element => element.contains(document.activeElement)), true);
+  assert.ok((await deleteAccountDialog.innerText()).includes("Rainy Night Radio"));
+  assert.equal(await deleteAccountDialog.getByRole("link").count(), 0);
+  await deleteAccountDialog.getByText("删除发布记录，并撤销 Google 授权。", { exact: true }).waitFor();
+  await deleteAccountDialog.getByText("同一 Google 账号下的直播和其他频道可能需要重新授权。", { exact: true }).waitFor();
+  await deleteAccountDialog.getByText("已排期视频仍可能公开；YouTube 视频和本地文件保留。", { exact: true }).waitFor();
+  await deleteAccountDialog.getByRole("button", { name: "删除账号", exact: true }).click();
+  await deleteAccountDialog.waitFor({ state: "hidden" });
+  await page.getByText(/等待设备清理，期限/).waitFor();
   assert.equal(await page.getByText("授权撤销与设备清理已确认", { exact: true }).count(), 0);
   assert.equal(view.jobs.filter(job => job.spec.profile.accountId === accountTwo).length, 1); assert.equal(view.accounts.find(account => account.id === accountTwo).status, "connected"); assert.equal(view.accounts.find(account => account.id === accountThree).status, "connected");
-  await page.getByRole("button", { name: "添加账号", exact: true }).click(); await page.waitForURL(url => url.searchParams.get("synthetic-account") === "44444444-4444-4444-8444-444444444444"); await page.getByLabel("发布账号", { exact: true }).waitFor(); await page.getByLabel("设备", { exact: true }).selectOption("pc:main");
+  await page.getByRole("button", { name: "添加账号", exact: true }).click();
+  const connectAccountDialog = page.getByRole("dialog", { name: "连接 YouTube 频道", exact: true });
+  await connectAccountDialog.getByRole("heading", { name: "连接 YouTube 频道", exact: true }).waitFor();
+  assert.equal(createdAccount, undefined);
+  await connectAccountDialog.getByRole("button", { name: "连接频道", exact: true }).click();
+  await page.waitForURL(url => url.searchParams.get("synthetic-account") === "44444444-4444-4444-8444-444444444444"); await page.getByLabel("发布账号", { exact: true }).waitFor(); await page.getByLabel("设备", { exact: true }).selectOption("pc:main");
   assert.deepEqual(accountConnectRequests, [createdAccount.id]); assert.equal(createdAccount.status, "unbound"); assert.equal(await page.getByLabel("发布账号", { exact: true }).locator('option[value="' + createdAccount.id + '"]').count(), 1);
   assert.deepEqual(legacyRequests, []); assert.equal(actions.includes("cleanup"), false);
   // 授权结果回到原设备/账号，不能被另一设备的更新草稿或默认设备覆盖。
   const newerDraft = { ...structuredClone(latestPlan), id: crypto.randomUUID(), profile: structuredClone(thirdProfile), createdAt: Date.now() + 1000 }; delete newerDraft.confirmedAt; delete newerDraft.archivedAt; delete newerDraft.archivePending; view.plans.push(newerDraft);
   const callbackPage = await browser.newPage({ viewport: { width: 1440, height: 1000 } }); callbackPage.on("pageerror", error => errors.push(error.message)); await callbackPage.route("**/api/**", mock);
-  await callbackPage.goto(origin + "/publishing?oauthResult=55555555-5555-4555-8555-555555555555&source=oauth-smoke#accounts"); await callbackPage.getByText("发布账号已连接", { exact: true }).waitFor(); await expectStep(callbackPage, "准备素材");
-  assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]);
+  await callbackPage.goto(origin + "/publishing?oauthResult=55555555-5555-4555-8555-555555555555&source=oauth-smoke#accounts"); await callbackPage.getByText("频道连接成功", { exact: true }).waitFor();
+  await callbackPage.getByRole("heading", { name: "发布账号", exact: true }).first().waitFor();
+  await callbackPage.getByRole("button", { name: "选择账号 第二频道", exact: true, pressed: true }).waitFor();
+  const callbackDetail = callbackPage.getByRole("region", { name: "发布账号 第二发布账号", exact: true });
+  await callbackDetail.waitFor();
+  assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc_two:main"); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]);
   const consumedCallback = new URL(callbackPage.url()); assert.equal(consumedCallback.searchParams.has("oauthResult"), false); assert.equal(consumedCallback.searchParams.get("source"), "oauth-smoke"); assert.equal(consumedCallback.hash, "#accounts");
+  await callbackDetail.getByRole("button", { name: "去发布视频", exact: true }).click(); await expectStep(callbackPage, "准备素材");
+  assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountTwo);
   await callbackPage.getByLabel("设备", { exact: true }).selectOption("pc:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree);
   await callbackPage.reload(); await callbackPage.getByLabel("发布账号", { exact: true }).waitFor(); assert.equal(await callbackPage.getByLabel("设备", { exact: true }).inputValue(), "pc:main"); assert.equal(await callbackPage.getByLabel("发布账号", { exact: true }).inputValue(), accountThree); assert.deepEqual(oauthResultRequests, ["55555555-5555-4555-8555-555555555555"]); await callbackPage.close();
   // 已确认批次刷新仍回到客户当前账号；另一账号的较新草稿不能抢走控制台选择。
